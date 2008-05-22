@@ -1,0 +1,10 @@
+html, body {
+	padding:0px;
+}
+
+/* Slides */
+IMG.img_slide {
+    display: block;
+    margin-left: auto;
+    margin-right: auto 
+}
