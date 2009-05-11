@@ -1,0 +1,429 @@
+=pod
+
+=head1 NAME
+
+clang - the Clang C and Objective-C compiler
+
+=head1 SYNOPSIS
+
+B<clang> [B<-c>|B<-S>|B<-E>] B<-std=>I<standard> B<-g>
+  [B<-O0>|B<-O1>|B<-O2>|B<-Os>|B<-O3>|B<-O4>]
+  B<-W>I<warnings...> B<-pedantic>
+  B<-I>I<dir...> B<-L>I<dir...>
+  B<-D>I<macro[=defn]>
+  B<-f>I<feature-option...>
+  B<-m>I<machine-option...>
+  B<-o> I<output-file>
+  I<input-filenames>
+
+=head1 DESCRIPTION
+
+B<clang> is a C and Objective-C compiler which encompasses preprocessing,
+parsing, optimization, code generation, assembly, and linking.  Depending on
+which high-level mode setting is passed, Clang will stop before doing a full
+link.  While Clang is highly integrated, it is important to understand the
+stages of compilation, to understand how to invoke it.  These stages are:
+
+=over
+
+=item B<Driver>
+
+The B<clang> executable is actually a small driver which controls the overall
+execution of other tools such as the compiler, assembler and linker.  Typically
+you do not need to interact with the driver, but you transparently use it to run
+the other tools.
+
+=item B<Preprocessing>
+
+This stage handles tokenization of the input source file, macro expansion,
+#include expansion and handling of other preprocessor directives.  The output of
+this stage is typically called a ".i" (for C) or ".mi" (for Objective-C) file.
+
+=item B<Parsing and Semantic Analysis>
+
+This stage parses the input file, translating preprocessor tokens into a parse
+tree.  Once in the form of a parser tree, it applies semantic analysis to compute
+types for expressions as well and determine whether the code is well formed. This
+stage is responsible for generating most of the compiler warnings as well as
+parse errors.  The output of this stage is an "Abstract Syntax Tree" (AST).
+
+=item B<Code Generation and Optimization>
+
+This stage translates an AST into low-level intermediate code (known as "LLVM
+IR") and ultimately to machine code (depending on the optimization level).  This
+phase is responsible for optimizing the generated code and handling
+target-specfic code generation.  The output of this stage is typically called a
+".s" file or "assembly" file.
+
+=item B<Assembler>
+
+This stage runs the target assembler to translate the output of the compiler
+into a target object file.  The output of this stage is typically called a ".o"
+file or "object" file.
+
+=item B<Linker>
+
+This stage runs the target linker to merge multiple object files into an
+executable or dynamic library.  The output of this stage is typically called an
+"a.out", ".dylib" or ".so" file.
+
+=back
+
+The Clang compiler supports a large number of options to control each of these
+stages.  In addition to compilation of code, Clang also supports other tools:
+
+B<Clang Static Analyzer>
+
+The Clang Static Analyzer is a tool that scans source code to try to find bugs
+though code analysis.  This tool uses many parts of Clang and is built into the
+same driver.
+
+
+=head1 OPTIONS
+
+=head2 Stage Selection Options
+
+=over
+
+=item B<-E>
+
+Run the preprocessor stage.
+
+=item B<-fsyntax-only>
+
+Run the preprocessor, parser and type checking stages.
+
+=item B<-emit-llvm>
+
+Run the preprocessor, parser, type checking stages, LLVM generation and
+optimization stages.
+
+=item B<-S>
+
+Run all of the above, plus target-specific code generation, producing an
+assembly file.
+
+=item B<-c>
+
+Run all of the above, plus the assembler, generating a target ".o" object file.
+
+=item B<no stage selection option>
+
+If no stage selection option is specified, all stages above are run, and the
+linker is run to combine the results into an executable or shared library.
+
+=item B<--analyze>
+
+Run the Clang Static Analyzer.
+
+=back
+
+
+
+=head2 Driver Options
+
+=over
+
+=item B<-###>
+
+Print the commands to run for this compilation.
+
+=item B<--help>
+
+Display available options.
+
+=item B<-Qunused-arguments>
+
+Don't emit warning for unused driver arguments.
+
+=item B<-Wa,>I<args>
+
+Pass the comma separated arguments in I<args> to the assembler.
+
+=item B<-Wl,>I<args>
+
+Pass the comma separated arguments in I<args> to the linker.
+
+=item B<-Wp,>I<args>
+
+Pass the comma separated arguments in I<args> to the preprocessor.
+
+=item B<-Xanalyzer> I<arg>
+
+Pass I<arg> to the static analyzer.
+
+=item B<-Xassembler> I<arg>
+
+Pass I<arg> to the assembler.
+
+=item B<-Xclang> I<arg>
+
+Pass I<arg> to the clang compiler.
+
+=item B<-Xlinker> I<arg>
+
+Pass I<arg> to the linker.
+
+=item B<-Xpreprocessor> I<arg>
+
+Pass I<arg> to the preprocessor.
+
+=item B<-o> I<file>               
+
+Write output to I<file>.
+
+=item B<-print-file-name>=I<file>
+
+Print the full library path of I<file>.
+
+=item B<-print-libgcc-file-name>
+
+Print the library path for "libgcc.a".
+
+=item B<-print-prog-name>=I<name>
+
+Print the full program path of I<name>.
+
+=item B<-print-search-dirs>
+
+Print the paths used for finding libraries and programs.
+
+=item B<-save-temps>
+
+Save intermediate compilation results.
+
+=item B<-time>
+
+Time individual commands.
+
+=item B<-ftime-report>
+
+Print timing summary of each stage of compilation.
+
+=item B<-v>
+
+Show commands to run and use verbose output.
+
+=back
+
+
+
+=head2 Target Selection Options
+
+=over
+
+-triple
+-arch
+-mmacosx-version-min=10.3.9
+-miphoneos-version-min
+
+
+=back
+
+
+
+=head2 Language Selection and Mode Options
+
+=over
+
+=item B<-x> I<language>
+
+Treat subsequent input files as having type I<language>.
+
+=item B<-ObjC++>
+
+Treat source input files as Objective-C++ inputs.
+
+=item B<-ObjC>
+
+Treat source input files as Objective-C inputs.
+
+B<-std>=I<language>
+
+
+-ffreestanding
+-fno-builtin
+-fmath-errno
+-fobjc-gc-only
+-fobjc-gc
+-fpascal-strings
+-fms-extensions
+-fwritable-strings
+-fno-lax-vector-conversions
+-fblocks
+-trigraphs
+
+
+=back
+
+
+
+=head2 Code Generation Options
+
+=over
+
+-fexceptions
+-fobjc-nonfragile-abi
+-fgnu-runtime
+-fnext-runtime
+-ftrapv
+-fvisibility
+-Os, O0, O1, O2, O3, O4
+-fno-common
+-g
+-mcpu
+
+=back
+
+
+
+
+=head2 Diagnostics Options
+
+=over
+
+-fshow-column
+-fshow-source-location
+-fcaret-diagnostics
+-fdiagnostics-fixit-info
+-fdiagnostics-print-source-range-info
+-fprint-source-range-info
+-fdiagnostics-show-option
+-fmessage-length
+
+
+=back
+
+
+=head2 Preprocessor Options
+
+=over
+
+=item B<-xyz>
+
+Frob
+
+-D
+-U
+-include
+-imacros
+
+
+
+-nostdinc
+-F
+-I
+-idirafter
+-iquote
+-isystem
+-iprefix
+-iwithprefix
+-iwithprefixbefore
+-isysroot
+
+
+
+
+=back
+
+
+
+
+=head2 Parser and Semantic Analysis Options
+
+=over
+
+=back
+
+
+
+
+
+=head2 Code Generation and Optimization Options
+
+=over
+
+=back
+
+
+
+
+
+
+=head2 Assembler Options
+
+=over
+
+=back
+
+
+
+
+
+
+=head2 Linker Options
+
+=over
+
+=back
+
+
+
+
+
+=head2 Static Analyzer Options
+
+=over
+
+=back
+
+
+
+=head1 ENVIRONMENT
+
+=over
+
+=item B<TMPDIR>, B<TEMP>, B<TMP>
+
+These environment variables are checked, in order, for the location to
+write temporary files used during the compilation process.
+
+=item B<CPATH>
+
+If this environment variable is present, it is treated as a delimited
+list of paths to be added to the default system include path list. The
+delimiter is the platform dependent delimitor, as used in the I<PATH>
+environment variable.
+
+Empty components in the environment variable are ignored.
+
+=item B<C_INCLUDE_PATH>, B<OBJC_INCLUDE_PATH>, B<CPLUS_INCLUDE_PATH>,
+B<OBJCPLUS_INCLUDE_PATH>
+
+These environment variables specify additional paths, as for CPATH,
+which are only used when processing the appropriate language.
+
+=item B<MACOSX_DEPLOYMENT_TARGET>
+
+If -mmacosx-version-min is unspecified, the default deployment target
+is read from this environment variable.  This option only affects darwin
+targets.
+
+=back
+
+=head1 BUGS
+
+Clang currently does not have C++ support, and this manual page is incomplete.
+To report bugs, please visit L<http://llvm.org/bugs/>.  Most bug reports should
+include preprocessed source files (use the B<-E> option) and the full output of 
+the compiler, along with information to reproduce.
+
+=head1 SEE ALSO
+
+ as(1), ld(1)
+
+=head1 AUTHOR
+
+Maintained by the Clang / LLVM Team (L<http://clang.llvm.org>).
+
+=cut
