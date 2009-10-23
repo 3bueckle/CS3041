@@ -30,9 +30,6 @@ public:
   void VisitDeclRefExpr(DeclRefExpr *Node);
   void VisitMemberExpr(MemberExpr *Node);
   void VisitObjCIvarRefExpr(ObjCIvarRefExpr *Node);
-  
-  void VisitTypedefTypeLoc(TypedefTypeLoc TL);
-  void VisitObjCInterfaceTypeLoc(ObjCInterfaceTypeLoc TL);
 };
 
 } // anonymous namespace
@@ -55,16 +52,6 @@ void RefMapper::VisitObjCIvarRefExpr(ObjCIvarRefExpr *Node) {
   Map.insert(std::make_pair(Node->getDecl(), ASTLocation(CurrentDecl, Node)));
 }
 
-void RefMapper::VisitTypedefTypeLoc(TypedefTypeLoc TL) {
-  NamedDecl *ND = TL.getTypedefDecl();
-  Map.insert(std::make_pair(ND, ASTLocation(CurrentDecl, ND, TL.getNameLoc())));
-}
-
-void RefMapper::VisitObjCInterfaceTypeLoc(ObjCInterfaceTypeLoc TL) {
-  NamedDecl *ND = TL.getIFaceDecl();
-  Map.insert(std::make_pair(ND, ASTLocation(CurrentDecl, ND, TL.getNameLoc())));
-}
-
 //===----------------------------------------------------------------------===//
 // DeclReferenceMap Implementation
 //===----------------------------------------------------------------------===//
@@ -76,16 +63,16 @@ DeclReferenceMap::DeclReferenceMap(ASTContext &Ctx) {
 DeclReferenceMap::astlocation_iterator
 DeclReferenceMap::refs_begin(NamedDecl *D) const {
   NamedDecl *Prim = cast<NamedDecl>(D->getCanonicalDecl());
-  return astlocation_iterator(Map.lower_bound(Prim));
+  return astlocation_iterator(Map.lower_bound(Prim));  
 }
 
 DeclReferenceMap::astlocation_iterator
 DeclReferenceMap::refs_end(NamedDecl *D) const {
   NamedDecl *Prim = cast<NamedDecl>(D->getCanonicalDecl());
-  return astlocation_iterator(Map.upper_bound(Prim));
+  return astlocation_iterator(Map.upper_bound(Prim));  
 }
 
 bool DeclReferenceMap::refs_empty(NamedDecl *D) const {
   NamedDecl *Prim = cast<NamedDecl>(D->getCanonicalDecl());
-  return refs_begin(Prim) == refs_end(Prim);
+  return refs_begin(Prim) == refs_end(Prim);  
 }

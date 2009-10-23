@@ -25,7 +25,6 @@
 #include "clang/Basic/SourceLocation.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/Support/raw_ostream.h"
 #include <vector>
 #include <map>
 #include <cstring>
@@ -50,7 +49,7 @@ struct StaticDiagInfoRec {
   bool SFINAE : 1;
   const char *Description;
   const char *OptionGroup;
-
+  
   bool operator<(const StaticDiagInfoRec &RHS) const {
     return DiagID < RHS.DiagID;
   }
@@ -83,27 +82,22 @@ static const StaticDiagInfoRec *GetDiagInfo(unsigned DiagID) {
 #ifndef NDEBUG
   static bool IsFirst = true;
   if (IsFirst) {
-    for (unsigned i = 1; i != NumDiagEntries; ++i) {
-      assert(StaticDiagInfo[i-1].DiagID != StaticDiagInfo[i].DiagID &&
-             "Diag ID conflict, the enums at the start of clang::diag (in "
-             "Diagnostic.h) probably need to be increased");
-
+    for (unsigned i = 1; i != NumDiagEntries; ++i)
       assert(StaticDiagInfo[i-1] < StaticDiagInfo[i] &&
              "Improperly sorted diag info");
-    }
     IsFirst = false;
   }
 #endif
-
+  
   // Search the diagnostic table with a binary search.
   StaticDiagInfoRec Find = { DiagID, 0, 0, 0, 0, 0 };
-
+  
   const StaticDiagInfoRec *Found =
     std::lower_bound(StaticDiagInfo, StaticDiagInfo + NumDiagEntries, Find);
   if (Found == StaticDiagInfo + NumDiagEntries ||
       Found->DiagID != DiagID)
     return 0;
-
+    
   return Found;
 }
 
@@ -147,7 +141,7 @@ namespace clang {
       std::vector<DiagDesc> DiagInfo;
       std::map<DiagDesc, unsigned> DiagIDs;
     public:
-
+      
       /// getDescription - Return the description of the specified custom
       /// diagnostic.
       const char *getDescription(unsigned DiagID) const {
@@ -155,14 +149,14 @@ namespace clang {
                "Invalid diagnosic ID");
         return DiagInfo[DiagID-DIAG_UPPER_LIMIT].second.c_str();
       }
-
+      
       /// getLevel - Return the level of the specified custom diagnostic.
       Diagnostic::Level getLevel(unsigned DiagID) const {
         assert(this && DiagID-DIAG_UPPER_LIMIT < DiagInfo.size() &&
                "Invalid diagnosic ID");
         return DiagInfo[DiagID-DIAG_UPPER_LIMIT].first;
       }
-
+      
       unsigned getOrCreateDiagID(Diagnostic::Level L, const char *Message,
                                  Diagnostic &Diags) {
         DiagDesc D(L, Message);
@@ -170,7 +164,7 @@ namespace clang {
         std::map<DiagDesc, unsigned>::iterator I = DiagIDs.lower_bound(D);
         if (I != DiagIDs.end() && I->first == D)
           return I->second;
-
+        
         // If not, assign a new ID.
         unsigned ID = DiagInfo.size()+DIAG_UPPER_LIMIT;
         DiagIDs.insert(std::make_pair(D, ID));
@@ -178,9 +172,9 @@ namespace clang {
         return ID;
       }
     };
-
-  } // end diag namespace
-} // end clang namespace
+    
+  } // end diag namespace 
+} // end clang namespace 
 
 
 //===----------------------------------------------------------------------===//
@@ -190,8 +184,6 @@ namespace clang {
 static void DummyArgToStringFn(Diagnostic::ArgumentKind AK, intptr_t QT,
                                const char *Modifier, unsigned ML,
                                const char *Argument, unsigned ArgLen,
-                               const Diagnostic::ArgumentValue *PrevArgs,
-                               unsigned NumPrevArgs,
                                llvm::SmallVectorImpl<char> &Output,
                                void *Cookie) {
   const char *Str = "<can't format argument>";
@@ -204,9 +196,8 @@ Diagnostic::Diagnostic(DiagnosticClient *client) : Client(client) {
   IgnoreAllWarnings = false;
   WarningsAsErrors = false;
   SuppressSystemWarnings = false;
-  SuppressAllDiagnostics = false;
   ExtBehavior = Ext_Ignore;
-
+  
   ErrorOccurred = false;
   FatalErrorOccurred = false;
   NumDiagnostics = 0;
@@ -215,10 +206,10 @@ Diagnostic::Diagnostic(DiagnosticClient *client) : Client(client) {
   CustomDiagInfo = 0;
   CurDiagID = ~0U;
   LastDiagLevel = Ignored;
-
+  
   ArgToStringFn = DummyArgToStringFn;
   ArgToStringCookie = 0;
-
+  
   // Set all mappings to 'unset'.
   DiagMappings BlankDiags(diag::DIAG_UPPER_LIMIT/2, 0);
   DiagMappingsStack.push_back(BlankDiags);
@@ -230,8 +221,6 @@ Diagnostic::~Diagnostic() {
 
 
 void Diagnostic::pushMappings() {
-  // Avoids undefined behavior when the stack has to resize.
-  DiagMappingsStack.reserve(DiagMappingsStack.size() + 1);
   DiagMappingsStack.push_back(DiagMappingsStack.back());
 }
 
@@ -247,7 +236,7 @@ bool Diagnostic::popMappings() {
 /// and level.  If this is the first request for this diagnosic, it is
 /// registered and created, otherwise the existing ID is returned.
 unsigned Diagnostic::getCustomDiagID(Level L, const char *Message) {
-  if (CustomDiagInfo == 0)
+  if (CustomDiagInfo == 0) 
     CustomDiagInfo = new diag::CustomDiagInfo();
   return CustomDiagInfo->getOrCreateDiagID(L, Message, *this);
 }
@@ -293,7 +282,7 @@ Diagnostic::Level Diagnostic::getDiagnosticLevel(unsigned DiagID) const {
   // Handle custom diagnostics, which cannot be mapped.
   if (DiagID >= diag::DIAG_UPPER_LIMIT)
     return CustomDiagInfo->getLevel(DiagID);
-
+  
   unsigned DiagClass = getBuiltinDiagClass(DiagID);
   assert(DiagClass != CLASS_NOTE && "Cannot get diagnostic level of a note!");
   return getDiagnosticLevel(DiagID, DiagClass);
@@ -307,14 +296,14 @@ Diagnostic::getDiagnosticLevel(unsigned DiagID, unsigned DiagClass) const {
   // Specific non-error diagnostics may be mapped to various levels from ignored
   // to error.  Errors can only be mapped to fatal.
   Diagnostic::Level Result = Diagnostic::Fatal;
-
+  
   // Get the mapping information, if unset, compute it lazily.
   unsigned MappingInfo = getDiagnosticMappingInfo((diag::kind)DiagID);
   if (MappingInfo == 0) {
     MappingInfo = GetDefaultDiagMapping(DiagID);
     setDiagnosticMappingInternal(DiagID, MappingInfo, false);
   }
-
+  
   switch (MappingInfo & 7) {
   default: assert(0 && "Unknown mapping!");
   case diag::MAP_IGNORE:
@@ -337,29 +326,29 @@ Diagnostic::getDiagnosticLevel(unsigned DiagID, unsigned DiagClass) const {
     // If warnings are globally mapped to ignore or error, do it.
     if (IgnoreAllWarnings)
       return Diagnostic::Ignored;
-
+      
     Result = Diagnostic::Warning;
-
+      
     // If this is an extension diagnostic and we're in -pedantic-error mode, and
     // if the user didn't explicitly map it, upgrade to an error.
     if (ExtBehavior == Ext_Error &&
         (MappingInfo & 8) == 0 &&
         isBuiltinExtensionDiag(DiagID))
       Result = Diagnostic::Error;
-
+      
     if (WarningsAsErrors)
       Result = Diagnostic::Error;
     break;
-
+      
   case diag::MAP_WARNING_NO_WERROR:
     // Diagnostics specified with -Wno-error=foo should be set to warnings, but
     // not be adjusted by -Werror or -pedantic-errors.
     Result = Diagnostic::Warning;
-
+      
     // If warnings are globally mapped to ignore or error, do it.
     if (IgnoreAllWarnings)
       return Diagnostic::Ignored;
-
+      
     break;
   }
 
@@ -368,7 +357,7 @@ Diagnostic::getDiagnosticLevel(unsigned DiagID, unsigned DiagClass) const {
   // block, silence it.
   if (AllExtensionsSilenced && isBuiltinExtensionDiag(DiagID))
     return Diagnostic::Ignored;
-
+  
   return Result;
 }
 
@@ -403,7 +392,7 @@ static void MapGroupMembers(const WarningOption *Group, diag::Mapping Mapping,
     for (; *Member != -1; ++Member)
       Diags.setDiagnosticMapping(*Member, Mapping);
   }
-
+  
   // Enable/disable all subgroups along with this one.
   if (const char *SubGroups = Group->SubGroups) {
     for (; *SubGroups != (char)-1; ++SubGroups)
@@ -416,7 +405,7 @@ static void MapGroupMembers(const WarningOption *Group, diag::Mapping Mapping,
 /// ignores the request if "Group" was unknown, false otherwise.
 bool Diagnostic::setDiagnosticGroupMapping(const char *Group,
                                            diag::Mapping Map) {
-
+  
   WarningOption Key = { Group, 0, 0 };
   const WarningOption *Found =
   std::lower_bound(OptionTable, OptionTable + OptionTableSize, Key,
@@ -424,7 +413,7 @@ bool Diagnostic::setDiagnosticGroupMapping(const char *Group,
   if (Found == OptionTable + OptionTableSize ||
       strcmp(Found->Name, Group) != 0)
     return true;  // Option not found.
-
+  
   MapGroupMembers(Found, Map, *this);
   return false;
 }
@@ -434,22 +423,19 @@ bool Diagnostic::setDiagnosticGroupMapping(const char *Group,
 /// finally fully formed.
 bool Diagnostic::ProcessDiag() {
   DiagnosticInfo Info(this);
-
-  if (SuppressAllDiagnostics)
-    return false;
-  
+    
   // Figure out the diagnostic level of this message.
   Diagnostic::Level DiagLevel;
   unsigned DiagID = Info.getID();
-
+  
   // ShouldEmitInSystemHeader - True if this diagnostic should be produced even
   // in a system header.
   bool ShouldEmitInSystemHeader;
-
+  
   if (DiagID >= diag::DIAG_UPPER_LIMIT) {
     // Handle custom diagnostics, which cannot be mapped.
     DiagLevel = CustomDiagInfo->getLevel(DiagID);
-
+    
     // Custom diagnostics always are emitted in system headers.
     ShouldEmitInSystemHeader = true;
   } else {
@@ -461,12 +447,12 @@ bool Diagnostic::ProcessDiag() {
       DiagLevel = Diagnostic::Note;
       ShouldEmitInSystemHeader = false;  // extra consideration is needed
     } else {
-      // If this is not an error and we are in a system header, we ignore it.
+      // If this is not an error and we are in a system header, we ignore it. 
       // Check the original Diag ID here, because we also want to ignore
       // extensions and warnings in -Werror and -pedantic-errors modes, which
       // *map* warnings/extensions to errors.
       ShouldEmitInSystemHeader = DiagClass == CLASS_ERROR;
-
+      
       DiagLevel = getDiagnosticLevel(DiagID, DiagClass);
     }
   }
@@ -480,7 +466,7 @@ bool Diagnostic::ProcessDiag() {
       FatalErrorOccurred = true;
 
     LastDiagLevel = DiagLevel;
-  }
+  }  
 
   // If a fatal error has already been emitted, silence all subsequent
   // diagnostics.
@@ -507,7 +493,7 @@ bool Diagnostic::ProcessDiag() {
     ErrorOccurred = true;
     ++NumErrors;
   }
-
+  
   // Finally, report it.
   Client->HandleDiagnostic(DiagLevel, Info);
   if (Client->IncludeInDiagnosticCounts()) ++NumDiagnostics;
@@ -537,7 +523,7 @@ static void HandleSelectModifier(unsigned ValNo,
                                  const char *Argument, unsigned ArgumentLen,
                                  llvm::SmallVectorImpl<char> &OutStr) {
   const char *ArgumentEnd = Argument+ArgumentLen;
-
+  
   // Skip over 'ValNo' |'s.
   while (ValNo) {
     const char *NextVal = std::find(Argument, ArgumentEnd, '|');
@@ -546,7 +532,7 @@ static void HandleSelectModifier(unsigned ValNo,
     Argument = NextVal+1;  // Skip this string.
     --ValNo;
   }
-
+  
   // Get the end of the value.  This is either the } or the |.
   const char *EndPtr = std::find(Argument, ArgumentEnd, '|');
   // Add the value to the output string.
@@ -619,7 +605,7 @@ static bool EvalPluralExpr(unsigned ValNo, const char *Start, const char *End) {
 
     // Scan for next or-expr part.
     Start = std::find(Start, End, ',');
-    if (Start == End)
+    if(Start == End)
       break;
     ++Start;
   }
@@ -688,12 +674,6 @@ void DiagnosticInfo::
 FormatDiagnostic(llvm::SmallVectorImpl<char> &OutStr) const {
   const char *DiagStr = getDiags()->getDescription(getID());
   const char *DiagEnd = DiagStr+strlen(DiagStr);
-
-  /// FormattedArgs - Keep track of all of the arguments formatted by
-  /// ConvertArgToString and pass them into subsequent calls to
-  /// ConvertArgToString, allowing the implementation to avoid redundancies in
-  /// obvious cases.
-  llvm::SmallVector<Diagnostic::ArgumentValue, 8> FormattedArgs;
   
   while (DiagStr != DiagEnd) {
     if (DiagStr[0] != '%') {
@@ -707,10 +687,10 @@ FormatDiagnostic(llvm::SmallVectorImpl<char> &OutStr) const {
       DiagStr += 2;
       continue;
     }
-
+    
     // Skip the %.
     ++DiagStr;
-
+    
     // This must be a placeholder for a diagnostic argument.  The format for a
     // placeholder is one of "%0", "%modifier0", or "%modifier{arguments}0".
     // The digit is a number from 0-9 indicating which argument this comes from.
@@ -718,7 +698,7 @@ FormatDiagnostic(llvm::SmallVectorImpl<char> &OutStr) const {
     // brace enclosed string.
     const char *Modifier = 0, *Argument = 0;
     unsigned ModifierLen = 0, ArgumentLen = 0;
-
+    
     // Check to see if we have a modifier.  If so eat it.
     if (!isdigit(DiagStr[0])) {
       Modifier = DiagStr;
@@ -731,20 +711,18 @@ FormatDiagnostic(llvm::SmallVectorImpl<char> &OutStr) const {
       if (DiagStr[0] == '{') {
         ++DiagStr; // Skip {.
         Argument = DiagStr;
-
+        
         for (; DiagStr[0] != '}'; ++DiagStr)
           assert(DiagStr[0] && "Mismatched {}'s in diagnostic string!");
         ArgumentLen = DiagStr-Argument;
         ++DiagStr;  // Skip }.
       }
     }
-
+      
     assert(isdigit(*DiagStr) && "Invalid format for argument in diagnostic");
     unsigned ArgNo = *DiagStr++ - '0';
 
-    Diagnostic::ArgumentKind Kind = getArgKind(ArgNo);
-    
-    switch (Kind) {
+    switch (getArgKind(ArgNo)) {
     // ---- STRINGS ----
     case Diagnostic::ak_std_string: {
       const std::string &S = getArgStdStr(ArgNo);
@@ -759,14 +737,14 @@ FormatDiagnostic(llvm::SmallVectorImpl<char> &OutStr) const {
       // Don't crash if get passed a null pointer by accident.
       if (!S)
         S = "(null)";
-
+      
       OutStr.append(S, S + strlen(S));
       break;
     }
     // ---- INTEGERS ----
     case Diagnostic::ak_sint: {
       int Val = getArgSInt(ArgNo);
-
+      
       if (ModifierIs(Modifier, ModifierLen, "select")) {
         HandleSelectModifier((unsigned)Val, Argument, ArgumentLen, OutStr);
       } else if (ModifierIs(Modifier, ModifierLen, "s")) {
@@ -775,13 +753,15 @@ FormatDiagnostic(llvm::SmallVectorImpl<char> &OutStr) const {
         HandlePluralModifier((unsigned)Val, Argument, ArgumentLen, OutStr);
       } else {
         assert(ModifierLen == 0 && "Unknown integer modifier");
-        llvm::raw_svector_ostream(OutStr) << Val;
+        // FIXME: Optimize
+        std::string S = llvm::itostr(Val);
+        OutStr.append(S.begin(), S.end());
       }
       break;
     }
     case Diagnostic::ak_uint: {
       unsigned Val = getArgUInt(ArgNo);
-
+      
       if (ModifierIs(Modifier, ModifierLen, "select")) {
         HandleSelectModifier(Val, Argument, ArgumentLen, OutStr);
       } else if (ModifierIs(Modifier, ModifierLen, "s")) {
@@ -790,7 +770,10 @@ FormatDiagnostic(llvm::SmallVectorImpl<char> &OutStr) const {
         HandlePluralModifier((unsigned)Val, Argument, ArgumentLen, OutStr);
       } else {
         assert(ModifierLen == 0 && "Unknown integer modifier");
-        llvm::raw_svector_ostream(OutStr) << Val;
+        
+        // FIXME: Optimize
+        std::string S = llvm::utostr_32(Val);
+        OutStr.append(S.begin(), S.end());
       }
       break;
     }
@@ -806,31 +789,19 @@ FormatDiagnostic(llvm::SmallVectorImpl<char> &OutStr) const {
         continue;
       }
 
-      llvm::raw_svector_ostream(OutStr) << '\'' << II->getName() << '\'';
+      OutStr.push_back('\'');
+      OutStr.append(II->getName(), II->getName() + II->getLength());
+      OutStr.push_back('\'');
       break;
     }
     case Diagnostic::ak_qualtype:
     case Diagnostic::ak_declarationname:
     case Diagnostic::ak_nameddecl:
-    case Diagnostic::ak_nestednamespec:
-    case Diagnostic::ak_declcontext:
-      getDiags()->ConvertArgToString(Kind, getRawArg(ArgNo),
+      getDiags()->ConvertArgToString(getArgKind(ArgNo), getRawArg(ArgNo),
                                      Modifier, ModifierLen,
-                                     Argument, ArgumentLen,
-                                     FormattedArgs.data(), FormattedArgs.size(),
-                                     OutStr);
+                                     Argument, ArgumentLen, OutStr);
       break;
     }
-    
-    // Remember this argument info for subsequent formatting operations.  Turn
-    // std::strings into a null terminated string to make it be the same case as
-    // all the other ones.
-    if (Kind != Diagnostic::ak_std_string)
-      FormattedArgs.push_back(std::make_pair(Kind, getRawArg(ArgNo)));
-    else
-      FormattedArgs.push_back(std::make_pair(Diagnostic::ak_c_string,
-                                        (intptr_t)getArgStdStr(ArgNo).c_str()));
-    
   }
 }
 

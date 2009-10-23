@@ -23,7 +23,7 @@
 
 namespace clang {
   class ActionBase;
-
+  
   /// OpaquePtr - This is a very simple POD type that wraps a pointer that the
   /// Parser doesn't know about but that Sema or another client does.  The UID
   /// template argument is used to make sure that "Decl" pointers are not
@@ -33,29 +33,29 @@ namespace clang {
     void *Ptr;
   public:
     OpaquePtr() : Ptr(0) {}
-
+    
     template <typename T>
     T* getAs() const {
       return llvm::PointerLikeTypeTraits<T*>::getFromVoidPointer(Ptr);
     }
-
+    
     template <typename T>
     T getAsVal() const {
       return llvm::PointerLikeTypeTraits<T>::getFromVoidPointer(Ptr);
     }
-
+    
     void *get() const { return Ptr; }
-
+    
     template<typename T>
     static OpaquePtr make(T P) {
       OpaquePtr R; R.set(P); return R;
     }
-
+    
     template<typename T>
     void set(T P) {
       Ptr = llvm::PointerLikeTypeTraits<T>::getAsVoidPointer(P);
     }
-
+    
     operator bool() const { return Ptr != 0; }
   };
 }
@@ -218,7 +218,7 @@ namespace clang {
     /// expressions, stmts, etc.  It encapsulates both the object returned by
     /// the action, plus a sense of whether or not it is valid.
     /// When CompressInvalid is true, the "invalid" flag will be
-    /// stored in the low bit of the Val pointer.
+    /// stored in the low bit of the Val pointer. 
     template<unsigned UID,
              typename PtrTy = void*,
              bool CompressInvalid = IsResultPtrLowBitFree<UID>::value>
@@ -252,7 +252,7 @@ namespace clang {
       uintptr_t PtrWithInvalid;
       typedef llvm::PointerLikeTypeTraits<PtrTy> PtrTraits;
     public:
-      ActionResult(bool Invalid = false)
+      ActionResult(bool Invalid = false) 
         : PtrWithInvalid(static_cast<uintptr_t>(Invalid)) { }
 
       template<typename ActualExprTy>
@@ -262,17 +262,17 @@ namespace clang {
         PtrWithInvalid = reinterpret_cast<uintptr_t>(VP);
         assert((PtrWithInvalid & 0x01) == 0 && "Badly aligned pointer");
       }
-
+      
       ActionResult(PtrTy V) {
         void *VP = PtrTraits::getAsVoidPointer(V);
         PtrWithInvalid = reinterpret_cast<uintptr_t>(VP);
         assert((PtrWithInvalid & 0x01) == 0 && "Badly aligned pointer");
       }
-
+      
       ActionResult(const DiagnosticBuilder &) : PtrWithInvalid(0x01) { }
 
       PtrTy get() const {
-        void *VP = reinterpret_cast<void *>(PtrWithInvalid & ~0x01);
+        void *VP = reinterpret_cast<void *>(PtrWithInvalid & ~0x01); 
         return PtrTraits::getFromVoidPointer(VP);
       }
 
@@ -326,7 +326,8 @@ namespace clang {
     /// Move emulation helper for ASTOwningResult. NEVER EVER use this class
     /// directly if you don't know what you're doing.
     template <ASTDestroyer Destroyer>
-    class ASTResultMover {
+    class ASTResultMover
+    {
       ASTOwningResult<Destroyer> &Moved;
 
     public:
@@ -338,7 +339,8 @@ namespace clang {
     /// Move emulation helper for ASTMultiPtr. NEVER EVER use this class
     /// directly if you don't know what you're doing.
     template <ASTDestroyer Destroyer>
-    class ASTMultiMover {
+    class ASTMultiMover
+    {
       ASTMultiPtr<Destroyer> &Moved;
 
     public:
@@ -355,7 +357,8 @@ namespace clang {
   /// Kept only as a type-safe wrapper for a void pointer, when smart pointers
   /// are disabled. When they are enabled, ASTOwningResult takes over.
   template <ASTDestroyer Destroyer>
-  class ASTOwningPtr {
+  class ASTOwningPtr
+  {
     void *Node;
 
   public:
@@ -397,7 +400,8 @@ namespace clang {
 
 #if !defined(DISABLE_SMART_POINTERS)
   template <ASTDestroyer Destroyer>
-  class ASTOwningResult {
+  class ASTOwningResult
+  {
     llvm::PointerIntPair<ActionBase*, 1, bool> ActionInv;
     void *Ptr;
 
@@ -501,7 +505,8 @@ namespace clang {
   };
 #else
   template <ASTDestroyer Destroyer>
-  class ASTOwningResult {
+  class ASTOwningResult
+  {
   public:
     typedef ActionBase::ActionResult<DestroyerToUID<Destroyer>::UID> DumbResult;
 
@@ -517,7 +522,8 @@ namespace clang {
     ASTOwningResult(const ASTOwningPtr<Destroyer> &o) : Result(o.get()) { }
 
     /// Assignment from a raw pointer. Takes ownership - beware!
-    ASTOwningResult & operator =(void *raw) {
+    ASTOwningResult & operator =(void *raw)
+    {
       Result = raw;
       return *this;
     }
@@ -557,7 +563,8 @@ namespace clang {
 #endif
 
   template <ASTDestroyer Destroyer>
-  class ASTMultiPtr {
+  class ASTMultiPtr
+  {
 #if !defined(DISABLE_SMART_POINTERS)
     ActionBase &Actions;
 #endif
@@ -577,7 +584,7 @@ namespace clang {
     //  Either way, a classic C-style hard cast resolves any issue.
      static ASTMultiPtr* hack(moving::ASTMultiMover<Destroyer> & source) {
        return (ASTMultiPtr*)source.operator->();
-     }
+	}
 #endif
 
     ASTMultiPtr(ASTMultiPtr&); // DO NOT IMPLEMENT
@@ -601,7 +608,7 @@ namespace clang {
     /// Move constructor
     ASTMultiPtr(moving::ASTMultiMover<Destroyer> mover)
 #if defined(_MSC_VER)
-    //  Apply the visual C++ hack supplied above.
+    //  Apply the visual C++ hack supplied above.  
     //  Last tested with Visual Studio 2008.
       : Actions(hack(mover)->Actions), Nodes(hack(mover)->Nodes), Count(hack(mover)->Count) {
 #else
@@ -653,7 +660,7 @@ namespace clang {
     }
 #endif
   };
-
+  
   class ASTTemplateArgsPtr {
 #if !defined(DISABLE_SMART_POINTERS)
     ActionBase &Actions;
@@ -661,7 +668,7 @@ namespace clang {
     void **Args;
     bool *ArgIsType;
     mutable unsigned Count;
-
+    
 #if !defined(DISABLE_SMART_POINTERS)
     void destroy() {
       if (!Count)
@@ -677,16 +684,16 @@ namespace clang {
 
   public:
     ASTTemplateArgsPtr(ActionBase &actions, void **args, bool *argIsType,
-                       unsigned count) :
+                       unsigned count) : 
 #if !defined(DISABLE_SMART_POINTERS)
-      Actions(actions),
+      Actions(actions), 
 #endif
       Args(args), ArgIsType(argIsType), Count(count) { }
 
     // FIXME: Lame, not-fully-type-safe emulation of 'move semantics'.
-    ASTTemplateArgsPtr(ASTTemplateArgsPtr &Other) :
+    ASTTemplateArgsPtr(ASTTemplateArgsPtr &Other) : 
 #if !defined(DISABLE_SMART_POINTERS)
-      Actions(Other.Actions),
+      Actions(Other.Actions), 
 #endif
       Args(Other.Args), ArgIsType(Other.ArgIsType), Count(Other.Count) {
 #if !defined(DISABLE_SMART_POINTERS)
@@ -727,7 +734,7 @@ namespace clang {
 
     void *operator[](unsigned Arg) const { return Args[Arg]; }
 
-    void **release() const {
+    void **release() const { 
 #if !defined(DISABLE_SMART_POINTERS)
       Count = 0;
 #endif
@@ -747,7 +754,7 @@ namespace clang {
     ASTOwningVector &operator=(ASTOwningVector &); // do not implement
 
   public:
-    explicit ASTOwningVector(ActionBase &Actions)
+    explicit ASTOwningVector(ActionBase &Actions) 
 #if !defined(DISABLE_SMART_POINTERS)
       : Actions(Actions), Owned(true)
 #endif
@@ -818,7 +825,8 @@ namespace clang {
 
   template <ASTDestroyer Destroyer> inline
   ASTOwningPtr<Destroyer>::ASTOwningPtr(const ASTOwningResult<Destroyer> &o)
-    : Node(o.get()) { }
+    : Node(o.get())
+  {}
 
   // These versions are hopefully no-ops.
   template <ASTDestroyer Destroyer> inline

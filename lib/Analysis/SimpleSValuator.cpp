@@ -20,22 +20,22 @@ using namespace clang;
 namespace {
 class VISIBILITY_HIDDEN SimpleSValuator : public SValuator {
 protected:
-  virtual SVal EvalCastNL(NonLoc val, QualType castTy);
-  virtual SVal EvalCastL(Loc val, QualType castTy);
+  virtual SVal EvalCastNL(NonLoc val, QualType castTy);    
+  virtual SVal EvalCastL(Loc val, QualType castTy);    
 
 public:
   SimpleSValuator(ValueManager &valMgr) : SValuator(valMgr) {}
   virtual ~SimpleSValuator() {}
-
-  virtual SVal EvalMinus(NonLoc val);
-  virtual SVal EvalComplement(NonLoc val);
-  virtual SVal EvalBinOpNN(const GRState *state, BinaryOperator::Opcode op,
-                           NonLoc lhs, NonLoc rhs, QualType resultTy);
+  
+  virtual SVal EvalMinus(NonLoc val);    
+  virtual SVal EvalComplement(NonLoc val);    
+  virtual SVal EvalBinOpNN(BinaryOperator::Opcode op, NonLoc lhs, NonLoc rhs,
+                           QualType resultTy);
   virtual SVal EvalBinOpLL(BinaryOperator::Opcode op, Loc lhs, Loc rhs,
                            QualType resultTy);
   virtual SVal EvalBinOpLN(const GRState *state, BinaryOperator::Opcode op,
                            Loc lhs, NonLoc rhs, QualType resultTy);
-};
+}; 
 } // end anonymous namespace
 
 SValuator *clang::CreateSimpleSValuator(ValueManager &valMgr) {
@@ -47,19 +47,19 @@ SValuator *clang::CreateSimpleSValuator(ValueManager &valMgr) {
 //===----------------------------------------------------------------------===//
 
 SVal SimpleSValuator::EvalCastNL(NonLoc val, QualType castTy) {
-
+  
   bool isLocType = Loc::IsLocType(castTy);
-
+  
   if (nonloc::LocAsInteger *LI = dyn_cast<nonloc::LocAsInteger>(&val)) {
     if (isLocType)
       return LI->getLoc();
-
-    ASTContext &Ctx = ValMgr.getContext();
-
+    
+    ASTContext &Ctx = ValMgr.getContext();    
+    
     // FIXME: Support promotions/truncations.
     if (Ctx.getTypeSize(castTy) == Ctx.getTypeSize(Ctx.VoidPtrTy))
       return val;
-
+    
     return UnknownVal();
   }
 
@@ -69,25 +69,16 @@ SVal SimpleSValuator::EvalCastNL(NonLoc val, QualType castTy) {
     if (T == Ctx.getCanonicalType(castTy))
       return val;
     
-    // FIXME: Remove this hack when we support symbolic truncation/extension.
-    // HACK: If both castTy and T are integers, ignore the cast.  This is
-    // not a permanent solution.  Eventually we want to precisely handle
-    // extension/truncation of symbolic integers.  This prevents us from losing
-    // precision when we assign 'x = y' and 'y' is symbolic and x and y are
-    // different integer types.
-    if (T->isIntegerType() && castTy->isIntegerType())
-      return val;
-
     return UnknownVal();
   }
-
+  
   if (!isa<nonloc::ConcreteInt>(val))
     return UnknownVal();
-
+  
   // Only handle casts from integers to integers.
   if (!isLocType && !castTy->isIntegerType())
     return UnknownVal();
-
+  
   llvm::APSInt i = cast<nonloc::ConcreteInt>(val).getValue();
   i.setIsUnsigned(castTy->isUnsignedIntegerType() || Loc::IsLocType(castTy));
   i.extOrTrunc(ValMgr.getContext().getTypeSize(castTy));
@@ -99,27 +90,29 @@ SVal SimpleSValuator::EvalCastNL(NonLoc val, QualType castTy) {
 }
 
 SVal SimpleSValuator::EvalCastL(Loc val, QualType castTy) {
-
+  
   // Casts from pointers -> pointers, just return the lval.
   //
   // Casts from pointers -> references, just return the lval.  These
   //   can be introduced by the frontend for corner cases, e.g
   //   casting from va_list* to __builtin_va_list&.
   //
+  assert(!val.isUnknownOrUndef());
+  
   if (Loc::IsLocType(castTy) || castTy->isReferenceType())
     return val;
-
+  
   // FIXME: Handle transparent unions where a value can be "transparently"
   //  lifted into a union type.
   if (castTy->isUnionType())
     return UnknownVal();
-
+  
   assert(castTy->isIntegerType());
   unsigned BitWidth = ValMgr.getContext().getTypeSize(castTy);
 
   if (!isa<loc::ConcreteInt>(val))
     return ValMgr.makeLocAsInteger(val, BitWidth);
-
+  
   llvm::APSInt i = cast<loc::ConcreteInt>(val).getValue();
   i.setIsUnsigned(castTy->isUnsignedIntegerType() || Loc::IsLocType(castTy));
   i.extOrTrunc(BitWidth);
@@ -131,7 +124,7 @@ SVal SimpleSValuator::EvalCastL(Loc val, QualType castTy) {
 //===----------------------------------------------------------------------===//
 
 SVal SimpleSValuator::EvalMinus(NonLoc val) {
-  switch (val.getSubKind()) {
+  switch (val.getSubKind()) {      
   case nonloc::ConcreteIntKind:
     return cast<nonloc::ConcreteInt>(val).evalMinus(ValMgr);
   default:
@@ -165,18 +158,18 @@ static BinaryOperator::Opcode NegateComparison(BinaryOperator::Opcode op) {
   }
 }
 
-// Equality operators for Locs.
+// Equality operators for Locs.  
 // FIXME: All this logic will be revamped when we have MemRegion::getLocation()
 // implemented.
 
 static SVal EvalEquality(ValueManager &ValMgr, Loc lhs, Loc rhs, bool isEqual,
                          QualType resultTy) {
-
+  
   switch (lhs.getSubKind()) {
     default:
       assert(false && "EQ/NE not implemented for this Loc.");
       return UnknownVal();
-
+      
     case loc::ConcreteIntKind: {
       if (SymbolRef rSym = rhs.getAsSymbol())
         return ValMgr.makeNonLoc(rSym,
@@ -185,7 +178,7 @@ static SVal EvalEquality(ValueManager &ValMgr, Loc lhs, Loc rhs, bool isEqual,
                                  cast<loc::ConcreteInt>(lhs).getValue(),
                                  resultTy);
       break;
-    }
+    }    
     case loc::MemRegionKind: {
       if (SymbolRef lSym = lhs.getAsLocSymbol()) {
         if (isa<loc::ConcreteInt>(rhs)) {
@@ -198,18 +191,21 @@ static SVal EvalEquality(ValueManager &ValMgr, Loc lhs, Loc rhs, bool isEqual,
       }
       break;
     }
-
+      
     case loc::GotoLabelKind:
       break;
   }
-
+  
   return ValMgr.makeTruthVal(isEqual ? lhs == rhs : lhs != rhs, resultTy);
 }
 
-SVal SimpleSValuator::EvalBinOpNN(const GRState *state,
-                                  BinaryOperator::Opcode op,
+SVal SimpleSValuator::EvalBinOpNN(BinaryOperator::Opcode op,
                                   NonLoc lhs, NonLoc rhs,
                                   QualType resultTy)  {
+
+  assert(!lhs.isUnknownOrUndef());
+  assert(!rhs.isUnknownOrUndef());
+
   // Handle trivial case where left-side and right-side are the same.
   if (lhs == rhs)
     switch (op) {
@@ -224,17 +220,17 @@ SVal SimpleSValuator::EvalBinOpNN(const GRState *state,
       case BinaryOperator::NE:
         return ValMgr.makeTruthVal(false, resultTy);
     }
-
+  
   while (1) {
     switch (lhs.getSubKind()) {
     default:
-      return UnknownVal();
+      return UnknownVal();        
     case nonloc::LocAsIntegerKind: {
-      Loc lhsL = cast<nonloc::LocAsInteger>(lhs).getLoc();
+      Loc lhsL = cast<nonloc::LocAsInteger>(lhs).getLoc();        
       switch (rhs.getSubKind()) {
         case nonloc::LocAsIntegerKind:
           return EvalBinOpLL(op, lhsL, cast<nonloc::LocAsInteger>(rhs).getLoc(),
-                             resultTy);
+                             resultTy); 
         case nonloc::ConcreteIntKind: {
           // Transform the integer into a location and compare.
           ASTContext& Ctx = ValMgr.getContext();
@@ -243,7 +239,7 @@ SVal SimpleSValuator::EvalBinOpNN(const GRState *state,
           i.extOrTrunc(Ctx.getTypeSize(Ctx.VoidPtrTy));
           return EvalBinOpLL(op, lhsL, ValMgr.makeLoc(i), resultTy);
         }
-        default:
+        default: 
           switch (op) {
             case BinaryOperator::EQ:
               return ValMgr.makeTruthVal(false, resultTy);
@@ -254,15 +250,15 @@ SVal SimpleSValuator::EvalBinOpNN(const GRState *state,
               return UnknownVal();
           }
       }
-    }
+    }      
     case nonloc::SymExprValKind: {
-      // Logical not?
+      // Logical not?        
       if (!(op == BinaryOperator::EQ && rhs.isZeroConstant()))
         return UnknownVal();
 
       const SymExpr *symExpr =
         cast<nonloc::SymExprVal>(lhs).getSymbolicExpression();
-
+      
       // Only handle ($sym op constant) for now.
       if (const SymIntExpr *symIntExpr = dyn_cast<SymIntExpr>(symExpr)) {
         BinaryOperator::Opcode opc = symIntExpr->getOpcode();
@@ -305,7 +301,7 @@ SVal SimpleSValuator::EvalBinOpNN(const GRState *state,
           case BinaryOperator::GT:
           case BinaryOperator::LE:
           case BinaryOperator::GE:
-          case BinaryOperator::EQ:
+          case BinaryOperator::EQ:            
           case BinaryOperator::NE:
             opc = NegateComparison(opc);
             assert(symIntExpr->getType(ValMgr.getContext()) == resultTy);
@@ -314,7 +310,7 @@ SVal SimpleSValuator::EvalBinOpNN(const GRState *state,
         }
       }
     }
-    case nonloc::ConcreteIntKind: {
+    case nonloc::ConcreteIntKind: {   
       if (isa<nonloc::ConcreteInt>(rhs)) {
         const nonloc::ConcreteInt& lhsInt = cast<nonloc::ConcreteInt>(lhs);
         return lhsInt.evalBinOp(ValMgr, op, cast<nonloc::ConcreteInt>(rhs));
@@ -326,7 +322,7 @@ SVal SimpleSValuator::EvalBinOpNN(const GRState *state,
         NonLoc tmp = rhs;
         rhs = lhs;
         lhs = tmp;
-
+        
         switch (op) {
           case BinaryOperator::LT: op = BinaryOperator::GT; continue;
           case BinaryOperator::GT: op = BinaryOperator::LT; continue;
@@ -339,40 +335,12 @@ SVal SimpleSValuator::EvalBinOpNN(const GRState *state,
             continue;
           default:
             return UnknownVal();
-        }
+        }        
       }
     }
     case nonloc::SymbolValKind: {
-      nonloc::SymbolVal *slhs = cast<nonloc::SymbolVal>(&lhs);
-      SymbolRef Sym = slhs->getSymbol();
-      
-      // Does the symbol simplify to a constant?  If so, "fold" the constant
-      // by setting 'lhs' to a ConcreteInt and try again.
-      if (Sym->getType(ValMgr.getContext())->isIntegerType())
-        if (const llvm::APSInt *Constant = state->getSymVal(Sym)) {
-          // The symbol evaluates to a constant. If necessary, promote the
-          // folded constant (LHS) to the result type.
-          BasicValueFactory &BVF = ValMgr.getBasicValueFactory();
-          const llvm::APSInt &lhs_I = BVF.Convert(resultTy, *Constant);
-          lhs = nonloc::ConcreteInt(lhs_I);
-          
-          // Also promote the RHS (if necessary).
-
-          // For shifts, it necessary promote the RHS to the result type.
-          if (BinaryOperator::isShiftOp(op))
-            continue;
-          
-          // Other operators: do an implicit conversion.  This shouldn't be
-          // necessary once we support truncation/extension of symbolic values.
-          if (nonloc::ConcreteInt *rhs_I = dyn_cast<nonloc::ConcreteInt>(&rhs)){
-            rhs = nonloc::ConcreteInt(BVF.Convert(resultTy, rhs_I->getValue()));
-          }
-          
-          continue;
-        }
-      
       if (isa<nonloc::ConcreteInt>(rhs)) {
-        return ValMgr.makeNonLoc(slhs->getSymbol(), op,
+        return ValMgr.makeNonLoc(cast<nonloc::SymbolVal>(lhs).getSymbol(), op,
                                  cast<nonloc::ConcreteInt>(rhs).getValue(),
                                  resultTy);
       }
@@ -384,26 +352,19 @@ SVal SimpleSValuator::EvalBinOpNN(const GRState *state,
 }
 
 SVal SimpleSValuator::EvalBinOpLL(BinaryOperator::Opcode op, Loc lhs, Loc rhs,
-                                  QualType resultTy) {
+                                  QualType resultTy) {  
   switch (op) {
     default:
       return UnknownVal();
     case BinaryOperator::EQ:
     case BinaryOperator::NE:
       return EvalEquality(ValMgr, lhs, rhs, op == BinaryOperator::EQ, resultTy);
-    case BinaryOperator::LT:
-    case BinaryOperator::GT:
-      // FIXME: Generalize.  For now, just handle the trivial case where
-      //  the two locations are identical.
-      if (lhs == rhs)
-        return ValMgr.makeTruthVal(false, resultTy);
-      return UnknownVal();
   }
 }
 
 SVal SimpleSValuator::EvalBinOpLN(const GRState *state,
                                   BinaryOperator::Opcode op,
-                                  Loc lhs, NonLoc rhs, QualType resultTy) {
+                                  Loc lhs, NonLoc rhs, QualType resultTy) {  
   // Special case: 'rhs' is an integer that has the same width as a pointer and
   // we are using the integer location in a comparison.  Normally this cannot be
   // triggered, but transfer functions like those for OSCommpareAndSwapBarrier32
@@ -416,13 +377,13 @@ SVal SimpleSValuator::EvalBinOpLN(const GRState *state,
       if (ctx.getTypeSize(ctx.VoidPtrTy) == x->getBitWidth()) {
         // Convert the signedness of the integer (if necessary).
         if (x->isSigned())
-          x = &ValMgr.getBasicValueFactory().getValue(*x, true);
+          x = &ValMgr.getBasicValueFactory().getValue(*x, true);          
 
         return EvalBinOpLL(op, lhs, loc::ConcreteInt(*x), resultTy);
       }
     }
   }
-
+  
   // Delegate pointer arithmetic to the StoreManager.
   return state->getStateManager().getStoreManager().EvalBinOp(state, op, lhs,
                                                               rhs, resultTy);

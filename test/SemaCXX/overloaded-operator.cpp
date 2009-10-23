@@ -28,12 +28,12 @@ void g(Y y, Z z) {
 }
 
 struct A {
-  bool operator==(Z&); // expected-note 2{{candidate function}}
+  bool operator==(Z&); // expected-note{{candidate function}}
 };
 
 A make_A();
 
-bool operator==(A&, Z&); // expected-note 2{{candidate function}}
+bool operator==(A&, Z&); // expected-note{{candidate function}}
 
 void h(A a, const A ac, Z z) {
   make_A() == z;
@@ -208,35 +208,4 @@ namespace M {
   void test_X(N::X x) {
     (void)(x + x);
   }
-}
-
-struct AA { bool operator!=(AA&); };
-struct BB : AA {};
-bool x(BB y, BB z) { return y != z; }
-
-
-struct AX { 
-  AX& operator ->();	 // expected-note {{declared at}}
-  int b;
-}; 
-
-void m() {
-  AX a; 
-  a->b = 0; // expected-error {{circular pointer delegation detected}}
-}
-
-struct CircA {
-  struct CircB& operator->(); // expected-note {{declared at}}
-  int val;
-};
-struct CircB {
-  struct CircC& operator->(); // expected-note {{declared at}}
-};
-struct CircC {
-  struct CircA& operator->(); // expected-note {{declared at}}
-};
-
-void circ() {
-  CircA a;
-  a->val = 0; // expected-error {{circular pointer delegation detected}}
 }

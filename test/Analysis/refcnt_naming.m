@@ -15,7 +15,7 @@ typedef signed char BOOL;
 -(NSObject*)photoCopy;    // read as "photo Copy"
 -(NSObject*)__blebPRCopy; // read as "bleb PRCopy"
 -(NSObject*)__blebPRcopy; // read as "bleb P Rcopy"
--(NSObject*)new_theprefixdoescount; // read as "new theprefixdoescount"
+-(NSObject*)new_theprefixdoesnotcount; // read as "theprefixdoesnotcount"
 -(NSObject*)newestAwesomeStuff; // read as "newest awesome stuff"
 
 @end
@@ -49,7 +49,7 @@ void testNames(NamingTest* x) {
   [x photoCopy]; // expected-warning{{leak}}
   [x __blebPRCopy]; // expected-warning{{leak}}
   [x __blebPRcopy]; // no-warning
-  [x new_theprefixdoescount]; // expected-warning{{leak}}
+  [x new_theprefixdoesnotcount]; // no-warning
   [x newestAwesomeStuff]; // no-warning
 }
 

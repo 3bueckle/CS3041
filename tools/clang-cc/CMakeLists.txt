@@ -25,6 +25,3 @@ add_clang_executable(clang-cc
   clang-cc.cpp
   )
 add_dependencies(clang-cc clang-headers)
-
-install(TARGETS clang-cc
-  RUNTIME DESTINATION libexec)

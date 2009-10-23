@@ -15,17 +15,19 @@
 #define LLVM_CLANG_FILEMANAGER_H
 
 #include "llvm/ADT/StringMap.h"
-#include "llvm/ADT/StringRef.h"
 #include "llvm/ADT/OwningPtr.h"
 #include "llvm/Support/Allocator.h"
 #include "llvm/Config/config.h" // for mode_t
+#include <map>
+#include <set>
+#include <string>
 // FIXME: Enhance libsystem to support inode and other fields in stat.
 #include <sys/types.h>
 #include <sys/stat.h>
 
 namespace clang {
 class FileManager;
-
+  
 /// DirectoryEntry - Cached information about one directory on the disk.
 ///
 class DirectoryEntry {
@@ -33,7 +35,7 @@ class DirectoryEntry {
   friend class FileManager;
 public:
   DirectoryEntry() : Name(0) {}
-  const char *getName() const { return Name; }
+  const char *getName() const { return Name; } 
 };
 
 /// FileEntry - Cached information about one file on the disk.
@@ -53,7 +55,7 @@ public:
     : Name(0), Device(device), Inode(inode), FileMode(m) {}
   // Add a default constructor for use with llvm::StringMap
   FileEntry() : Name(0), Device(0), Inode(0), FileMode(0) {}
-
+  
   const char *getName() const { return Name; }
   off_t getSize() const { return Size; }
   unsigned getUID() const { return UID; }
@@ -61,65 +63,43 @@ public:
   dev_t getDevice() const { return Device; }
   time_t getModificationTime() const { return ModTime; }
   mode_t getFileMode() const { return FileMode; }
-
+  
   /// getDir - Return the directory the file lives in.
   ///
   const DirectoryEntry *getDir() const { return Dir; }
-
+  
   bool operator<(const FileEntry& RHS) const {
     return Device < RHS.Device || (Device == RHS.Device && Inode < RHS.Inode);
   }
 };
 
-/// \brief Abstract interface for introducing a FileManager cache for 'stat'
-/// system calls, which is used by precompiled and pretokenized headers to
-/// improve performance.
+// FIXME: This is a lightweight shim that is used by FileManager to cache
+//  'stat' system calls.  We will use it with PTH to identify if caching
+//  stat calls in PTH files is a performance win.
 class StatSysCallCache {
-protected:
-  llvm::OwningPtr<StatSysCallCache> NextStatCache;
-  
 public:
   virtual ~StatSysCallCache() {}
-  virtual int stat(const char *path, struct stat *buf) {
-    if (getNextStatCache())
-      return getNextStatCache()->stat(path, buf);
-    
-    return ::stat(path, buf);
-  }
-  
-  /// \brief Sets the next stat call cache in the chain of stat caches.
-  /// Takes ownership of the given stat cache.
-  void setNextStatCache(StatSysCallCache *Cache) {
-    NextStatCache.reset(Cache);
-  }
-  
-  /// \brief Retrieve the next stat call cache in the chain.
-  StatSysCallCache *getNextStatCache() { return NextStatCache.get(); }
-
-  /// \brief Retrieve the next stat call cache in the chain, transferring
-  /// ownership of this cache (and, transitively, all of the remaining caches)
-  /// to the caller.
-  StatSysCallCache *takeNextStatCache() { return NextStatCache.take(); }
+  virtual int stat(const char *path, struct stat *buf) = 0;
 };
 
-/// \brief A stat "cache" that can be used by FileManager to keep
+/// \brief A stat listener that can be used by FileManager to keep
 /// track of the results of stat() calls that occur throughout the
 /// execution of the front end.
 class MemorizeStatCalls : public StatSysCallCache {
 public:
-  /// \brief The result of a stat() call.
+  /// \brief The result of a stat() call. 
   ///
   /// The first member is the result of calling stat(). If stat()
   /// found something, the second member is a copy of the stat
   /// structure.
   typedef std::pair<int, struct stat> StatResult;
 
-  /// \brief The set of stat() calls that have been
+  /// \brief The set of stat() calls that have been 
   llvm::StringMap<StatResult, llvm::BumpPtrAllocator> StatCalls;
 
   typedef llvm::StringMap<StatResult, llvm::BumpPtrAllocator>::const_iterator
     iterator;
-
+  
   iterator begin() const { return StatCalls.begin(); }
   iterator end() const { return StatCalls.end(); }
 
@@ -146,59 +126,50 @@ class FileManager {
   ///
   llvm::StringMap<DirectoryEntry*, llvm::BumpPtrAllocator> DirEntries;
   llvm::StringMap<FileEntry*, llvm::BumpPtrAllocator> FileEntries;
-
+  
   /// NextFileUID - Each FileEntry we create is assigned a unique ID #.
   ///
   unsigned NextFileUID;
-
+  
   // Statistics.
   unsigned NumDirLookups, NumFileLookups;
   unsigned NumDirCacheMisses, NumFileCacheMisses;
-
+  
   // Caching.
   llvm::OwningPtr<StatSysCallCache> StatCache;
 
   int stat_cached(const char* path, struct stat* buf) {
     return StatCache.get() ? StatCache->stat(path, buf) : stat(path, buf);
   }
-
+  
 public:
   FileManager();
   ~FileManager();
 
-  /// \brief Installs the provided StatSysCallCache object within
-  /// the FileManager. 
-  ///
-  /// Ownership of this object is transferred to the FileManager.
-  ///
-  /// \param statCache the new stat cache to install. Ownership of this
-  /// object is transferred to the FileManager.
-  ///
-  /// \param AtBeginning whether this new stat cache must be installed at the
-  /// beginning of the chain of stat caches. Otherwise, it will be added to
-  /// the end of the chain.
-  void addStatCache(StatSysCallCache *statCache, bool AtBeginning = false);
-
-  /// \brief Removes the provided StatSysCallCache object from the file manager.
-  void removeStatCache(StatSysCallCache *statCache);
+  /// setStatCache - Installs the provided StatSysCallCache object within
+  ///  the FileManager.  Ownership of this object is transferred to the
+  ///  FileManager.
+  void setStatCache(StatSysCallCache *statCache) {
+    StatCache.reset(statCache);
+  }
   
   /// getDirectory - Lookup, cache, and verify the specified directory.  This
   /// returns null if the directory doesn't exist.
-  ///
-  const DirectoryEntry *getDirectory(const llvm::StringRef &Filename) {
-    return getDirectory(Filename.begin(), Filename.end());
+  /// 
+  const DirectoryEntry *getDirectory(const std::string &Filename) {
+    return getDirectory(&Filename[0], &Filename[0] + Filename.size());
   }
   const DirectoryEntry *getDirectory(const char *FileStart,const char *FileEnd);
-
+  
   /// getFile - Lookup, cache, and verify the specified file.  This returns null
   /// if the file doesn't exist.
-  ///
-  const FileEntry *getFile(const llvm::StringRef &Filename) {
-    return getFile(Filename.begin(), Filename.end());
+  /// 
+  const FileEntry *getFile(const std::string &Filename) {
+    return getFile(&Filename[0], &Filename[0] + Filename.size());
   }
   const FileEntry *getFile(const char *FilenameStart,
                            const char *FilenameEnd);
-
+  
   void PrintStats() const;
 };
 

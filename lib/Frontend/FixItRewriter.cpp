@@ -16,11 +16,10 @@
 #include "clang/Frontend/FixItRewriter.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
+#include "llvm/ADT/OwningPtr.h"
+#include "llvm/Support/Streams.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/System/Path.h"
-#include "llvm/ADT/OwningPtr.h"
-#include <cstdio>
-
 using namespace clang;
 
 FixItRewriter::FixItRewriter(Diagnostic &Diags, SourceManager &SourceMgr,
@@ -34,7 +33,7 @@ FixItRewriter::~FixItRewriter() {
   Diags.setClient(Client);
 }
 
-bool FixItRewriter::WriteFixedFile(const std::string &InFileName,
+bool FixItRewriter::WriteFixedFile(const std::string &InFileName, 
                                    const std::string &OutFileName) {
   if (NumFailures > 0) {
     Diag(FullSourceLoc(), diag::warn_fixit_no_changes);
@@ -45,8 +44,11 @@ bool FixItRewriter::WriteFixedFile(const std::string &InFileName,
   llvm::raw_ostream *OutFile;
   if (!OutFileName.empty()) {
     std::string Err;
-    OutFile = new llvm::raw_fd_ostream(OutFileName.c_str(), Err,
-                                       llvm::raw_fd_ostream::F_Binary);
+    OutFile = new llvm::raw_fd_ostream(OutFileName.c_str(), 
+                                       // set binary mode (critical for Windoze)
+                                       true, 
+                                       /*Force=*/true,
+                                       Err);
     OwnedStream.reset(OutFile);
   } else if (InFileName == "-") {
     OutFile = &llvm::outs();
@@ -56,13 +58,16 @@ bool FixItRewriter::WriteFixedFile(const std::string &InFileName,
     Path.eraseSuffix();
     Path.appendSuffix("fixit." + Suffix);
     std::string Err;
-    OutFile = new llvm::raw_fd_ostream(Path.c_str(), Err,
-                                       llvm::raw_fd_ostream::F_Binary);
+    OutFile = new llvm::raw_fd_ostream(Path.toString().c_str(), 
+                                       // set binary mode (critical for Windoze)
+                                       true, 
+                                       /*Force=*/true,
+                                       Err);
     OwnedStream.reset(OutFile);
-  }
+  }  
 
   FileID MainFileID = Rewrite.getSourceMgr().getMainFileID();
-  if (const RewriteBuffer *RewriteBuf =
+  if (const RewriteBuffer *RewriteBuf = 
         Rewrite.getRewriteBufferFor(MainFileID)) {
     *OutFile << std::string(RewriteBuf->begin(), RewriteBuf->end());
   } else {
@@ -99,7 +104,7 @@ void FixItRewriter::HandleDiagnostic(Diagnostic::Level DiagLevel,
     // See if the location of the error is one that matches what the
     // user requested.
     bool AcceptableLocation = false;
-    const FileEntry *File
+    const FileEntry *File 
       = Rewrite.getSourceMgr().getFileEntryForID(
                                             Info.getLocation().getFileID());
     unsigned Line = Info.getLocation().getSpellingLineNumber();
@@ -129,14 +134,14 @@ void FixItRewriter::HandleDiagnostic(Diagnostic::Level DiagLevel,
       break;
     }
 
-    if (Hint.InsertionLoc.isValid() &&
+    if (Hint.InsertionLoc.isValid() && 
         !Rewrite.isRewritable(Hint.InsertionLoc)) {
       CanRewrite = false;
       break;
     }
   }
 
-  if (!CanRewrite) {
+  if (!CanRewrite) { 
     if (Info.getNumCodeModificationHints() > 0)
       Diag(Info.getLocation(), diag::note_fixit_in_macro);
 
@@ -149,7 +154,7 @@ void FixItRewriter::HandleDiagnostic(Diagnostic::Level DiagLevel,
   }
 
   bool Failed = false;
-  for (unsigned Idx = 0, Last = Info.getNumCodeModificationHints();
+  for (unsigned Idx = 0, Last = Info.getNumCodeModificationHints(); 
        Idx < Last; ++Idx) {
     const CodeModificationHint &Hint = Info.getCodeModificationHint(Idx);
     if (!Hint.RemoveRange.isValid()) {
@@ -158,15 +163,15 @@ void FixItRewriter::HandleDiagnostic(Diagnostic::Level DiagLevel,
         Failed = true;
       continue;
     }
-
+    
     if (Hint.CodeToInsert.empty()) {
       // We're removing code.
       if (Rewrite.RemoveText(Hint.RemoveRange.getBegin(),
                              Rewrite.getRangeSize(Hint.RemoveRange)))
         Failed = true;
       continue;
-    }
-
+    } 
+      
     // We're replacing code.
     if (Rewrite.ReplaceText(Hint.RemoveRange.getBegin(),
                             Rewrite.getRangeSize(Hint.RemoveRange),
@@ -191,5 +196,5 @@ void FixItRewriter::Diag(FullSourceLoc Loc, unsigned DiagID) {
   Diags.setClient(Client);
   Diags.Clear();
   Diags.Report(Loc, DiagID);
-  Diags.setClient(this);
+  Diags.setClient(this);  
 }

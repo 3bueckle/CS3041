@@ -30,12 +30,7 @@ struct N : M, P {
   P p;
 };
 
-struct O : B { 
-  ~O() { return; } 
-};
-
 int main() {
   N n1;
   N n2;
-  O o;
 }

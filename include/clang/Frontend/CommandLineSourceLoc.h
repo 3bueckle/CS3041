@@ -34,45 +34,46 @@ namespace llvm {
     ///
     /// Source locations are of the form filename:line:column.
     template<>
-    class parser<clang::ParsedSourceLocation>
+    class parser<clang::ParsedSourceLocation> 
       : public basic_parser<clang::ParsedSourceLocation> {
     public:
-      bool parse(Option &O, StringRef ArgName, StringRef ArgValue,
+      bool parse(Option &O, const char *ArgName, 
+                 const std::string &ArgValue,
                  clang::ParsedSourceLocation &Val);
     };
 
-    bool
+    bool 
     parser<clang::ParsedSourceLocation>::
-    parse(Option &O, StringRef ArgName, StringRef ArgValue,
+    parse(Option &O, const char *ArgName, const std::string &ArgValue, 
           clang::ParsedSourceLocation &Val) {
       using namespace clang;
 
-      const char *ExpectedFormat
+      const char *ExpectedFormat 
         = "source location must be of the form filename:line:column";
-      StringRef::size_type SecondColon = ArgValue.rfind(':');
+      std::string::size_type SecondColon = ArgValue.rfind(':');
       if (SecondColon == std::string::npos) {
         std::fprintf(stderr, "%s\n", ExpectedFormat);
         return true;
       }
-
-      unsigned Column;
-      if (ArgValue.substr(SecondColon + 1).getAsInteger(10, Column)) {
+      char *EndPtr;
+      long Column 
+        = std::strtol(ArgValue.c_str() + SecondColon + 1, &EndPtr, 10);
+      if (EndPtr != ArgValue.c_str() + ArgValue.size()) {
         std::fprintf(stderr, "%s\n", ExpectedFormat);
         return true;
       }
-      ArgValue = ArgValue.substr(0, SecondColon);
 
-      StringRef::size_type FirstColon = ArgValue.rfind(':');
+      std::string::size_type FirstColon = ArgValue.rfind(':', SecondColon-1);
       if (FirstColon == std::string::npos) {
         std::fprintf(stderr, "%s\n", ExpectedFormat);
         return true;
       }
-      unsigned Line;
-      if (ArgValue.substr(FirstColon + 1).getAsInteger(10, Line)) {
+      long Line = std::strtol(ArgValue.c_str() + FirstColon + 1, &EndPtr, 10);
+      if (EndPtr != ArgValue.c_str() + SecondColon) {
         std::fprintf(stderr, "%s\n", ExpectedFormat);
         return true;
       }
-
+      
       Val.FileName = ArgValue.substr(0, FirstColon);
       Val.Line = Line;
       Val.Column = Column;

@@ -14,18 +14,15 @@
 #ifndef LLVM_CLANG_FRONTEND_ASTUNIT_H
 #define LLVM_CLANG_FRONTEND_ASTUNIT_H
 
-#include "clang/Basic/SourceManager.h"
 #include "llvm/ADT/OwningPtr.h"
-#include "clang/Frontend/TextDiagnosticBuffer.h"
-#include "clang/Basic/FileManager.h"
 #include <string>
 
 namespace clang {
   class FileManager;
   class FileEntry;
   class SourceManager;
+  class DiagnosticClient;
   class Diagnostic;
-  class TextDiagnosticBuffer;
   class HeaderSearch;
   class TargetInfo;
   class Preprocessor;
@@ -35,70 +32,45 @@ namespace clang {
 /// \brief Utility class for loading a ASTContext from a PCH file.
 ///
 class ASTUnit {
-  Diagnostic Diags;
-  FileManager FileMgr;
-
-  SourceManager                     SourceMgr;
+  llvm::OwningPtr<SourceManager>    SourceMgr;
+  llvm::OwningPtr<DiagnosticClient> DiagClient;
+  llvm::OwningPtr<Diagnostic>       Diags;
   llvm::OwningPtr<HeaderSearch>     HeaderInfo;
   llvm::OwningPtr<TargetInfo>       Target;
   llvm::OwningPtr<Preprocessor>     PP;
   llvm::OwningPtr<ASTContext>       Ctx;
-  bool                              tempFile;
-  
-  // OnlyLocalDecls - when true, walking this AST should only visit declarations
-  // that come from the AST itself, not from included precompiled headers.
-  // FIXME: This is temporary; eventually, CIndex will always do this.
-  bool                              OnlyLocalDecls;
-  
-  ASTUnit(const ASTUnit&); // DO NOT IMPLEMENT
-  ASTUnit &operator=(const ASTUnit &); // DO NOT IMPLEMENT
-  ASTUnit();
 
+  ASTUnit(const ASTUnit&); // do not implement
+  ASTUnit &operator=(const ASTUnit &); // do not implement
+  ASTUnit();
+  
 public:
-  ASTUnit(DiagnosticClient *diagClient = NULL);
   ~ASTUnit();
 
-  const SourceManager &getSourceManager() const { return SourceMgr; }
-        SourceManager &getSourceManager()       { return SourceMgr; }
+  const SourceManager &getSourceManager() const { return *SourceMgr.get(); }
+        SourceManager &getSourceManager()       { return *SourceMgr.get(); }
 
   const Preprocessor &getPreprocessor() const { return *PP.get(); }
         Preprocessor &getPreprocessor()       { return *PP.get(); }
-
+              
   const ASTContext &getASTContext() const { return *Ctx.get(); }
         ASTContext &getASTContext()       { return *Ctx.get(); }
 
-  const Diagnostic &getDiagnostic() const { return Diags; }
-        Diagnostic &getDiagnostic()       { return Diags; }
+  const Diagnostic &getDiagnostic() const { return *Diags.get(); }
+        Diagnostic &getDiagnostic()       { return *Diags.get(); }
 
-  const FileManager &getFileManager() const { return FileMgr; }
-        FileManager &getFileManager()       { return FileMgr; }
-  
-  const std::string &getOriginalSourceFileName();
-  const std::string &getPCHFileName();
-
-  void unlinkTemporaryFile() { tempFile = true; }
-  
-  bool getOnlyLocalDecls() const { return OnlyLocalDecls; }
-  
   /// \brief Create a ASTUnit from a PCH file.
   ///
-  /// \param Filename - The PCH file to load.
+  /// \param Filename PCH filename
   ///
-  /// \param diagClient - The diagnostics client to use.  Specify NULL
-  /// to use a default client that emits warnings/errors to standard error.
-  /// The ASTUnit objects takes ownership of this object.
+  /// \param FileMgr The FileManager to use
   ///
-  /// \param FileMgr - The FileManager to use.
+  /// \param ErrMsg Error message to report if the PCH file could not be loaded
   ///
-  /// \param ErrMsg - Error message to report if the PCH file could not be
-  /// loaded.
-  ///
-  /// \returns - The initialized ASTUnit or null if the PCH failed to load.
+  /// \returns the initialized ASTUnit or NULL if the PCH failed to load
   static ASTUnit *LoadFromPCHFile(const std::string &Filename,
-                                  std::string *ErrMsg = 0,
-                                  DiagnosticClient *diagClient = NULL,
-                                  bool OnlyLocalDecls = false,
-                                  bool UseBumpAllocator = false);
+                                  FileManager &FileMgr,
+                                  std::string *ErrMsg = 0);
 };
 
 } // namespace clang

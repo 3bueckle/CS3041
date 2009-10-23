@@ -4,7 +4,7 @@ static void (*fp0)(void) __attribute__((noreturn));
 
 static void __attribute__((noreturn)) f0(void) {
   fatal();
-} // expected-warning {{function declared 'noreturn' should not return}}
+} // expected-error {{function declared 'noreturn' should not return}}
 
 // On K&R
 int f1() __attribute__((noreturn));
@@ -15,14 +15,14 @@ int f2() __attribute__((noreturn(1, 2))); // expected-error {{attribute requires
 
 void f3() __attribute__((noreturn));
 void f3() {
-  return;  // expected-warning {{function 'f3' declared 'noreturn' should not return}}
+  return;  // expected-error {{function 'f3' declared 'noreturn' should not return}}
 }
 
-#pragma clang diagnostic error "-Winvalid-noreturn"
+#pragma clang diagnostic warning "-Winvalid-noreturn"
 
 void f4() __attribute__((noreturn));
 void f4() {
-  return;  // expected-error {{function 'f4' declared 'noreturn' should not return}}
+  return;  // expected-warning {{function 'f4' declared 'noreturn' should not return}}
 }
 
 // PR4685

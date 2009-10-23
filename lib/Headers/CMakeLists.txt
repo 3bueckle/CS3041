@@ -14,10 +14,11 @@ set(files
   tmmintrin.h
   xmmintrin.h)
 
+#FIXME: Centralize Clang version info
 if (MSVC_IDE OR XCODE)
-  set(output_dir ${LLVM_BINARY_DIR}/bin/lib/clang/${CLANG_VERSION}/include)
+  set(output_dir ${LLVM_BINARY_DIR}/bin/lib/clang/1.0/include)
 else ()
-  set(output_dir ${LLVM_BINARY_DIR}/lib/clang/${CLANG_VERSION}/include)
+  set(output_dir ${LLVM_BINARY_DIR}/lib/clang/1.0/include)
 endif ()
 
 
@@ -35,4 +36,4 @@ add_custom_target(clang-headers ALL
 
 install(FILES ${files}
   PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
-  DESTINATION lib/clang/${CLANG_VERSION}/include)
+  DESTINATION Headers)

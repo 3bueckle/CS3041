@@ -170,13 +170,11 @@ void test()
     i1 ? &MixedFields::ci : &MixedFieldsDerived::i;
   const volatile int (MixedFields::*mp2) =
     i1 ? &MixedFields::ci : &MixedFields::cvi;
-  (void)(i1 ? &MixedFields::ci : &MixedFields::vi);
+  i1 ? &MixedFields::ci : &MixedFields::vi; // expected-error {{incompatible operand types}}
   // Conversion of primitives does not result in an lvalue.
   &(i1 ? i1 : d1); // expected-error {{address expression must be an lvalue or a function designator}}
 
-  (void)&(i1 ? flds.b1 : flds.i1); // expected-error {{address of bit-field requested}}
-  (void)&(i1 ? flds.i1 : flds.b1); // expected-error {{address of bit-field requested}}
-  
+
   // Note the thing that this does not test: since DR446, various situations
   // *must* create a separate temporary copy of class objects. This can only
   // be properly tested at runtime, though.

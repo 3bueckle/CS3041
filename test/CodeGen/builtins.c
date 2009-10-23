@@ -2,6 +2,7 @@
 // RUN: not grep __builtin %t
 
 #include <stdio.h>
+#include <math.h>
 
 void p(char *str, int x) {
   printf("%s: %d\n", str, x);
@@ -52,8 +53,6 @@ int main() {
   P(islessequal, (1., 2.));
   P(islessgreater, (1., 2.));
   P(isunordered, (1., 2.));
-
-  P(isnan, (1.));
 
   // Bitwise & Numeric Functions
 

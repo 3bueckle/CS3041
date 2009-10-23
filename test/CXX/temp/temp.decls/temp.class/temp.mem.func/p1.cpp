@@ -43,7 +43,7 @@ void X0<X, Y>::f3(size_type) const {
 }
 
 template<class X, class Y> 
-void X0<Y, X>::f4() { } // expected-error{{does not refer}}
+void X0<Y, X>::f4() { } // expected-error{{does not refer to}}
 
 // FIXME: error message should probably say, "redefinition of 'X0<T, U>::f0'"
 // rather than just "redefinition of 'f0'"
@@ -63,6 +63,3 @@ template<typename T, typename U>
 X0<T, U>::operator T*() const {
   return &value;
 }
-
-namespace N { template <class X> class A {void a();}; }
-namespace N { template <class X> void A<X>::a() {} }

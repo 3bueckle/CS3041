@@ -8,6 +8,6 @@
 ##===----------------------------------------------------------------------===##
 
 LEVEL := ../../..
-DIRS := clang-cc driver index-test CIndex c-index-test
+DIRS := clang-cc driver index-test wpa
 
 include $(LEVEL)/Makefile.common

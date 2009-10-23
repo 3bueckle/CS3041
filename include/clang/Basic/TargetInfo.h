@@ -16,7 +16,6 @@
 
 // FIXME: Daniel isn't smart enough to use a prototype for this.
 #include "llvm/ADT/StringMap.h"
-#include "llvm/ADT/Triple.h"
 #include "llvm/Support/DataTypes.h"
 #include <cassert>
 #include <vector>
@@ -34,11 +33,11 @@ class SourceLocation;
 class SourceManager;
 class LangOptions;
 namespace Builtin { struct Info; }
-
+  
 /// TargetInfo - This class exposes information about the current target.
 ///
 class TargetInfo {
-  llvm::Triple Triple;
+  std::string Triple;
 protected:
   // Target values set by the ctor of the actual target implementation.  Default
   // values are specified by the TargetInfo constructor.
@@ -61,8 +60,8 @@ protected:
 
   // TargetInfo Constructor.  Default initializes all fields.
   TargetInfo(const std::string &T);
-
-public:
+  
+public:  
   /// CreateTargetInfo - Return the target info object for the specified target
   /// triple.
   static TargetInfo* CreateTargetInfo(const std::string &Triple);
@@ -83,7 +82,7 @@ public:
   };
 protected:
   IntType SizeType, IntMaxType, UIntMaxType, PtrDiffType, IntPtrType, WCharType,
-          WIntType, Char16Type, Char32Type, Int64Type;
+          Char16Type, Char32Type, Int64Type;
 public:
   IntType getSizeType() const { return SizeType; }
   IntType getIntMaxType() const { return IntMaxType; }
@@ -93,19 +92,9 @@ public:
   }
   IntType getIntPtrType() const { return IntPtrType; }
   IntType getWCharType() const { return WCharType; }
-  IntType getWIntType() const { return WIntType; }
   IntType getChar16Type() const { return Char16Type; }
   IntType getChar32Type() const { return Char32Type; }
   IntType getInt64Type() const { return Int64Type; }
-
-
-  /// getTypeWidth - Return the width (in bits) of the specified integer type 
-  /// enum. For example, SignedInt -> getIntWidth().
-  unsigned getTypeWidth(IntType T) const;
-
-  /// getTypeSigned - Return whether an integer types is signed. Returns true if
-  /// the type is signed; false otherwise.
-  bool getTypeSigned(IntType T) const;
 
   /// getPointerWidth - Return the width of pointers on this target, for the
   /// specified address space.
@@ -115,35 +104,35 @@ public:
   uint64_t getPointerAlign(unsigned AddrSpace) const {
     return AddrSpace == 0 ? PointerAlign : getPointerAlignV(AddrSpace);
   }
-
+  
   /// getBoolWidth/Align - Return the size of '_Bool' and C++ 'bool' for this
   /// target, in bits.
   unsigned getBoolWidth(bool isWide = false) const { return 8; }  // FIXME
   unsigned getBoolAlign(bool isWide = false) const { return 8; }  // FIXME
-
+ 
   unsigned getCharWidth() const { return 8; } // FIXME
   unsigned getCharAlign() const { return 8; } // FIXME
-
+  
   /// getShortWidth/Align - Return the size of 'signed short' and
-  /// 'unsigned short' for this target, in bits.
+  /// 'unsigned short' for this target, in bits.  
   unsigned getShortWidth() const { return 16; } // FIXME
   unsigned getShortAlign() const { return 16; } // FIXME
-
+  
   /// getIntWidth/Align - Return the size of 'signed int' and 'unsigned int' for
   /// this target, in bits.
   unsigned getIntWidth() const { return IntWidth; }
   unsigned getIntAlign() const { return IntAlign; }
-
+  
   /// getLongWidth/Align - Return the size of 'signed long' and 'unsigned long'
   /// for this target, in bits.
   unsigned getLongWidth() const { return LongWidth; }
   unsigned getLongAlign() const { return LongAlign; }
-
+  
   /// getLongLongWidth/Align - Return the size of 'signed long long' and
   /// 'unsigned long long' for this target, in bits.
   unsigned getLongLongWidth() const { return LongLongWidth; }
   unsigned getLongLongAlign() const { return LongLongAlign; }
-
+  
   /// getWCharWidth/Align - Return the size of 'wchar_t' for this target, in
   /// bits.
   unsigned getWCharWidth() const { return WCharWidth; }
@@ -176,13 +165,13 @@ public:
   const llvm::fltSemantics &getLongDoubleFormat() const {
     return *LongDoubleFormat;
   }
-
+  
   /// getIntMaxTWidth - Return the size of intmax_t and uintmax_t for this
-  /// target, in bits.
+  /// target, in bits.  
   unsigned getIntMaxTWidth() const {
     return IntMaxTWidth;
   }
-
+  
   /// getUserLabelPrefix - This returns the default value of the
   /// __USER_LABEL_PREFIX__ macro, which is the prefix given to user symbols by
   /// default.  On most platforms this is "_", but it is "" on some, and "." on
@@ -190,27 +179,22 @@ public:
   const char *getUserLabelPrefix() const {
     return UserLabelPrefix;
   }
-
+  
   /// getTypeName - Return the user string for the specified integer type enum.
   /// For example, SignedShort -> "short".
   static const char *getTypeName(IntType T);
-
-  /// getTypeConstantSuffix - Return the constant suffix for the specified
-  /// integer type enum. For example, SignedLong -> "L".
-  static const char *getTypeConstantSuffix(IntType T);
-
+  
   ///===---- Other target property query methods --------------------------===//
-
+  
   /// getTargetDefines - Appends the target-specific #define values for this
   /// target set to the specified buffer.
   virtual void getTargetDefines(const LangOptions &Opts,
                                 std::vector<char> &DefineBuffer) const = 0;
-
-
+  
   /// getTargetBuiltins - Return information about target-specific builtins for
   /// the current primary target, and info about which builtins are non-portable
   /// across the current set of primary and secondary targets.
-  virtual void getTargetBuiltins(const Builtin::Info *&Records,
+  virtual void getTargetBuiltins(const Builtin::Info *&Records, 
                                  unsigned &NumRecords) const = 0;
 
   /// getVAListDeclaration - Return the declaration to use for
@@ -225,7 +209,7 @@ public:
   // getNormalizedGCCRegisterName - Returns the "normalized" GCC register name.
   // For example, on x86 it will return "ax" when "eax" is passed in.
   const char *getNormalizedGCCRegisterName(const char *Name) const;
-
+  
   struct ConstraintInfo {
     enum {
       CI_None = 0x00,
@@ -236,7 +220,7 @@ public:
     };
     unsigned Flags;
     int TiedOperand;
-
+    
     std::string ConstraintStr;  // constraint: "=rm"
     std::string Name;           // Operand name: [foo] with no []'s.
   public:
@@ -250,11 +234,11 @@ public:
     bool isReadWrite() const { return (Flags & CI_ReadWrite) != 0; }
     bool allowsRegister() const { return (Flags & CI_AllowsRegister) != 0; }
     bool allowsMemory() const { return (Flags & CI_AllowsMemory) != 0; }
-
+    
     /// hasMatchingInput - Return true if this output operand has a matching
     /// (tied) input operand.
     bool hasMatchingInput() const { return (Flags & CI_HasMatchingInput) != 0; }
-
+    
     /// hasTiedOperand() - Return true if this input operand is a matching
     /// constraint that ties it to an output operand.  If this returns true,
     /// then getTiedOperand will indicate which output operand this is tied to.
@@ -263,12 +247,12 @@ public:
       assert(hasTiedOperand() && "Has no tied operand!");
       return (unsigned)TiedOperand;
     }
-
+    
     void setIsReadWrite() { Flags |= CI_ReadWrite; }
     void setAllowsMemory() { Flags |= CI_AllowsMemory; }
     void setAllowsRegister() { Flags |= CI_AllowsRegister; }
     void setHasMatchingInput() { Flags |= CI_HasMatchingInput; }
-
+    
     /// setTiedOperand - Indicate that this is an input operand that is tied to
     /// the specified output operand.  Copy over the various constraint
     /// information from the output.
@@ -290,20 +274,24 @@ public:
   bool resolveSymbolicName(const char *&Name,
                            ConstraintInfo *OutputConstraints,
                            unsigned NumOutputs, unsigned &Index) const;
-
+  
   virtual std::string convertConstraint(const char Constraint) const {
     return std::string(1, Constraint);
   }
-
+  
   // Returns a string of target-specific clobbers, in LLVM format.
   virtual const char *getClobbers() const = 0;
+  
 
-
-  /// getTriple - Return the target triple of the primary target.
-  const llvm::Triple &getTriple() const {
-    return Triple;
+  /// getTargetPrefix - Return the target prefix used for identifying
+  /// llvm intrinsics.
+  virtual const char *getTargetPrefix() const = 0;
+    
+  /// getTargetTriple - Return the target triple of the primary target.
+  const char *getTargetTriple() const {
+    return Triple.c_str();
   }
-
+  
   const char *getTargetDescription() const {
     return DescriptionString;
   }
@@ -315,18 +303,32 @@ public:
 
   virtual bool useGlobalsForAutomaticVariables() const { return false; }
 
+  /// getUnicodeStringSymbolPrefix - Get the default symbol prefix to
+  /// use for string literals.
+  virtual const char *getUnicodeStringSymbolPrefix() const { 
+    return ".str";
+  }
+
   /// getUnicodeStringSection - Return the section to use for unicode
   /// string literals, or 0 if no special section is used.
-  virtual const char *getUnicodeStringSection() const {
+  virtual const char *getUnicodeStringSection() const { 
     return 0;
   }
 
   /// getCFStringSection - Return the section to use for CFString
   /// literals, or 0 if no special section is used.
-  virtual const char *getCFStringSection() const {
+  virtual const char *getCFStringSection() const { 
     return "__DATA,__cfstring";
   }
 
+  /// getCFStringDataSection - Return the section to use for the
+  /// constant string data associated with a CFString literal, or 0 if
+  /// no special section is used.
+  virtual const char *getCFStringDataSection() const { 
+    return "__TEXT,__cstring,cstring_literals";
+  }
+  
+  
   /// isValidSectionSpecifier - This is an optional hook that targets can
   /// implement to perform semantic checking on attribute((section("foo")))
   /// specifiers.  In this case, "foo" is passed in to be checked.  If the
@@ -343,26 +345,14 @@ public:
 
   /// getDefaultLangOptions - Allow the target to specify default settings for
   /// various language options.  These may be overridden by command line
-  /// options.
+  /// options. 
   virtual void getDefaultLangOptions(LangOptions &Opts) {}
 
   /// getDefaultFeatures - Get the default set of target features for
   /// the \args CPU; this should include all legal feature strings on
   /// the target.
-  virtual void getDefaultFeatures(const std::string &CPU,
+  virtual void getDefaultFeatures(const std::string &CPU, 
                                   llvm::StringMap<bool> &Features) const {
-  }
-
-  /// getABI - Get the ABI in use.
-  virtual const char *getABI() const {
-    return "";
-  }
-
-  /// setABI - Use the specific ABI.
-  ///
-  /// \return - False on error (invalid ABI name).
-  virtual bool setABI(const std::string &Name) {
-    return false;
   }
 
   /// setFeatureEnabled - Enable or disable a specific target feature,
@@ -385,17 +375,10 @@ public:
     return RegParmMax;
   }
 
-  /// isTLSSupported - Whether the target supports thread-local storage.
-  bool isTLSSupported() const {
+  // isTLSSupported - Whether the target supports thread-local storage
+  unsigned isTLSSupported() const {
     return TLSSupported;
   }
-  
-  /// getEHDataRegisterNumber - Return the register number that
-  /// __builtin_eh_return_regno would return with the specified argument.
-  virtual int getEHDataRegisterNumber(unsigned RegNo) const {
-    return -1; 
-  }
-  
 
 protected:
   virtual uint64_t getPointerWidthV(unsigned AddrSpace) const {
@@ -407,11 +390,11 @@ protected:
   virtual enum IntType getPtrDiffTypeV(unsigned AddrSpace) const {
     return PtrDiffType;
   }
-  virtual void getGCCRegNames(const char * const *&Names,
+  virtual void getGCCRegNames(const char * const *&Names, 
                               unsigned &NumNames) const = 0;
-  virtual void getGCCRegAliases(const GCCRegAlias *&Aliases,
+  virtual void getGCCRegAliases(const GCCRegAlias *&Aliases, 
                                 unsigned &NumAliases) const = 0;
-  virtual bool validateAsmConstraint(const char *&Name,
+  virtual bool validateAsmConstraint(const char *&Name, 
                                      TargetInfo::ConstraintInfo &info) const= 0;
 };
 

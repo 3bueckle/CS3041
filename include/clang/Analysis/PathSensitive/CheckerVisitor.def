@@ -13,6 +13,5 @@
 
 PREVISIT(CallExpr)
 PREVISIT(ObjCMessageExpr)
-PREVISIT(BinaryOperator)
 
 #undef PREVISIT

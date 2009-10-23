@@ -25,6 +25,8 @@ int main() { return 0; }
 
 #define I 1.0iF
 
+#include <math.h>
+
 #include <stdio.h>
 
 volatile double __complex__ accum;

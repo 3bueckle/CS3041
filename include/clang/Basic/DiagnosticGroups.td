@@ -19,13 +19,12 @@ def Implicit : DiagGroup<"implicit", [
 
 
 // Empty DiagGroups: these are recognized by clang but ignored.
-def : DiagGroup<"address">;
 def : DiagGroup<"aggregate-return">;
-def : DiagGroup<"attributes">;
 def : DiagGroup<"bad-function-cast">;
 def : DiagGroup<"cast-align">;
 def : DiagGroup<"cast-qual">;
 def : DiagGroup<"char-align">;
+def : DiagGroup<"char-subscripts">;
 def Comment : DiagGroup<"comment">;
 def : DiagGroup<"conversion">;
 def : DiagGroup<"declaration-after-statement">;
@@ -57,11 +56,9 @@ def : DiagGroup<"missing-field-initializers">;
 def NonNull : DiagGroup<"nonnull">;
 def : DiagGroup<"nonportable-cfstrings">;
 def : DiagGroup<"old-style-definition">;
-def : DiagGroup<"overflow">;
-def : DiagGroup<"overloaded-virtual">;
 def : DiagGroup<"packed">;
 def Parentheses : DiagGroup<"parentheses">;
-def PointerArith : DiagGroup<"pointer-arith">;
+def : DiagGroup<"pointer-arith">;
 def : DiagGroup<"pointer-to-int-cast">;
 def : DiagGroup<"redundant-decls">;
 def ReturnType : DiagGroup<"return-type">;
@@ -69,9 +66,6 @@ def : DiagGroup<"sequence-point">;
 def : DiagGroup<"shadow">;
 def : DiagGroup<"shorten-64-to-32">;
 def : DiagGroup<"sign-compare">;
-
-// Preprocessor warnings.
-def : DiagGroup<"builtin-macro-redefined">;
 
 // Just silence warnings about common forms of -Wstrict-aliasing for now.
 def : DiagGroup<"strict-aliasing=0">;
@@ -103,12 +97,10 @@ def UnusedVariable : DiagGroup<"unused-variable">;
 def ReadOnlySetterAttrs : DiagGroup<"readonly-setter-attrs">;
 def Reorder : DiagGroup<"reorder">;
 def UndeclaredSelector : DiagGroup<"undeclared-selector">;
-def SuperSubClassMismatch : DiagGroup<"super-class-method-mismatch">;
 def : DiagGroup<"variadic-macros">;
 def VectorConversions : DiagGroup<"vector-conversions">;      // clang specific
 def VolatileRegisterVar : DiagGroup<"volatile-register-var">;
 def : DiagGroup<"write-strings">;
-def CharSubscript : DiagGroup<"char-subscripts">;
 
 // Aggregation warning settings.
 
@@ -145,8 +137,9 @@ def Most : DiagGroup<"most", [
     UnusedVariable,
     VectorConversions,
     VolatileRegisterVar,
+    ReadOnlySetterAttrs,
     Reorder,
-    CharSubscript
+    UndeclaredSelector
  ]>;
 
 // -Wall is -Wmost -Wparentheses

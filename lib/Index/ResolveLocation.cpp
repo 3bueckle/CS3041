@@ -14,7 +14,6 @@
 
 #include "clang/Index/Utils.h"
 #include "clang/Index/ASTLocation.h"
-#include "clang/AST/TypeLocVisitor.h"
 #include "clang/AST/DeclVisitor.h"
 #include "clang/AST/StmtVisitor.h"
 #include "clang/Lex/Lexer.h"
@@ -30,8 +29,6 @@ class VISIBILITY_HIDDEN LocResolverBase {
 protected:
   ASTContext &Ctx;
   SourceLocation Loc;
-  
-  ASTLocation ResolveInDeclarator(Decl *D, Stmt *Stm, DeclaratorInfo *DInfo);
 
   enum RangePos {
     BeforeLoc,
@@ -40,29 +37,21 @@ protected:
   };
 
   RangePos CheckRange(SourceRange Range);
-  RangePos CheckRange(DeclaratorInfo *DInfo);
-  RangePos CheckRange(Decl *D) {
-    if (DeclaratorDecl *DD = dyn_cast<DeclaratorDecl>(D))
-      if (ContainsLocation(DD->getDeclaratorInfo()))
-        return ContainsLoc;
-
-    return CheckRange(D->getSourceRange());
-  }
+  RangePos CheckRange(Decl *D) { return CheckRange(D->getSourceRange()); }
   RangePos CheckRange(Stmt *Node) { return CheckRange(Node->getSourceRange()); }
-  RangePos CheckRange(TypeLoc TL) { return CheckRange(TL.getSourceRange()); }
 
   template <typename T>
-  bool isBeforeLocation(T Node) {
+  bool isBeforeLocation(T *Node) {
     return CheckRange(Node) == BeforeLoc;
   }
 
   template <typename T>
-  bool ContainsLocation(T Node) {
+  bool ContainsLocation(T *Node) {
     return CheckRange(Node) == ContainsLoc;
   }
 
   template <typename T>
-  bool isAfterLocation(T Node) {
+  bool isAfterLocation(T *Node) {
     return CheckRange(Node) == AfterLoc;
   }
 
@@ -105,28 +94,10 @@ public:
 
   ASTLocation VisitDeclContext(DeclContext *DC);
   ASTLocation VisitTranslationUnitDecl(TranslationUnitDecl *TU);
-  ASTLocation VisitDeclaratorDecl(DeclaratorDecl *D);
   ASTLocation VisitVarDecl(VarDecl *D);
   ASTLocation VisitFunctionDecl(FunctionDecl *D);
   ASTLocation VisitObjCMethodDecl(ObjCMethodDecl *D);
   ASTLocation VisitDecl(Decl *D);
-};
-
-class TypeLocResolver : public LocResolverBase,
-                        public TypeLocVisitor<TypeLocResolver, ASTLocation> {
-  Decl * const ParentDecl;
-
-public:
-  TypeLocResolver(ASTContext &ctx, SourceLocation loc, Decl *pd)
-    : LocResolverBase(ctx, loc), ParentDecl(pd) { }
-
-  ASTLocation VisitBuiltinTypeLoc(BuiltinTypeLoc TL);
-  ASTLocation VisitTypedefTypeLoc(TypedefTypeLoc TL);
-  ASTLocation VisitFunctionTypeLoc(FunctionTypeLoc TL);
-  ASTLocation VisitArrayTypeLoc(ArrayTypeLoc TL);
-  ASTLocation VisitObjCInterfaceTypeLoc(ObjCInterfaceTypeLoc TL);
-  ASTLocation VisitObjCObjectPointerTypeLoc(ObjCObjectPointerTypeLoc TL);
-  ASTLocation VisitTypeLoc(TypeLoc TL);
 };
 
 } // anonymous namespace
@@ -148,7 +119,7 @@ StmtLocResolver::VisitCXXOperatorCallExpr(CXXOperatorCallExpr *Node) {
   Nodes.push_back(Node->getArg(0));
   Nodes.push_back(Node->getCallee());
   Nodes.push_back(Node->getArg(1));
-
+  
   for (unsigned i = 0, e = Nodes.size(); i != e; ++i) {
     RangePos RP = CheckRange(Nodes[i]);
     if (RP == AfterLoc)
@@ -212,7 +183,7 @@ ASTLocation DeclLocResolver::VisitDeclContext(DeclContext *DC) {
 
 ASTLocation DeclLocResolver::VisitTranslationUnitDecl(TranslationUnitDecl *TU) {
   ASTLocation ASTLoc = VisitDeclContext(TU);
-  if (ASTLoc.getParentDecl() == TU)
+  if (ASTLoc.getDecl() == TU)
     return ASTLocation();
   return ASTLoc;
 }
@@ -220,9 +191,6 @@ ASTLocation DeclLocResolver::VisitTranslationUnitDecl(TranslationUnitDecl *TU) {
 ASTLocation DeclLocResolver::VisitFunctionDecl(FunctionDecl *D) {
   assert(ContainsLocation(D) &&
          "Should visit only after verifying that loc is in range");
-
-  if (ContainsLocation(D->getDeclaratorInfo()))
-    return ResolveInDeclarator(D, 0, D->getDeclaratorInfo());
 
   // First, search through the parameters of the function.
   for (FunctionDecl::param_iterator
@@ -233,9 +201,9 @@ ASTLocation DeclLocResolver::VisitFunctionDecl(FunctionDecl *D) {
     if (RP == ContainsLoc)
       return Visit(*I);
   }
-
+  
   // We didn't find the location in the parameters and we didn't get passed it.
-
+  
   if (!D->isThisDeclarationADefinition())
     return ASTLocation(D);
 
@@ -246,7 +214,7 @@ ASTLocation DeclLocResolver::VisitFunctionDecl(FunctionDecl *D) {
          I = D->decls_begin(), E = D->decls_end(); I != E; ++I) {
     if (isa<ParmVarDecl>(*I))
       continue; // We already searched through the parameters.
-
+    
     RangePos RP = CheckRange(*I);
     if (RP == AfterLoc)
       break;
@@ -255,7 +223,7 @@ ASTLocation DeclLocResolver::VisitFunctionDecl(FunctionDecl *D) {
   }
 
   // We didn't find a declaration that corresponds to the source location.
-
+  
   // Finally, search through the body of the function.
   Stmt *Body = D->getBody();
   assert(Body && "Expected definition");
@@ -269,15 +237,6 @@ ASTLocation DeclLocResolver::VisitFunctionDecl(FunctionDecl *D) {
   return StmtLocResolver(Ctx, Loc, D).Visit(Body);
 }
 
-ASTLocation DeclLocResolver::VisitDeclaratorDecl(DeclaratorDecl *D) {
-  assert(ContainsLocation(D) &&
-         "Should visit only after verifying that loc is in range");
-  if (ContainsLocation(D->getDeclaratorInfo()))
-    return ResolveInDeclarator(D, /*Stmt=*/0, D->getDeclaratorInfo());
-
-  return ASTLocation(D);
-}
-
 ASTLocation DeclLocResolver::VisitVarDecl(VarDecl *D) {
   assert(ContainsLocation(D) &&
          "Should visit only after verifying that loc is in range");
@@ -286,9 +245,6 @@ ASTLocation DeclLocResolver::VisitVarDecl(VarDecl *D) {
   Expr *Init = D->getInit();
   if (Init && ContainsLocation(Init))
     return StmtLocResolver(Ctx, Loc, D).Visit(Init);
-  
-  if (ContainsLocation(D->getDeclaratorInfo()))
-    return ResolveInDeclarator(D, 0, D->getDeclaratorInfo());
 
   return ASTLocation(D);
 }
@@ -350,126 +306,6 @@ ASTLocation DeclLocResolver::VisitDecl(Decl *D) {
   return ASTLocation(D);
 }
 
-ASTLocation TypeLocResolver::VisitBuiltinTypeLoc(BuiltinTypeLoc TL) {
-  // Continue the 'id' magic by making the builtin type (which cannot
-  // actually be spelled) map to the typedef.
-  BuiltinType *T = TL.getTypePtr();
-  if (T->getKind() == BuiltinType::ObjCId) {
-    TypedefDecl *D = Ctx.getObjCIdType()->getAs<TypedefType>()->getDecl();
-    return ASTLocation(ParentDecl, D, TL.getNameLoc());
-  }
-
-  // Same thing with 'Class'.
-  if (T->getKind() == BuiltinType::ObjCClass) {
-    TypedefDecl *D = Ctx.getObjCClassType()->getAs<TypedefType>()->getDecl();
-    return ASTLocation(ParentDecl, D, TL.getNameLoc());
-  }
-
-  return ASTLocation(ParentDecl, TL);
-}
-
-ASTLocation TypeLocResolver::VisitTypedefTypeLoc(TypedefTypeLoc TL) {
-  assert(ContainsLocation(TL) &&
-         "Should visit only after verifying that loc is in range");
-  if (ContainsLocation(TL.getNameLoc()))
-    return ASTLocation(ParentDecl, TL.getTypedefDecl(), TL.getNameLoc());
-  return ASTLocation(ParentDecl, TL);
-}
-
-ASTLocation TypeLocResolver::VisitFunctionTypeLoc(FunctionTypeLoc TL) {
-  assert(ContainsLocation(TL) &&
-         "Should visit only after verifying that loc is in range");
-
-  for (unsigned i = 0; i != TL.getNumArgs(); ++i) {
-    ParmVarDecl *Parm = TL.getArg(i);
-    RangePos RP = CheckRange(Parm);
-    if (RP == AfterLoc)
-      break;
-    if (RP == ContainsLoc)
-      return DeclLocResolver(Ctx, Loc).Visit(Parm);
-  }
-
-  return ASTLocation(ParentDecl, TL);
-}
-
-ASTLocation TypeLocResolver::VisitArrayTypeLoc(ArrayTypeLoc TL) {
-  assert(ContainsLocation(TL) &&
-         "Should visit only after verifying that loc is in range");
-
-  Expr *E = TL.getSizeExpr();
-  if (E && ContainsLocation(E))
-    return StmtLocResolver(Ctx, Loc, ParentDecl).Visit(E);
-
-  return ASTLocation(ParentDecl, TL);
-}
-
-ASTLocation TypeLocResolver::VisitObjCInterfaceTypeLoc(ObjCInterfaceTypeLoc TL) {
-  assert(ContainsLocation(TL) &&
-         "Should visit only after verifying that loc is in range");
-  if (ContainsLocation(TL.getNameLoc()))
-    return ASTLocation(ParentDecl, TL.getIFaceDecl(), TL.getNameLoc());
-
-  for (unsigned i = 0; i != TL.getNumProtocols(); ++i) {
-    SourceLocation L = TL.getProtocolLoc(i);
-    RangePos RP = CheckRange(L);
-    if (RP == AfterLoc)
-      break;
-    if (RP == ContainsLoc)
-      return ASTLocation(ParentDecl, TL.getProtocol(i), L);
-  }
-
-  return ASTLocation(ParentDecl, TL);
-}
-
-ASTLocation TypeLocResolver::VisitObjCObjectPointerTypeLoc(ObjCObjectPointerTypeLoc TL) {
-  assert(ContainsLocation(TL) &&
-         "Should visit only after verifying that loc is in range");
-
-  if (TL.hasProtocolsAsWritten()) {
-    for (unsigned i = 0; i != TL.getNumProtocols(); ++i) {
-      SourceLocation L = TL.getProtocolLoc(i);
-      RangePos RP = CheckRange(L);
-      if (RP == AfterLoc)
-        break;
-      if (RP == ContainsLoc)
-        return ASTLocation(ParentDecl, TL.getProtocol(i), L);
-    }
-  }
-
-  return ASTLocation(ParentDecl, TL);
-}
-
-ASTLocation TypeLocResolver::VisitTypeLoc(TypeLoc TL) {
-  assert(ContainsLocation(TL) &&
-         "Should visit only after verifying that loc is in range");
-  return ASTLocation(ParentDecl, TL);
-}
-
-ASTLocation LocResolverBase::ResolveInDeclarator(Decl *D, Stmt *Stm,
-                                                 DeclaratorInfo *DInfo) {
-  assert(ContainsLocation(DInfo) &&
-         "Should visit only after verifying that loc is in range");
-  
-  TypeLocResolver(Ctx, Loc, D);
-  for (TypeLoc TL = DInfo->getTypeLoc(); TL; TL = TL.getNextTypeLoc())
-    if (ContainsLocation(TL))
-      return TypeLocResolver(Ctx, Loc, D).Visit(TL);
-  
-  assert(0 && "Should have found the loc in a typeloc");
-  return ASTLocation(D, Stm);
-}
-
-LocResolverBase::RangePos LocResolverBase::CheckRange(DeclaratorInfo *DInfo) {
-  if (!DInfo)
-    return BeforeLoc; // Keep looking.
-
-  for (TypeLoc TL = DInfo->getTypeLoc(); TL; TL = TL.getNextTypeLoc())
-    if (ContainsLocation(TL))
-      return ContainsLoc;
-
-  return BeforeLoc; // Keep looking.
-}
-
 LocResolverBase::RangePos LocResolverBase::CheckRange(SourceRange Range) {
   if (!Range.isValid())
     return BeforeLoc; // Keep looking.
@@ -489,10 +325,10 @@ LocResolverBase::RangePos LocResolverBase::CheckRange(SourceRange Range) {
                                                Ctx.getLangOptions());
   Range.setEnd(Range.getEnd().getFileLocWithOffset(TokSize-1));
 
-  SourceManager &SourceMgr = Ctx.getSourceManager();
+  SourceManager &SourceMgr = Ctx.getSourceManager(); 
   if (SourceMgr.isBeforeInTranslationUnit(Range.getEnd(), Loc))
     return BeforeLoc;
-
+  
   if (SourceMgr.isBeforeInTranslationUnit(Loc, Range.getBegin()))
     return AfterLoc;
 
@@ -528,12 +364,9 @@ void LocResolverBase::print(Stmt *Node) {
 
 /// \brief Returns the AST node that a source location points to.
 ///
-ASTLocation idx::ResolveLocationInAST(ASTContext &Ctx, SourceLocation Loc,
-                                      Decl *RelativeToDecl) {
+ASTLocation idx::ResolveLocationInAST(ASTContext &Ctx, SourceLocation Loc) {
   if (Loc.isInvalid())
     return ASTLocation();
-
-  if (RelativeToDecl)
-    return DeclLocResolver(Ctx, Loc).Visit(RelativeToDecl);    
+  
   return DeclLocResolver(Ctx, Loc).Visit(Ctx.getTranslationUnitDecl());
 }

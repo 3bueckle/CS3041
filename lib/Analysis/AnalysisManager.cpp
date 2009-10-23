@@ -13,23 +13,24 @@
 
 #include "clang/Analysis/PathSensitive/AnalysisManager.h"
 #include "clang/Basic/SourceManager.h"
+#include "llvm/Support/Streams.h"
 
 using namespace clang;
 
-void AnalysisManager::DisplayFunction(Decl *D) {
-
+void AnalysisManager::DisplayFunction() {
+      
   if (DisplayedFunction)
     return;
-
+  
   DisplayedFunction = true;
-
+  
   // FIXME: Is getCodeDecl() always a named decl?
-  if (isa<FunctionDecl>(D) || isa<ObjCMethodDecl>(D)) {
-    const NamedDecl *ND = cast<NamedDecl>(D);
-    SourceManager &SM = getASTContext().getSourceManager();
-    (llvm::errs() << "ANALYZE: "
-                  << SM.getPresumedLoc(ND->getLocation()).getFilename()
-                  << ' ' << ND->getNameAsString() << '\n').flush();
+  if (isa<FunctionDecl>(getCodeDecl()) ||
+      isa<ObjCMethodDecl>(getCodeDecl())) {
+    const NamedDecl *ND = cast<NamedDecl>(getCodeDecl());
+    SourceManager &SM = getContext().getSourceManager();
+    llvm::cerr << "ANALYZE: "
+               << SM.getPresumedLoc(ND->getLocation()).getFilename()
+               << ' ' << ND->getNameAsString() << '\n';
   }
 }
-

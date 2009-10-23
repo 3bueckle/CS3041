@@ -1,7 +1,14 @@
-// RUN: clang -fsyntax-only -fmessage-length=72 %s 2>&1 | FileCheck -strict-whitespace %s &&
-// RUN: clang -fsyntax-only -fmessage-length=1 %s
+// RUN: clang -fsyntax-only -fmessage-length=72 %s 2> %t &&
+
+// RUN: grep -A4 "FILE:23" %t > %t.msg &&
+// FIXME: This diagnostic is getting truncated very poorly.
+// RUN: grep -e '^  ...// some long comment text and a brace, eh {} ' %t.msg &&
+// RUN: grep -e '^                                                 \^' %t.msg &&
+// RUN: clang -fsyntax-only -fmessage-length=1 %s &&
+// RUN: true
 
 // Hack so we can check things better, force the file name and line.
+
 # 1 "FILE" 1
 
 /* It's tough to verify the results of this test mechanically, since
@@ -26,7 +33,3 @@ void a_very_long_line(int *ip, float *FloatPointer) {
 }
 
 #pragma STDC CX_LIMITED_RANGE    // some long comment text and a brace, eh {}
-
-
-// CHECK: FILE:23:78
-// CHECK: {{^  ...// some long comment text and a brace, eh {} $}}

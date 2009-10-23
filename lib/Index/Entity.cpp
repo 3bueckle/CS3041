@@ -41,10 +41,10 @@ class EntityGetter : public DeclVisitor<EntityGetter, Entity> {
 public:
   EntityGetter(Program &prog, ProgramImpl &progImpl)
     : Prog(prog), ProgImpl(progImpl) { }
-
+  
   Entity VisitNamedDecl(NamedDecl *D);
   Entity VisitVarDecl(VarDecl *D);
-  Entity VisitFunctionDecl(FunctionDecl *D);
+  Entity VisitFunctionDecl(FunctionDecl *D); 
 };
 
 }
@@ -72,8 +72,7 @@ Entity EntityGetter::VisitNamedDecl(NamedDecl *D) {
 
   if (IdentifierInfo *II = LocalName.getAsIdentifierInfo()) {
     IdentifierInfo *GlobII =
-      &ProgImpl.getIdents().get(II->getNameStart(),
-                                II->getNameStart() + II->getLength());
+        &ProgImpl.getIdents().get(II->getName(), II->getName() + II->getLength());
     GlobName = DeclarationName(GlobII);
   } else {
     Selector LocalSel = LocalName.getObjCSelector();
@@ -81,12 +80,12 @@ Entity EntityGetter::VisitNamedDecl(NamedDecl *D) {
     // Treats other DeclarationNames as internal Decls for now..
     if (LocalSel.isNull())
       return Entity(D);
-
+    
     Selector GlobSel =
         (uintptr_t)GlobalSelector::get(LocalSel, Prog).getAsOpaquePtr();
     GlobName = DeclarationName(GlobSel);
   }
-
+  
   assert(GlobName);
 
   unsigned IdNS = D->getIdentifierNamespace();
@@ -106,7 +105,7 @@ Entity EntityGetter::VisitNamedDecl(NamedDecl *D) {
   EntityImpl *New =
       new (Buf) EntityImpl(Parent, GlobName, IdNS, isObjCInstanceMethod);
   Entities.InsertNode(New, InsertPos);
-
+  
   return Entity(New);
 }
 
@@ -114,7 +113,7 @@ Entity EntityGetter::VisitVarDecl(VarDecl *D) {
   // If it's static it cannot be referred to by another translation unit.
   if (D->getStorageClass() == VarDecl::Static)
     return Entity(D);
-
+  
   return VisitNamedDecl(D);
 }
 
@@ -122,7 +121,7 @@ Entity EntityGetter::VisitFunctionDecl(FunctionDecl *D) {
   // If it's static it cannot be refered to by another translation unit.
   if (D->getStorageClass() == FunctionDecl::Static)
     return Entity(D);
-
+  
   return VisitNamedDecl(D);
 }
 
@@ -140,9 +139,8 @@ Decl *EntityImpl::getDecl(ASTContext &AST) {
   DeclarationName LocalName;
 
   if (IdentifierInfo *GlobII = Name.getAsIdentifierInfo()) {
-    IdentifierInfo &II =
-      AST.Idents.get(GlobII->getNameStart(),
-                     GlobII->getNameStart() + GlobII->getLength());
+    IdentifierInfo &II = AST.Idents.get(GlobII->getName(),
+                                       GlobII->getName() + GlobII->getLength());
     LocalName = DeclarationName(&II);
   } else {
     Selector GlobSel = Name.getObjCSelector();
@@ -190,18 +188,18 @@ Entity::Entity(Decl *D) : Val(D->getCanonicalDecl()) { }
 Decl *Entity::getDecl(ASTContext &AST) const {
   if (isInvalid())
     return 0;
-
+  
   if (Decl *D = Val.dyn_cast<Decl *>())
     // Check that the passed AST is actually the one that this Decl belongs to.
     return (&D->getASTContext() == &AST) ? D : 0;
-
+  
   return Val.get<EntityImpl *>()->getDecl(AST);
 }
 
 std::string Entity::getPrintableName() const {
   if (isInvalid())
     return "<< Invalid >>";
-
+  
   if (Decl *D = Val.dyn_cast<Decl *>()) {
     if (NamedDecl *ND = dyn_cast<NamedDecl>(D))
       return ND->getNameAsString();
@@ -221,7 +219,7 @@ Entity Entity::get(Decl *D, Program &Prog) {
   return EntityImpl::get(D, Prog, ProgImpl);
 }
 
-unsigned
+unsigned 
 llvm::DenseMapInfo<Entity>::getHashValue(Entity E) {
   return DenseMapInfo<void*>::getHashValue(E.getAsOpaquePtr());
 }

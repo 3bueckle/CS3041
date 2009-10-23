@@ -1,4 +1,4 @@
-// RUN: clang-cc -verify -emit-llvm -o - %s | FileCheck %s
+// RUN: clang-cc -verify -emit-llvm -o %t %s
 
 void t1() {
   extern int& a;
@@ -86,53 +86,4 @@ int reference_decl() {
   int& a = g;
   const int& b = 1;
   return a+b;
-}
-
-struct A {
-  int& b();
-};
-
-void f(A* a) {
-  int b = a->b();
-}
-
-// PR5122
-void *foo = 0;
-void * const & kFoo = foo;
-
-struct D : C { D(); ~D(); };
-
-void h() {
-  // CHECK: call void @_ZN1DD1Ev
-  const C& c = D();
-}
-
-namespace T {
-  struct A {
-    A();
-    ~A();
-  };
-
-  struct B {
-    B();
-    ~B();
-    A f();
-  };
-
-  void f() {
-    // CHECK: call void @_ZN1T1BC1Ev
-    // CHECK: call void @_ZN1T1B1fEv
-    // CHECK: call void @_ZN1T1BD1Ev
-    const A& a = B().f();
-    // CHECK: call void @_ZN1T1fEv
-    f();
-    // CHECK: call void @_ZN1T1AD1Ev
-  }
-}
-
-// PR5227.
-namespace PR5227 {
-void f(int &a) {
-  (a = 10) = 20;
-}
 }

@@ -1,4 +1,4 @@
-// RUN: clang-cc %s -emit-llvm -o - | FileCheck %s
+// RUN: clang-cc %s -emit-llvm -o %t &&
 
 void t1() {
   int* a = new int;
@@ -32,7 +32,7 @@ struct T {
 };
 
 void t4() {
-  // CHECK: call void @_ZN1TC1Ev
+  // RUN: grep "call void @_ZN1TC1Ev" %t | count 1 &&
   T *t = new T;
 }
 
@@ -42,7 +42,7 @@ struct T2 {
 };
 
 void t5() { 
-  // CHECK: call void @_ZN2T2C1Eii
+  // RUN: grep "call void @_ZN2T2C1Eii" %t | count 1 
   T2 *t2 = new T2(10, 10);
 }
 
@@ -53,21 +53,4 @@ int *t6() {
 
 void t7() {
   new int();
-}
-
-struct U {
-  ~U();
-};
-  
-void t8(int n) {
-  new int[10];
-  new int[n];
-  
-  // Non-POD
-  new T[10];
-  new T[n];
-  
-  // Cookie required
-  new U[10];
-  new U[n];
 }

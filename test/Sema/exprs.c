@@ -60,9 +60,9 @@ int test8(void) {
 struct f { int x : 4;  float y[]; };
 int test9(struct f *P) {
   int R;
-  R = __alignof(P->x);  // expected-error {{invalid application of '__alignof' to bit-field}}
+  R = __alignof(P->x);  // expected-error {{invalid application of '__alignof' to bitfield}}
   R = __alignof(P->y);   // ok.
-  R = sizeof(P->x); // expected-error {{invalid application of 'sizeof' to bit-field}}
+  R = sizeof(P->x); // expected-error {{invalid application of 'sizeof' to bitfield}}
   return R;
 }
 
@@ -102,13 +102,4 @@ void test14() {
   __v4hi a;
   __m64 mask = (__m64)((__v4hi)a > (__v4hi)a);
 }
-
-
-// PR5242
-typedef unsigned long *test15_t;
-
-test15_t test15(void) {
-  return (test15_t)0 + (test15_t)0;  // expected-error {{invalid operands to binary expression ('test15_t' (aka 'unsigned long *') and 'test15_t')}}
-}
-
 

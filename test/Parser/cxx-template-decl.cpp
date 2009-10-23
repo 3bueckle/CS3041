@@ -2,17 +2,13 @@
 
 // Errors
 export class foo { };   // expected-error {{expected template}}
-template  x;            // expected-error {{C++ requires a type specifier for all declarations}} \
-                        // expected-error {{does not refer}}
+template  x;            // expected-error {{C++ requires a type specifier for all declarations}}
 export template x;      // expected-error {{expected '<' after 'template'}}
 export template<class T> class x0; // expected-note {{exported templates are unsupported}}
 template < ;            // expected-error {{parse error}} expected-error {{declaration does not declare anything}}
-template <template X> struct Err1; // expected-error {{expected '<' after 'template'}} \
-// expected-error{{extraneous}}
-template <template <typename> > struct Err2;       // expected-error {{expected 'class' before '>'}} \
-// expected-error{{extraneous}}
-template <template <typename> Foo> struct Err3;    // expected-error {{expected 'class' before 'Foo'}} \
-// expected-error{{extraneous}}
+template <template X> struct Err1; // expected-error {{expected '<' after 'template'}}
+template <template <typename> > struct Err2;       // expected-error {{expected 'class' before '>'}}
+template <template <typename> Foo> struct Err3;    // expected-error {{expected 'class' before 'Foo'}}
 
 // Template function declarations
 template <typename T> void foo();
@@ -54,7 +50,7 @@ template <typename T, typename U> struct B { };
 
 // Template parameter shadowing
 template<typename T, // expected-note{{template parameter is declared here}}
-         typename T> // expected-error{{declaration of 'T' shadows template parameter}}
+	 typename T> // expected-error{{declaration of 'T' shadows template parameter}}
   void shadow1();
 
 template<typename T> // expected-note{{template parameter is declared here}}

@@ -7,7 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// This is the code that handles AST -> LLVM type lowering.
+// This is the code that handles AST -> LLVM type lowering. 
 //
 //===----------------------------------------------------------------------===//
 
@@ -49,44 +49,36 @@ namespace clang {
 namespace CodeGen {
   class CodeGenTypes;
 
-  /// CGRecordLayout - This class handles struct and union layout info while
+  /// CGRecordLayout - This class handles struct and union layout info while 
   /// lowering AST types to LLVM types.
   class CGRecordLayout {
     CGRecordLayout(); // DO NOT IMPLEMENT
-
-    /// LLVMType - The LLVMType corresponding to this record layout.
-    const llvm::Type *LLVMType;
-
-    /// ContainsMemberPointer - Whether one of the fields in this record layout
-    /// is a member pointer, or a struct that contains a member pointer.
-    bool ContainsMemberPointer;
-
-    /// KeyFunction - The key function of the record layout (if one exists),
-    /// which is the first non-pure virtual function that is not inline at the
-    /// point of class definition.
-    /// See http://www.codesourcery.com/public/cxx-abi/abi.html#vague-vtable.
-    const CXXMethodDecl *KeyFunction;
-    
   public:
-    CGRecordLayout(const llvm::Type *T, bool ContainsMemberPointer,
-                   const CXXMethodDecl *KeyFunction)
-      : LLVMType(T), ContainsMemberPointer(ContainsMemberPointer),
-        KeyFunction(KeyFunction) { }
+    CGRecordLayout(const llvm::Type *T, 
+                   const llvm::SmallSet<unsigned, 8> &PF) 
+      : STy(T), PaddingFields(PF) {
+      // FIXME : Collect info about fields that requires adjustments 
+      // (i.e. fields that do not directly map to llvm struct fields.)
+    }
 
     /// getLLVMType - Return llvm type associated with this record.
     const llvm::Type *getLLVMType() const {
-      return LLVMType;
+      return STy;
     }
 
-    bool containsMemberPointer() const {
-      return ContainsMemberPointer;
+    bool isPaddingField(unsigned No) const {
+      return PaddingFields.count(No) != 0;
     }
 
-    const CXXMethodDecl *getKeyFunction() const {
-      return KeyFunction;
+    unsigned getNumPaddingFields() {
+      return PaddingFields.size();
     }
+
+  private:
+    const llvm::Type *STy;
+    llvm::SmallSet<unsigned, 8> PaddingFields;
   };
-
+  
 /// CodeGenTypes - This class organizes the cross-module state that is used
 /// while lowering AST types to LLVM types.
 class CodeGenTypes {
@@ -95,7 +87,7 @@ class CodeGenTypes {
   llvm::Module& TheModule;
   const llvm::TargetData& TheTargetData;
   mutable const ABIInfo* TheABIInfo;
-
+  
   llvm::SmallVector<std::pair<QualType,
                               llvm::OpaqueType *>, 8>  PointersToResolve;
 
@@ -109,9 +101,9 @@ class CodeGenTypes {
   /// types are never refined.
   llvm::DenseMap<const ObjCInterfaceType*, const llvm::Type *> InterfaceTypes;
 
-  /// CGRecordLayouts - This maps llvm struct type with corresponding
-  /// record layout info.
-  /// FIXME : If CGRecordLayout is less than 16 bytes then use
+  /// CGRecordLayouts - This maps llvm struct type with corresponding 
+  /// record layout info. 
+  /// FIXME : If CGRecordLayout is less than 16 bytes then use 
   /// inline it in the map.
   llvm::DenseMap<const Type*, CGRecordLayout *> CGRecordLayouts;
 
@@ -124,8 +116,8 @@ class CodeGenTypes {
 
 public:
   struct BitFieldInfo {
-    BitFieldInfo(unsigned FieldNo,
-                 unsigned Start,
+    BitFieldInfo(unsigned FieldNo, 
+                 unsigned Start, 
                  unsigned Size)
       : FieldNo(FieldNo), Start(Start), Size(Size) {}
 
@@ -139,7 +131,7 @@ private:
 
   /// TypeCache - This map keeps cache of llvm::Types (through PATypeHolder)
   /// and maps llvm::Types to corresponding clang::Type. llvm::PATypeHolder is
-  /// used instead of llvm::Type because it allows us to bypass potential
+  /// used instead of llvm::Type because it allows us to bypass potential 
   /// dangling type pointers due to type refinement on llvm side.
   llvm::DenseMap<Type *, llvm::PATypeHolder> TypeCache;
 
@@ -151,17 +143,17 @@ private:
 public:
   CodeGenTypes(ASTContext &Ctx, llvm::Module &M, const llvm::TargetData &TD);
   ~CodeGenTypes();
-
+  
   const llvm::TargetData &getTargetData() const { return TheTargetData; }
   TargetInfo &getTarget() const { return Target; }
   ASTContext &getContext() const { return Context; }
   const ABIInfo &getABIInfo() const;
   llvm::LLVMContext &getLLVMContext() { return TheModule.getContext(); }
 
-  /// ConvertType - Convert type T into a llvm::Type.
+  /// ConvertType - Convert type T into a llvm::Type.  
   const llvm::Type *ConvertType(QualType T);
   const llvm::Type *ConvertTypeRecursive(QualType T);
-
+  
   /// ConvertTypeForMem - Convert type T into a llvm::Type.  This differs from
   /// ConvertType in that it is used to convert to the memory representation for
   /// a type.  For example, the scalar representation for _Bool is i1, but the
@@ -172,44 +164,33 @@ public:
   /// GetFunctionType - Get the LLVM function type for \arg Info.
   const llvm::FunctionType *GetFunctionType(const CGFunctionInfo &Info,
                                             bool IsVariadic);
-
-  const CGRecordLayout &getCGRecordLayout(const TagDecl*) const;
-
+  
+  const CGRecordLayout *getCGRecordLayout(const TagDecl*) const;
+  
   /// getLLVMFieldNo - Return llvm::StructType element number
   /// that corresponds to the field FD.
   unsigned getLLVMFieldNo(const FieldDecl *FD);
-
+  
   /// UpdateCompletedType - When we find the full definition for a TagDecl,
   /// replace the 'opaque' type we previously made for it if applicable.
   void UpdateCompletedType(const TagDecl *TD);
 
-private:
+  /// getFunctionInfo - Get the CGFunctionInfo for this function signature.
+  const CGFunctionInfo &getFunctionInfo(QualType RetTy, 
+                                        const llvm::SmallVector<QualType,16> 
+                                        &ArgTys);
+
   const CGFunctionInfo &getFunctionInfo(const FunctionNoProtoType *FTNP);
   const CGFunctionInfo &getFunctionInfo(const FunctionProtoType *FTP);
-
-public:
-  /// getFunctionInfo - Get the function info for the specified function decl.
   const CGFunctionInfo &getFunctionInfo(const FunctionDecl *FD);
   const CGFunctionInfo &getFunctionInfo(const CXXMethodDecl *MD);
   const CGFunctionInfo &getFunctionInfo(const ObjCMethodDecl *MD);
+  const CGFunctionInfo &getFunctionInfo(QualType ResTy, 
+                                        const CallArgList &Args);
+public:
+  const CGFunctionInfo &getFunctionInfo(QualType ResTy, 
+                                        const FunctionArgList &Args);
   
-  // getFunctionInfo - Get the function info for a member function.
-  const CGFunctionInfo &getFunctionInfo(const CXXRecordDecl *RD,
-                                        const FunctionProtoType *FTP);
-  
-  /// getFunctionInfo - Get the function info for a function described by a
-  /// return type and argument types. If the calling convention is not
-  /// specified, the "C" calling convention will be used.
-  const CGFunctionInfo &getFunctionInfo(QualType ResTy,
-                                        const CallArgList &Args,
-                                        unsigned CallingConvention = 0);
-  const CGFunctionInfo &getFunctionInfo(QualType ResTy,
-                                        const FunctionArgList &Args,
-                                        unsigned CallingConvention = 0);
-  const CGFunctionInfo &getFunctionInfo(QualType RetTy,
-                                  const llvm::SmallVector<QualType, 16> &ArgTys,
-                                        unsigned CallingConvention = 0);
-
 public:  // These are internal details of CGT that shouldn't be used externally.
   /// addFieldInfo - Assign field number to field FD.
   void addFieldInfo(const FieldDecl *FD, unsigned FieldNo);

@@ -15,7 +15,6 @@
 #include "clang/Driver/Phases.h"
 #include "clang/Driver/Util.h"
 
-#include "llvm/ADT/Triple.h"
 #include "llvm/System/Path.h" // FIXME: Kill when CompilationInfo
                               // lands.
 #include <list>
@@ -55,11 +54,11 @@ public:
 public:
   /// The name the driver was invoked as.
   std::string Name;
-
+  
   /// The path the driver executable was in, as invoked from the
   /// command line.
   std::string Dir;
-
+  
   /// Default host triple.
   std::string DefaultHostTriple;
 
@@ -75,7 +74,7 @@ public:
 
   /// Whether the driver should follow g++ like behavior.
   bool CCCIsCXX : 1;
-
+  
   /// Echo commands while executing (in -v style).
   bool CCCEcho : 1;
 
@@ -103,11 +102,11 @@ public:
 private:
   /// Only use clang for the given architectures (only used when
   /// non-empty).
-  std::set<llvm::Triple::ArchType> CCCClangArchs;
+  std::set<std::string> CCCClangArchs;
 
   /// Certain options suppress the 'no input files' warning.
   bool SuppressMissingInputWarning : 1;
-
+  
   std::list<std::string> TempFiles;
   std::list<std::string> ResultFiles;
 
@@ -115,7 +114,7 @@ public:
   Driver(const char *_Name, const char *_Dir,
          const char *_DefaultHostTriple,
          const char *_DefaultImageName,
-         bool IsProduction, Diagnostic &_Diags);
+         Diagnostic &_Diags);
   ~Driver();
 
   /// @name Accessors
@@ -195,9 +194,8 @@ public:
   ///
   /// \arg TC - The tool chain for additional information on
   /// directories to search.
-  //
   // FIXME: This should be in CompilationInfo.
-  std::string GetFilePath(const char *Name, const ToolChain &TC) const;
+  llvm::sys::Path GetFilePath(const char *Name, const ToolChain &TC) const;
 
   /// GetProgramPath - Lookup \arg Name in the list of program search
   /// paths.
@@ -207,10 +205,9 @@ public:
   ///
   /// \arg WantFile - False when searching for an executable file, otherwise
   /// true.  Defaults to false.
-  //
   // FIXME: This should be in CompilationInfo.
-  std::string GetProgramPath(const char *Name, const ToolChain &TC,
-                              bool WantFile = false) const;
+  llvm::sys::Path GetProgramPath(const char *Name, const ToolChain &TC,
+                                 bool WantFile = false) const;
 
   /// HandleImmediateArgs - Handle any arguments which should be
   /// treated before building actions or binding tools.
@@ -231,7 +228,6 @@ public:
   void BuildJobsForAction(Compilation &C,
                           const Action *A,
                           const ToolChain *TC,
-                          const char *BoundArch,
                           bool CanAcceptPipe,
                           bool AtTopLevel,
                           const char *LinkingOutput,
@@ -246,7 +242,7 @@ public:
   /// \param BaseInput - The original input file that this action was
   /// triggered by.
   /// \param AtTopLevel - Whether this is a "top-level" action.
-  const char *GetNamedOutputPath(Compilation &C,
+  const char *GetNamedOutputPath(Compilation &C, 
                                  const JobAction &JA,
                                  const char *BaseInput,
                                  bool AtTopLevel) const;
@@ -256,15 +252,15 @@ public:
   ///
   /// GCC goes to extra lengths here to be a bit more robust.
   std::string GetTemporaryPath(const char *Suffix) const;
-
+                        
   /// GetHostInfo - Construct a new host info object for the given
   /// host triple.
   const HostInfo *GetHostInfo(const char *HostTriple) const;
 
   /// ShouldUseClangCompilar - Should the clang compiler be used to
   /// handle this action.
-  bool ShouldUseClangCompiler(const Compilation &C, const JobAction &JA,
-                              const llvm::Triple &ArchName) const;
+  bool ShouldUseClangCompiler(const Compilation &C, const JobAction &JA, 
+                              const std::string &ArchName) const;
 
   /// @}
 
@@ -275,7 +271,7 @@ public:
   /// \return True if the entire string was parsed (9.2), or all
   /// groups were parsed (10.3.5extrastuff). HadExtra is true if all
   /// groups were parsed but extra characters remain at the end.
-  static bool GetReleaseVersion(const char *Str, unsigned &Major,
+  static bool GetReleaseVersion(const char *Str, unsigned &Major, 
                                 unsigned &Minor, unsigned &Micro,
                                 bool &HadExtra);
 };

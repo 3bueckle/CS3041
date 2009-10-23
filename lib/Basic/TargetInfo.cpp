@@ -43,7 +43,6 @@ TargetInfo::TargetInfo(const std::string &T) : Triple(T) {
   UIntMaxType = UnsignedLongLong;
   IntPtrType = SignedLong;
   WCharType = SignedInt;
-  WIntType = SignedInt;
   Char16Type = UnsignedShort;
   Char32Type = UnsignedInt;
   Int64Type = SignedLongLong;
@@ -74,57 +73,6 @@ const char *TargetInfo::getTypeName(IntType T) {
   }
 }
 
-/// getTypeConstantSuffix - Return the constant suffix for the specified
-/// integer type enum. For example, SignedLong -> "L".
-const char *TargetInfo::getTypeConstantSuffix(IntType T) {
-  switch (T) {
-  default: assert(0 && "not an integer!");
-  case SignedShort:
-  case SignedInt:        return "";
-  case SignedLong:       return "L";
-  case SignedLongLong:   return "LL";
-  case UnsignedShort:
-  case UnsignedInt:      return "U";
-  case UnsignedLong:     return "UL";
-  case UnsignedLongLong: return "ULL";
-  }
-}
-
-/// getTypeWidth - Return the width (in bits) of the specified integer type 
-/// enum. For example, SignedInt -> getIntWidth().
-unsigned TargetInfo::getTypeWidth(IntType T) const {
-  switch (T) {
-  default: assert(0 && "not an integer!");
-  case SignedShort:      return getShortWidth();
-  case UnsignedShort:    return getShortWidth();
-  case SignedInt:        return getIntWidth();
-  case UnsignedInt:      return getIntWidth();
-  case SignedLong:       return getLongWidth();
-  case UnsignedLong:     return getLongWidth();
-  case SignedLongLong:   return getLongLongWidth();
-  case UnsignedLongLong: return getLongLongWidth();
-  };
-}
-
-/// getTypeSigned - Return whether an integer types is signed. Returns true if
-/// the type is signed; false otherwise.
-bool TargetInfo::getTypeSigned(IntType T) const {
-  switch (T) {
-  default: assert(0 && "not an integer!");
-  case SignedShort:
-  case SignedInt:
-  case SignedLong:
-  case SignedLongLong:   
-    return true;
-  case UnsignedShort:
-  case UnsignedInt:
-  case UnsignedLong:
-  case UnsignedLongLong: 
-    return false;
-  };
-}
-
-
 //===----------------------------------------------------------------------===//
 
 
@@ -139,17 +87,17 @@ static void removeGCCRegisterPrefix(const char *&Name) {
 bool TargetInfo::isValidGCCRegisterName(const char *Name) const {
   const char * const *Names;
   unsigned NumNames;
-
+  
   // Get rid of any register prefix.
   removeGCCRegisterPrefix(Name);
 
-
+  
   if (strcmp(Name, "memory") == 0 ||
       strcmp(Name, "cc") == 0)
     return true;
-
+  
   getGCCRegNames(Names, NumNames);
-
+  
   // If we have a number it maps to an entry in the register name array.
   if (isdigit(Name[0])) {
     char *End;
@@ -163,11 +111,11 @@ bool TargetInfo::isValidGCCRegisterName(const char *Name) const {
     if (strcmp(Name, Names[i]) == 0)
       return true;
   }
-
+  
   // Now check aliases.
   const GCCRegAlias *Aliases;
   unsigned NumAliases;
-
+  
   getGCCRegAliases(Aliases, NumAliases);
   for (unsigned i = 0; i < NumAliases; i++) {
     for (unsigned j = 0 ; j < llvm::array_lengthof(Aliases[i].Aliases); j++) {
@@ -177,15 +125,15 @@ bool TargetInfo::isValidGCCRegisterName(const char *Name) const {
         return true;
     }
   }
-
+  
   return false;
 }
 
 const char *TargetInfo::getNormalizedGCCRegisterName(const char *Name) const {
   assert(isValidGCCRegisterName(Name) && "Invalid register passed in");
-
+  
   removeGCCRegisterPrefix(Name);
-
+    
   const char * const *Names;
   unsigned NumNames;
 
@@ -196,16 +144,16 @@ const char *TargetInfo::getNormalizedGCCRegisterName(const char *Name) const {
     char *End;
     int n = (int)strtol(Name, &End, 0);
     if (*End == 0) {
-      assert(n >= 0 && (unsigned)n < NumNames &&
+      assert(n >= 0 && (unsigned)n < NumNames && 
              "Out of bounds register number!");
       return Names[n];
     }
   }
-
+  
   // Now check aliases.
   const GCCRegAlias *Aliases;
   unsigned NumAliases;
-
+  
   getGCCRegAliases(Aliases, NumAliases);
   for (unsigned i = 0; i < NumAliases; i++) {
     for (unsigned j = 0 ; j < llvm::array_lengthof(Aliases[i].Aliases); j++) {
@@ -215,7 +163,7 @@ const char *TargetInfo::getNormalizedGCCRegisterName(const char *Name) const {
         return Aliases[i].Register;
     }
   }
-
+  
   return Name;
 }
 
@@ -240,9 +188,6 @@ bool TargetInfo::validateOutputConstraint(ConstraintInfo &Info) const {
       }
     case '&': // early clobber.
       break;
-    case '%': // commutative.
-      // FIXME: Check that there is a another register after this one.
-      break;
     case 'r': // general register.
       Info.setAllowsRegister();
       break;
@@ -255,10 +200,10 @@ bool TargetInfo::validateOutputConstraint(ConstraintInfo &Info) const {
       Info.setAllowsMemory();
       break;
     }
-
+    
     Name++;
   }
-
+  
   return true;
 }
 
@@ -271,14 +216,14 @@ bool TargetInfo::resolveSymbolicName(const char *&Name,
   const char *Start = Name;
   while (*Name && *Name != ']')
     Name++;
-
+  
   if (!*Name) {
     // Missing ']'
     return false;
   }
-
+  
   std::string SymbolicName(Start, Name - Start);
-
+  
   for (Index = 0; Index != NumOutputs; ++Index)
     if (SymbolicName == OutputConstraints[Index].getName())
       return true;
@@ -297,12 +242,12 @@ bool TargetInfo::validateInputConstraint(ConstraintInfo *OutputConstraints,
       // Check if we have a matching constraint
       if (*Name >= '0' && *Name <= '9') {
         unsigned i = *Name - '0';
-
+  
         // Check if matching constraint is out of bounds.
         if (i >= NumOutputs)
           return false;
-
-        // The constraint should have the same info as the respective
+        
+        // The constraint should have the same info as the respective 
         // output constraint.
         Info.setTiedOperand(i, OutputConstraints[i]);
       } else if (!validateAsmConstraint(Name, Info)) {
@@ -316,9 +261,9 @@ bool TargetInfo::validateInputConstraint(ConstraintInfo *OutputConstraints,
       unsigned Index = 0;
       if (!resolveSymbolicName(Name, OutputConstraints, NumOutputs, Index))
         return false;
-
+    
       break;
-    }
+    }          
     case '%': // commutative
       // FIXME: Fail if % is used with the last operand.
       break;
@@ -346,9 +291,9 @@ bool TargetInfo::validateInputConstraint(ConstraintInfo *OutputConstraints,
       Info.setAllowsMemory();
       break;
     }
-
+    
     Name++;
   }
-
+  
   return true;
 }

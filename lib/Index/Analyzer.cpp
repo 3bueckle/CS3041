@@ -36,11 +36,11 @@ namespace  {
 class VISIBILITY_HIDDEN DeclEntityAnalyzer : public TranslationUnitHandler {
   Entity Ent;
   TULocationHandler &TULocHandler;
-
+  
 public:
   DeclEntityAnalyzer(Entity ent, TULocationHandler &handler)
     : Ent(ent), TULocHandler(handler) { }
-
+  
   virtual void Handle(TranslationUnit *TU) {
     assert(TU && "Passed null translation unit");
 
@@ -60,11 +60,11 @@ public:
 class VISIBILITY_HIDDEN RefEntityAnalyzer : public TranslationUnitHandler {
   Entity Ent;
   TULocationHandler &TULocHandler;
-
+  
 public:
   RefEntityAnalyzer(Entity ent, TULocationHandler &handler)
     : Ent(ent), TULocHandler(handler) { }
-
+  
   virtual void Handle(TranslationUnit *TU) {
     assert(TU && "Passed null translation unit");
 
@@ -115,12 +115,12 @@ public:
     IFaceEnt = Entity::get(IFD, Prog);
     GlobSel = GlobalSelector::get(MD->getSelector(), Prog);
     IsInstanceMethod = MD->isInstanceMethod();
-
+    
     for (ObjCInterfaceDecl *Cls = IFD->getSuperClass();
            Cls; Cls = Cls->getSuperClass())
       HierarchyEntities.insert(Entity::get(Cls, Prog));
   }
-
+  
   virtual void Handle(TranslationUnit *TU) {
     assert(TU && "Passed null translation unit");
 
@@ -144,15 +144,16 @@ public:
   /// It returns true "eagerly", meaning it will return false only if it can
   /// "prove" statically that the interface cannot accept this message.
   bool ValidReference(ASTLocation ASTLoc, ObjCInterfaceDecl *IFace) {
+    assert(ASTLoc.isValid());
     assert(ASTLoc.isStmt());
 
     // FIXME: Finding @selector references should be through another Analyzer
     // method, like FindSelectors.
-    if (isa<ObjCSelectorExpr>(ASTLoc.AsStmt()))
-      return false;
+    if (isa<ObjCSelectorExpr>(ASTLoc.getStmt()))
+      return false;      
 
     ObjCInterfaceDecl *MsgD = 0;
-    ObjCMessageExpr *Msg = cast<ObjCMessageExpr>(ASTLoc.AsStmt());
+    ObjCMessageExpr *Msg = cast<ObjCMessageExpr>(ASTLoc.getStmt());
 
     if (Msg->getReceiver()) {
       const ObjCObjectPointerType *OPT =
@@ -180,7 +181,7 @@ public:
 
       MsgD = Msg->getClassInfo().first;
       // FIXME: Case when we only have an identifier.
-      assert(MsgD && "Identifier only");
+      assert(MsgD && "Identifier only"); 
     }
 
     assert(MsgD);
@@ -232,7 +233,7 @@ class VISIBILITY_HIDDEN MessageAnalyzer : public TranslationUnitHandler {
   /// \brief Super classes of the ObjCInterface.
   typedef llvm::SmallSet<Entity, 16> EntitiesSetTy;
   EntitiesSetTy HierarchyEntities;
-
+  
   /// \brief The interface in the message interface hierarchy that "intercepts"
   /// the selector.
   Entity ReceiverIFaceEnt;
@@ -253,7 +254,7 @@ public:
         CanBeClassMethod = true;
         MsgD = Msg->getClassInfo().first;
         // FIXME: Case when we only have an identifier.
-        assert(MsgD && "Identifier only");
+        assert(MsgD && "Identifier only"); 
         break;
       }
 
@@ -275,7 +276,7 @@ public:
       CanBeInstanceMethod = true;
       break;
     }
-
+    
     assert(CanBeInstanceMethod || CanBeClassMethod);
 
     Selector sel = Msg->getSelector();
@@ -303,7 +304,7 @@ public:
               break;
             }
         }
-
+        
         if (isReceiver) {
           ReceiverIFaceEnt = Entity::get(Cls, Prog);
           break;
@@ -311,7 +312,7 @@ public:
       }
     }
   }
-
+  
   virtual void Handle(TranslationUnit *TU) {
     assert(TU && "Passed null translation unit");
     ASTContext &Ctx = TU->getASTContext();
@@ -405,7 +406,7 @@ void Analyzer::FindDeclarations(Decl *D, TULocationHandler &Handler) {
   Entity Ent = Entity::get(D, Prog);
   if (Ent.isInvalid())
     return;
-
+  
   DeclEntityAnalyzer DEA(Ent, Handler);
   Idxer.GetTranslationUnitsFor(Ent, DEA);
 }
@@ -422,7 +423,7 @@ void Analyzer::FindReferences(Decl *D, TULocationHandler &Handler) {
   Entity Ent = Entity::get(D, Prog);
   if (Ent.isInvalid())
     return;
-
+  
   RefEntityAnalyzer REA(Ent, Handler);
   Idxer.GetTranslationUnitsFor(Ent, REA);
 }

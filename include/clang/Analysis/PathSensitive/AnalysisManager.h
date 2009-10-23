@@ -22,7 +22,9 @@
 namespace clang {
 
 class AnalysisManager : public BugReporterData {
-  AnalysisContextManager AnaCtxMgr;
+  AnalysisContextManager ContextMgr;
+  AnalysisContext *EntryContext;
+
   LocationContextManager LocCtxMgr;
 
   ASTContext &Ctx;
@@ -36,41 +38,61 @@ class AnalysisManager : public BugReporterData {
   ConstraintManagerCreator CreateConstraintMgr;
 
   enum AnalysisScope { ScopeTU, ScopeDecl } AScope;
-
+      
   bool DisplayedFunction;
   bool VisualizeEGDot;
   bool VisualizeEGUbi;
   bool PurgeDead;
-
-  /// EargerlyAssume - A flag indicating how the engine should handle
-  //   expressions such as: 'x = (y != 0)'.  When this flag is true then
-  //   the subexpression 'y != 0' will be eagerly assumed to be true or false,
-  //   thus evaluating it to the integers 0 or 1 respectively.  The upside
-  //   is that this can increase analysis precision until we have a better way
-  //   to lazily evaluate such logic.  The downside is that it eagerly
-  //   bifurcates paths.
   bool EagerlyAssume;
   bool TrimGraph;
 
 public:
+  AnalysisManager(Decl *d, ASTContext &ctx, Diagnostic &diags, 
+                  const LangOptions &lang, PathDiagnosticClient *pd,
+                  StoreManagerCreator storemgr,
+                  ConstraintManagerCreator constraintmgr,
+                  bool displayProgress, bool vizdot, bool vizubi, 
+                  bool purge, bool eager, bool trim)
+    : Ctx(ctx), Diags(diags), LangInfo(lang), PD(pd), 
+      CreateStoreMgr(storemgr), CreateConstraintMgr(constraintmgr),
+      AScope(ScopeDecl), DisplayedFunction(!displayProgress),
+      VisualizeEGDot(vizdot), VisualizeEGUbi(vizubi), PurgeDead(purge),
+      EagerlyAssume(eager), TrimGraph(trim) {
+
+    EntryContext = ContextMgr.getContext(d);
+  }
+    
   AnalysisManager(ASTContext &ctx, Diagnostic &diags, 
                   const LangOptions &lang, PathDiagnosticClient *pd,
                   StoreManagerCreator storemgr,
                   ConstraintManagerCreator constraintmgr,
-                  bool displayProgress, bool vizdot, bool vizubi,
+                  bool displayProgress, bool vizdot, bool vizubi, 
                   bool purge, bool eager, bool trim)
 
-    : Ctx(ctx), Diags(diags), LangInfo(lang), PD(pd),
+    : Ctx(ctx), Diags(diags), LangInfo(lang), PD(pd), 
       CreateStoreMgr(storemgr), CreateConstraintMgr(constraintmgr),
       AScope(ScopeDecl), DisplayedFunction(!displayProgress),
       VisualizeEGDot(vizdot), VisualizeEGUbi(vizubi), PurgeDead(purge),
-      EagerlyAssume(eager), TrimGraph(trim) {}
-  
-  void ClearContexts() {
-    LocCtxMgr.clear();
-    AnaCtxMgr.clear();
+      EagerlyAssume(eager), TrimGraph(trim) {
+
+    EntryContext = 0;
   }
 
+  void setEntryContext(Decl *D) {
+    EntryContext = ContextMgr.getContext(D);
+    DisplayedFunction = false;
+  }
+    
+  const Decl *getCodeDecl() const { 
+    assert (AScope == ScopeDecl);
+    return EntryContext->getDecl();
+  }
+    
+  Stmt *getBody() const {
+    assert (AScope == ScopeDecl);
+    return EntryContext->getBody();
+  }
+    
   StoreManagerCreator getStoreManagerCreator() {
     return CreateStoreMgr;
   };
@@ -78,27 +100,43 @@ public:
   ConstraintManagerCreator getConstraintManagerCreator() {
     return CreateConstraintMgr;
   }
+    
+  virtual CFG *getCFG() {
+    return EntryContext->getCFG();
+  }
+    
+  virtual ParentMap &getParentMap() {
+    return EntryContext->getParentMap();
+  }
 
-  virtual ASTContext &getASTContext() {
+  virtual LiveVariables *getLiveVariables() {
+    return EntryContext->getLiveVariables();
+  }
+    
+  virtual ASTContext &getContext() {
     return Ctx;
   }
-
+    
   virtual SourceManager &getSourceManager() {
-    return getASTContext().getSourceManager();
+    return getContext().getSourceManager();
   }
-
+    
   virtual Diagnostic &getDiagnostic() {
     return Diags;
   }
-
+    
   const LangOptions &getLangOptions() const {
     return LangInfo;
   }
-
+    
   virtual PathDiagnosticClient *getPathDiagnosticClient() {
-    return PD.get();
+    return PD.get();      
   }
 
+  StackFrameContext *getEntryStackFrame() {
+    return LocCtxMgr.getStackFrame(EntryContext, 0, 0);
+  }
+    
   bool shouldVisualizeGraphviz() const { return VisualizeEGDot; }
 
   bool shouldVisualizeUbigraph() const { return VisualizeEGUbi; }
@@ -113,31 +151,7 @@ public:
 
   bool shouldEagerlyAssume() const { return EagerlyAssume; }
 
-  void DisplayFunction(Decl *D);
-
-  CFG *getCFG(Decl const *D) {
-    return AnaCtxMgr.getContext(D)->getCFG();
-  }
-
-  LiveVariables *getLiveVariables(Decl const *D) {
-    return AnaCtxMgr.getContext(D)->getLiveVariables();
-  }
-
-  ParentMap &getParentMap(Decl const *D) {
-    return AnaCtxMgr.getContext(D)->getParentMap();
-  }
-
-  // Get the top level stack frame.
-  StackFrameContext *getStackFrame(Decl const *D) {
-    return LocCtxMgr.getStackFrame(AnaCtxMgr.getContext(D), 0, 0);
-  }
-
-  // Get a stack frame with parent.
-  StackFrameContext const *getStackFrame(Decl const *D, 
-                                         LocationContext const *Parent,
-                                         Stmt const *S) {
-    return LocCtxMgr.getStackFrame(AnaCtxMgr.getContext(D), Parent, S);
-  }
+  void DisplayFunction();
 };
 
 }

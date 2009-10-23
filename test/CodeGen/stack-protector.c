@@ -12,7 +12,8 @@
 // RUN: not grep 'ssp' %t &&
 // RUN: true
 
-int printf(const char * _Format, ...);
+#include <stdio.h>
+#include <string.h>
 
 void test1(const char *msg) {
   char a[strlen(msg) + 1];

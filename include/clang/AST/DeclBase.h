@@ -60,8 +60,8 @@ public:
 
 namespace clang {
 
-/// Decl - This represents one declaration (or definition), e.g. a variable,
-/// typedef, function, struct, etc.
+/// Decl - This represents one declaration (or definition), e.g. a variable, 
+/// typedef, function, struct, etc.  
 ///
 class Decl {
 public:
@@ -69,7 +69,7 @@ public:
   enum Kind {
 #define DECL(Derived, Base) Derived,
 #define DECL_RANGE(CommonBase, Start, End) \
-    CommonBase##First = Start, CommonBase##Last = End,
+    CommonBase##First = Start, CommonBase##Last = End, 
 #define LAST_DECL_RANGE(CommonBase, Start, End) \
     CommonBase##First = Start, CommonBase##Last = End
 #include "clang/AST/DeclNodes.def"
@@ -79,9 +79,7 @@ public:
   /// namespaces, labels, tags, members and ordinary
   /// identifiers. These are meant as bitmasks, so that searches in
   /// C++ can look into the "tag" namespace during ordinary lookup. We
-  /// use additional namespaces for Objective-C entities.  We also
-  /// put C++ friend declarations (of previously-undeclared entities) in
-  /// shadow namespaces.
+  /// use additional namespaces for Objective-C entities.
   enum IdentifierNamespace {
     IDNS_Label = 0x1,
     IDNS_Tag = 0x2,
@@ -90,10 +88,9 @@ public:
     IDNS_ObjCProtocol = 0x10,
     IDNS_ObjCImplementation = 0x20,
     IDNS_ObjCCategoryImpl = 0x40,
-    IDNS_OrdinaryFriend = 0x80,
-    IDNS_TagFriend = 0x100
+    IDNS_Friend = 0x80
   };
-
+  
   /// ObjCDeclQualifier - Qualifier used on types in method declarations
   /// for remote messaging. They are meant for the arguments though and
   /// applied to the Decls (ObjCMethodDecl and ParmVarDecl).
@@ -106,7 +103,7 @@ public:
     OBJC_TQ_Byref = 0x10,
     OBJC_TQ_Oneway = 0x20
   };
-
+    
 private:
   /// NextDeclInContext - The next declaration within the same lexical
   /// DeclContext. These pointers form the linked list that is
@@ -119,8 +116,8 @@ private:
     DeclContext *SemanticDC;
     DeclContext *LexicalDC;
   };
-
-
+  
+  
   /// DeclCtx - Holds either a DeclContext* or a MultipleDC*.
   /// For declarations that don't contain C++ scope specifiers, it contains
   /// the DeclContext where the Decl was declared.
@@ -144,16 +141,16 @@ private:
   inline DeclContext *getSemanticDC() const {
     return DeclCtx.get<DeclContext*>();
   }
-
+  
   /// Loc - The location that this decl.
   SourceLocation Loc;
-
+  
   /// DeclKind - This indicates which class this is.
   Kind DeclKind   :  8;
-
+  
   /// InvalidDecl - This indicates a semantic error occurred.
   unsigned int InvalidDecl :  1;
-
+  
   /// HasAttrs - This indicates whether the decl has attributes or not.
   unsigned int HasAttrs : 1;
 
@@ -166,33 +163,27 @@ private:
   bool Used : 1;
 
 protected:
-  /// Access - Used by C++ decls for the access specifier.
-  // NOTE: VC++ treats enums as signed, avoid using the AccessSpecifier enum
-  unsigned Access : 2;
-  friend class CXXClassMemberWrapper;
-  
-  // PCHLevel - the "level" of precompiled header/AST file from which this
-  // declaration was built.
-  unsigned PCHLevel : 2;
-  
   /// IdentifierNamespace - This specifies what IDNS_* namespace this lives in.
-  unsigned IdentifierNamespace : 16;
-
+  unsigned IdentifierNamespace : 8;
+  
 private:
 #ifndef NDEBUG
   void CheckAccessDeclContext() const;
 #else
   void CheckAccessDeclContext() const { }
 #endif
-
+  
 protected:
+  /// Access - Used by C++ decls for the access specifier.
+  // NOTE: VC++ treats enums as signed, avoid using the AccessSpecifier enum
+  unsigned Access : 2;
+  friend class CXXClassMemberWrapper;
 
-  Decl(Kind DK, DeclContext *DC, SourceLocation L)
-    : NextDeclInContext(0), DeclCtx(DC),
+  Decl(Kind DK, DeclContext *DC, SourceLocation L) 
+    : NextDeclInContext(0), DeclCtx(DC), 
       Loc(L), DeclKind(DK), InvalidDecl(0),
       HasAttrs(false), Implicit(false), Used(false),
-      Access(AS_none), PCHLevel(0),
-      IdentifierNamespace(getIdentifierNamespaceForKind(DK)) {
+      IdentifierNamespace(getIdentifierNamespaceForKind(DK)), Access(AS_none) {
     if (Decl::CollectingStats()) addDeclKind(DK);
   }
 
@@ -212,7 +203,7 @@ public:
 
   Kind getKind() const { return DeclKind; }
   const char *getDeclKindName() const;
-
+  
   Decl *getNextDeclInContext() { return NextDeclInContext; }
   const Decl *getNextDeclInContext() const { return NextDeclInContext; }
 
@@ -230,18 +221,16 @@ public:
     return const_cast<Decl*>(this)->getTranslationUnitDecl();
   }
 
-  bool isInAnonymousNamespace() const;
-
   ASTContext &getASTContext() const;
-
+  
   void setAccess(AccessSpecifier AS) {
-    Access = AS;
+    Access = AS; 
     CheckAccessDeclContext();
   }
-
-  AccessSpecifier getAccess() const {
+  
+  AccessSpecifier getAccess() const { 
     CheckAccessDeclContext();
-    return AccessSpecifier(Access);
+    return AccessSpecifier(Access); 
   }
 
   bool hasAttrs() const { return HasAttrs; }
@@ -259,11 +248,11 @@ public:
         return V;
     return 0;
   }
-
+    
   template<typename T> bool hasAttr() const {
     return getAttr<T>() != 0;
   }
-
+  
   /// setInvalidDecl - Indicates the Decl had a semantic error. This
   /// allows for graceful error recovery.
   void setInvalidDecl(bool Invalid = true) { InvalidDecl = Invalid; }
@@ -274,31 +263,11 @@ public:
   /// was written explicitly in the source code.
   bool isImplicit() const { return Implicit; }
   void setImplicit(bool I = true) { Implicit = I; }
-
+  
   /// \brief Whether this declaration was used, meaning that a definition
   /// is required.
   bool isUsed() const { return Used; }
   void setUsed(bool U = true) { Used = U; }
-
-  /// \brief Retrieve the level of precompiled header from which this
-  /// declaration was generated.
-  ///
-  /// The PCH level of a declaration describes where the declaration originated
-  /// from. A PCH level of 0 indicates that the declaration was not from a 
-  /// precompiled header. A PCH level of 1 indicates that the declaration was
-  /// from a top-level precompiled header; 2 indicates that the declaration 
-  /// comes from a precompiled header on which the top-level precompiled header
-  /// depends, and so on. 
-  unsigned getPCHLevel() const { return PCHLevel; }
-
-  /// \brief The maximum PCH level that any declaration may have.
-  static const unsigned MaxPCHLevel = 3;
-  
-  /// \brief Set the PCH level of this declaration.
-  void setPCHLevel(unsigned Level) { 
-    assert(Level < MaxPCHLevel && "PCH level exceeds the maximum");
-    PCHLevel = Level;
-  }
   
   unsigned getIdentifierNamespace() const {
     return IdentifierNamespace;
@@ -308,7 +277,7 @@ public:
   }
   static unsigned getIdentifierNamespaceForKind(Kind DK);
 
-
+  
   /// getLexicalDeclContext - The declaration context where this Decl was
   /// lexically declared (LexicalDC). May be different from
   /// getDeclContext() (SemanticDC).
@@ -331,7 +300,7 @@ public:
   bool isOutOfLine() const {
     return getLexicalDeclContext() != getDeclContext();
   }
-
+  
   /// setDeclContext - Set both the semantic and lexical DeclContext
   /// to DC.
   void setDeclContext(DeclContext *DC);
@@ -352,7 +321,7 @@ public:
 
   /// \brief Whether this particular Decl is a canonical one.
   bool isCanonicalDecl() const { return getCanonicalDecl() == this; }
-
+  
 protected:
   /// \brief Returns the next redeclaration or itself if this is the only decl.
   ///
@@ -395,10 +364,10 @@ public:
       return tmp;
     }
 
-    friend bool operator==(redecl_iterator x, redecl_iterator y) {
+    friend bool operator==(redecl_iterator x, redecl_iterator y) { 
       return x.Current == y.Current;
     }
-    friend bool operator!=(redecl_iterator x, redecl_iterator y) {
+    friend bool operator!=(redecl_iterator x, redecl_iterator y) { 
       return x.Current != y.Current;
     }
   };
@@ -426,71 +395,33 @@ public:
   static void addDeclKind(Kind k);
   static bool CollectingStats(bool Enable = false);
   static void PrintStats();
-
+    
   /// isTemplateParameter - Determines whether this declaration is a
   /// template parameter.
   bool isTemplateParameter() const;
-
+  
   /// isTemplateParameter - Determines whether this declaration is a
   /// template parameter pack.
   bool isTemplateParameterPack() const;
 
   /// \brief Whether this declaration is a function or function template.
   bool isFunctionOrFunctionTemplate() const;
-
-  /// \brief Changes the namespace of this declaration to reflect that it's
-  /// the object of a friend declaration.
-  ///
-  /// These declarations appear in the lexical context of the friending
-  /// class, but in the semantic context of the actual entity.  This property
-  /// applies only to a specific decl object;  other redeclarations of the
-  /// same entity may not (and probably don't) share this property.
-  void setObjectOfFriendDecl(bool PreviouslyDeclared) {
-    unsigned OldNS = IdentifierNamespace;
-    assert((OldNS == IDNS_Tag || OldNS == IDNS_Ordinary ||
-            OldNS == (IDNS_Tag | IDNS_Ordinary))
-           && "unsupported namespace for undeclared friend");
-    if (!PreviouslyDeclared) IdentifierNamespace = 0;
-
-    if (OldNS == IDNS_Tag)
-      IdentifierNamespace |= IDNS_TagFriend;
-    else
-      IdentifierNamespace |= IDNS_OrdinaryFriend;
-  }
-
-  enum FriendObjectKind {
-    FOK_None, // not a friend object
-    FOK_Declared, // a friend of a previously-declared entity
-    FOK_Undeclared // a friend of a previously-undeclared entity
-  };
-
-  /// \brief Determines whether this declaration is the object of a
-  /// friend declaration and, if so, what kind.
-  ///
-  /// There is currently no direct way to find the associated FriendDecl.
-  FriendObjectKind getFriendObjectKind() const {
-    unsigned mask
-      = (IdentifierNamespace & (IDNS_TagFriend | IDNS_OrdinaryFriend));
-    if (!mask) return FOK_None;
-    return (IdentifierNamespace & (IDNS_Tag | IDNS_Ordinary) ? 
-              FOK_Declared : FOK_Undeclared);
-  }
-
+  
   // Implement isa/cast/dyncast/etc.
   static bool classof(const Decl *) { return true; }
   static DeclContext *castToDeclContext(const Decl *);
   static Decl *castFromDeclContext(const DeclContext *);
-
+  
   /// Destroy - Call destructors and release memory.
   virtual void Destroy(ASTContext& C);
 
-  void print(llvm::raw_ostream &Out, unsigned Indentation = 0) const;
+  void print(llvm::raw_ostream &Out, unsigned Indentation = 0);
   void print(llvm::raw_ostream &Out, const PrintingPolicy &Policy,
-             unsigned Indentation = 0) const;
+             unsigned Indentation = 0);
   static void printGroup(Decl** Begin, unsigned NumDecls,
                          llvm::raw_ostream &Out, const PrintingPolicy &Policy,
                          unsigned Indentation = 0);
-  void dump() const;
+  void dump();
 
 private:
   const Attr *getAttrsImpl() const;
@@ -508,10 +439,10 @@ public:
   PrettyStackTraceDecl(Decl *theDecl, SourceLocation L,
                        SourceManager &sm, const char *Msg)
   : TheDecl(theDecl), Loc(L), SM(sm), Message(Msg) {}
-
+  
   virtual void print(llvm::raw_ostream &OS) const;
-};
-
+};  
+  
 
 /// DeclContext - This is used only as base class of specific decl types that
 /// can act as declaration contexts. These decls are (only the top classes
@@ -556,9 +487,9 @@ class DeclContext {
   mutable Decl *LastDecl;
 
 protected:
-   DeclContext(Decl::Kind K)
+   DeclContext(Decl::Kind K) 
      : DeclKind(K), ExternalLexicalStorage(false),
-       ExternalVisibleStorage(false), LookupPtr(0), FirstDecl(0),
+       ExternalVisibleStorage(false), LookupPtr(0), FirstDecl(0), 
        LastDecl(0) { }
 
   void DestroyDecls(ASTContext &C);
@@ -578,7 +509,7 @@ public:
   const DeclContext *getParent() const {
     return const_cast<DeclContext*>(this)->getParent();
   }
-
+  
   /// getLexicalParent - Returns the containing lexical DeclContext. May be
   /// different from getParent, e.g.:
   ///
@@ -593,14 +524,8 @@ public:
   }
   const DeclContext *getLexicalParent() const {
     return const_cast<DeclContext*>(this)->getLexicalParent();
-  }
+  }    
 
-  DeclContext *getLookupParent();
-  
-  const DeclContext *getLookupParent() const {
-    return const_cast<DeclContext*>(this)->getLookupParent();
-  }
-  
   ASTContext &getParentASTContext() const {
     return cast<Decl>(this)->getASTContext();
   }
@@ -640,10 +565,10 @@ public:
   /// context are semantically declared in the nearest enclosing
   /// non-transparent (opaque) context but are lexically declared in
   /// this context. For example, consider the enumerators of an
-  /// enumeration type:
+  /// enumeration type: 
   /// @code
   /// enum E {
-  ///   Val1
+  ///   Val1 
   /// };
   /// @endcode
   /// Here, E is a transparent context, so its enumerator (Val1) will
@@ -653,15 +578,12 @@ public:
   /// inline namespaces.
   bool isTransparentContext() const;
 
-  /// \brief Determine whether this declaration context is equivalent
-  /// to the declaration context DC.
-  bool Equals(DeclContext *DC) {
-    return this->getPrimaryContext() == DC->getPrimaryContext();
+  bool Encloses(DeclContext *DC) const {
+    for (; DC; DC = DC->getParent())
+      if (DC == this)
+        return true;
+    return false;
   }
-
-  /// \brief Determine whether this declaration context encloses the
-  /// declaration context DC.
-  bool Encloses(DeclContext *DC);
 
   /// getPrimaryContext - There may be many different
   /// declarations of the same entity (including forward declarations
@@ -679,7 +601,7 @@ public:
   const DeclContext *getLookupContext() const {
     return const_cast<DeclContext *>(this)->getLookupContext();
   }
-
+  
   /// \brief Retrieve the nearest enclosing namespace context.
   DeclContext *getEnclosingNamespaceContext();
   const DeclContext *getEnclosingNamespaceContext() const {
@@ -735,16 +657,16 @@ public:
       return tmp;
     }
 
-    friend bool operator==(decl_iterator x, decl_iterator y) {
+    friend bool operator==(decl_iterator x, decl_iterator y) { 
       return x.Current == y.Current;
     }
-    friend bool operator!=(decl_iterator x, decl_iterator y) {
+    friend bool operator!=(decl_iterator x, decl_iterator y) { 
       return x.Current != y.Current;
     }
   };
 
   /// decls_begin/decls_end - Iterate over the declarations stored in
-  /// this context.
+  /// this context. 
   decl_iterator decls_begin() const;
   decl_iterator decls_end() const;
   bool decls_empty() const;
@@ -760,7 +682,7 @@ public:
     /// will either be NULL or will point to a declaration of
     /// type SpecificDecl.
     DeclContext::decl_iterator Current;
-
+    
     /// SkipToNextDecl - Advances the current position up to the next
     /// declaration of type SpecificDecl that also meets the criteria
     /// required by Acceptable.
@@ -805,13 +727,13 @@ public:
       ++(*this);
       return tmp;
     }
-
+  
     friend bool
     operator==(const specific_decl_iterator& x, const specific_decl_iterator& y) {
       return x.Current == y.Current;
     }
-
-    friend bool
+  
+    friend bool 
     operator!=(const specific_decl_iterator& x, const specific_decl_iterator& y) {
       return x.Current != y.Current;
     }
@@ -832,7 +754,7 @@ public:
     /// will either be NULL or will point to a declaration of
     /// type SpecificDecl.
     DeclContext::decl_iterator Current;
-
+    
     /// SkipToNextDecl - Advances the current position up to the next
     /// declaration of type SpecificDecl that also meets the criteria
     /// required by Acceptable.
@@ -879,13 +801,13 @@ public:
       ++(*this);
       return tmp;
     }
-
+  
     friend bool
     operator==(const filtered_decl_iterator& x, const filtered_decl_iterator& y) {
       return x.Current == y.Current;
     }
-
-    friend bool
+  
+    friend bool 
     operator!=(const filtered_decl_iterator& x, const filtered_decl_iterator& y) {
       return x.Current != y.Current;
     }
@@ -947,16 +869,12 @@ public:
   /// visible from this context, as determined by
   /// NamedDecl::declarationReplaces, the previous declaration will be
   /// replaced with D.
-  ///
-  /// @param Recoverable true if it's okay to not add this decl to
-  /// the lookup tables because it can be easily recovered by walking
-  /// the declaration chains.
-  void makeDeclVisibleInContext(NamedDecl *D, bool Recoverable = true);
+  void makeDeclVisibleInContext(NamedDecl *D);
 
   /// udir_iterator - Iterates through the using-directives stored
   /// within this context.
   typedef UsingDirectiveDecl * const * udir_iterator;
-
+  
   typedef std::pair<udir_iterator, udir_iterator> udir_iterator_range;
 
   udir_iterator_range getUsingDirectives() const;
@@ -980,8 +898,8 @@ public:
 
   /// \brief State whether this DeclContext has external storage for
   /// declarations lexically in this context.
-  void setHasExternalLexicalStorage(bool ES = true) {
-    ExternalLexicalStorage = ES;
+  void setHasExternalLexicalStorage(bool ES = true) { 
+    ExternalLexicalStorage = ES; 
   }
 
   /// \brief Whether this DeclContext has external storage containing
@@ -990,8 +908,8 @@ public:
 
   /// \brief State whether this DeclContext has external storage for
   /// declarations visible in this context.
-  void setHasExternalVisibleStorage(bool ES = true) {
-    ExternalVisibleStorage = ES;
+  void setHasExternalVisibleStorage(bool ES = true) { 
+    ExternalVisibleStorage = ES; 
   }
 
   static bool classof(const Decl *D);

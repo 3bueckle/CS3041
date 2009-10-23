@@ -8,8 +8,7 @@ void f() { A = 0; } // expected-error {{unexpected namespace name 'A': expected 
 int A; // expected-error {{redefinition of 'A' as different kind of symbol}}
 class A; // expected-error {{redefinition of 'A' as different kind of symbol}}
 
-class B {}; // expected-note {{previous definition is here}} \
-            // FIXME: ugly expected-note{{candidate function}}
+class B {}; // expected-note {{previous definition is here}}
 
 void C(); // expected-note {{previous definition is here}}
 namespace C {} // expected-error {{redefinition of 'C' as different kind of symbol}}
@@ -67,4 +66,4 @@ namespace foo {
 
 static foo::x  test1;  // ok
 
-static foo::X  test2;  // typo: expected-error {{no type named 'X' in}}
+static foo::X  test2;  // typo: expected-error {{unknown type name 'X'}}

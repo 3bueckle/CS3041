@@ -36,8 +36,7 @@ public:
   typedef std::map<Entity, TUSetTy> MapTy;
   typedef std::map<GlobalSelector, TUSetTy> SelMapTy;
 
-  explicit Indexer(Program &prog) :
-    Prog(prog) { }
+  explicit Indexer(Program &prog) : Prog(prog) { }
 
   Program &getProgram() const { return Prog; }
 
@@ -51,7 +50,6 @@ public:
 
 private:
   Program &Prog;
-
   MapTy Map;
   CtxTUMapTy CtxTUMap;
   SelMapTy SelMap;

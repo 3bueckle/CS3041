@@ -41,7 +41,7 @@ static const FunctionType *getFunctionType(const Decl *d,
   else if (blocksToo && Ty->isBlockPointerType())
     Ty = Ty->getAs<BlockPointerType>()->getPointeeType();
 
-  return Ty->getAs<FunctionType>();
+  return Ty->getAsFunctionType();
 }
 
 // FIXME: We should provide an abstraction around a method or function
@@ -124,11 +124,11 @@ static bool isFunctionOrMethodVariadic(const Decl *d) {
 }
 
 static inline bool isNSStringType(QualType T, ASTContext &Ctx) {
-  const ObjCObjectPointerType *PT = T->getAs<ObjCObjectPointerType>();
+  const ObjCObjectPointerType *PT = T->getAsObjCObjectPointerType();
   if (!PT)
     return false;
 
-  const ObjCInterfaceType *ClsT =PT->getPointeeType()->getAs<ObjCInterfaceType>();
+  const ObjCInterfaceType *ClsT =PT->getPointeeType()->getAsObjCInterfaceType();
   if (!ClsT)
     return false;
 
@@ -437,9 +437,9 @@ static void HandleMallocAttr(Decl *d, const AttributeList &Attr, Sema &S) {
     S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 0;
     return;
   }
-
+  
   if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(d)) {
-    QualType RetTy = FD->getResultType();
+    QualType RetTy = FD->getResultType();  
     if (RetTy->isAnyPointerType() || RetTy->isBlockPointerType()) {
       d->addAttr(::new (S.Context) MallocAttr());
       return;
@@ -750,7 +750,7 @@ static void HandleSentinelAttr(Decl *d, const AttributeList &Attr, Sema &S) {
   }
 
   if (FunctionDecl *FD = dyn_cast<FunctionDecl>(d)) {
-    const FunctionType *FT = FD->getType()->getAs<FunctionType>();
+    const FunctionType *FT = FD->getType()->getAsFunctionType();
     assert(FT && "FunctionDecl has non-function type?");
 
     if (isa<FunctionNoProtoType>(FT)) {
@@ -775,7 +775,7 @@ static void HandleSentinelAttr(Decl *d, const AttributeList &Attr, Sema &S) {
     QualType Ty = V->getType();
     if (Ty->isBlockPointerType() || Ty->isFunctionPointerType()) {
       const FunctionType *FT = Ty->isFunctionPointerType() ? getFunctionType(d)
-        : Ty->getAs<BlockPointerType>()->getPointeeType()->getAs<FunctionType>();
+        : Ty->getAs<BlockPointerType>()->getPointeeType()->getAsFunctionType();
       if (!cast<FunctionProtoType>(FT)->isVariadic()) {
         int m = Ty->isFunctionPointerType() ? 0 : 1;
         S.Diag(Attr.getLoc(), diag::warn_attribute_sentinel_not_variadic) << m;
@@ -989,7 +989,7 @@ static void HandleSectionAttr(Decl *D, const AttributeList &Attr, Sema &S) {
     S.Diag(ArgExpr->getLocStart(), diag::err_attribute_not_string) << "section";
     return;
   }
-
+  
   std::string SectionStr(SE->getStrData(), SE->getByteLength());
 
   // If the target wants to validate the section specifier, make it happen.
@@ -998,10 +998,10 @@ static void HandleSectionAttr(Decl *D, const AttributeList &Attr, Sema &S) {
     D->addAttr(::new (S.Context) SectionAttr(SectionStr));
     return;
   }
-
+  
   S.Diag(SE->getLocStart(), diag::err_attribute_section_invalid_for_target)
     << Error;
-
+  
 }
 
 static void HandleStdCallAttr(Decl *d, const AttributeList &Attr, Sema &S) {
@@ -1104,9 +1104,8 @@ static void HandleCleanupAttr(Decl *d, const AttributeList &Attr, Sema &S) {
   }
 
   // Look up the function
-  NamedDecl *CleanupDecl
-    = S.LookupSingleName(S.TUScope, Attr.getParameterName(),
-                         Sema::LookupOrdinaryName);
+  NamedDecl *CleanupDecl = S.LookupName(S.TUScope, Attr.getParameterName(),
+                                        Sema::LookupOrdinaryName);
   if (!CleanupDecl) {
     S.Diag(Attr.getLoc(), diag::err_attribute_cleanup_arg_not_found) <<
       Attr.getParameterName();
@@ -1202,35 +1201,6 @@ static void HandleFormatArgAttr(Decl *d, const AttributeList &Attr, Sema &S) {
   d->addAttr(::new (S.Context) FormatArgAttr(Idx.getZExtValue()));
 }
 
-enum FormatAttrKind {
-  CFStringFormat,
-  NSStringFormat,
-  StrftimeFormat,
-  SupportedFormat,
-  InvalidFormat
-};
-
-/// getFormatAttrKind - Map from format attribute names to supported format
-/// types.
-static FormatAttrKind getFormatAttrKind(llvm::StringRef Format) {
-  // Check for formats that get handled specially.
-  if (Format == "NSString")
-    return NSStringFormat;
-  if (Format == "CFString")
-    return CFStringFormat;
-  if (Format == "strftime")
-    return StrftimeFormat;
-
-  // Otherwise, check for supported formats.
-  if (Format == "scanf" || Format == "printf" || Format == "printf0" ||
-      Format == "strfmon" || Format == "cmn_err" || Format == "strftime" ||
-      Format == "NSString" || Format == "CFString" || Format == "vcmn_err" ||
-      Format == "zcmn_err")
-    return SupportedFormat;
-
-  return InvalidFormat;
-}
-
 /// Handle __attribute__((format(type,idx,firstarg))) attributes based on
 /// http://gcc.gnu.org/onlinedocs/gcc/Function-Attributes.html
 static void HandleFormatAttr(Decl *d, const AttributeList &Attr, Sema &S) {
@@ -1252,18 +1222,41 @@ static void HandleFormatAttr(Decl *d, const AttributeList &Attr, Sema &S) {
     return;
   }
 
+  // FIXME: in C++ the implicit 'this' function parameter also counts.  this is
+  // needed in order to be compatible with GCC the index must start in 1 and the
+  // limit is numargs+1
   unsigned NumArgs  = getFunctionOrMethodNumArgs(d);
   unsigned FirstIdx = 1;
 
-  llvm::StringRef Format = Attr.getParameterName()->getName();
+  const char *Format = Attr.getParameterName()->getName();
+  unsigned FormatLen = Attr.getParameterName()->getLength();
 
   // Normalize the argument, __foo__ becomes foo.
-  if (Format.startswith("__") && Format.endswith("__"))
-    Format = Format.substr(2, Format.size() - 4);
+  if (FormatLen > 4 && Format[0] == '_' && Format[1] == '_' &&
+      Format[FormatLen - 2] == '_' && Format[FormatLen - 1] == '_') {
+    Format += 2;
+    FormatLen -= 4;
+  }
 
-  // Check for supported formats.
-  FormatAttrKind Kind = getFormatAttrKind(Format);
-  if (Kind == InvalidFormat) {
+  bool Supported = false;
+  bool is_NSString = false;
+  bool is_strftime = false;
+  bool is_CFString = false;
+
+  switch (FormatLen) {
+  default: break;
+  case 5: Supported = !memcmp(Format, "scanf", 5); break;
+  case 6: Supported = !memcmp(Format, "printf", 6); break;
+  case 7: Supported = !memcmp(Format, "printf0", 7) ||
+                      !memcmp(Format, "strfmon", 7); break;
+  case 8:
+    Supported = (is_strftime = !memcmp(Format, "strftime", 8)) ||
+                (is_NSString = !memcmp(Format, "NSString", 8)) ||
+                (is_CFString = !memcmp(Format, "CFString", 8));
+    break;
+  }
+
+  if (!Supported) {
     S.Diag(Attr.getLoc(), diag::warn_attribute_type_not_supported)
       << "format" << Attr.getParameterName()->getName();
     return;
@@ -1278,16 +1271,6 @@ static void HandleFormatAttr(Decl *d, const AttributeList &Attr, Sema &S) {
     return;
   }
 
-  // FIXME: We should handle the implicit 'this' parameter in a more generic
-  // way that can be used for other arguments.
-  bool HasImplicitThisParam = false;
-  if (CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(d)) {
-    if (MD->isInstance()) {
-      HasImplicitThisParam = true;
-      NumArgs++;
-    }
-  }
-
   if (Idx.getZExtValue() < FirstIdx || Idx.getZExtValue() > NumArgs) {
     S.Diag(Attr.getLoc(), diag::err_attribute_argument_out_of_bounds)
       << "format" << 2 << IdxExpr->getSourceRange();
@@ -1297,18 +1280,16 @@ static void HandleFormatAttr(Decl *d, const AttributeList &Attr, Sema &S) {
   // FIXME: Do we need to bounds check?
   unsigned ArgIdx = Idx.getZExtValue() - 1;
 
-  if (HasImplicitThisParam) ArgIdx--;
-
   // make sure the format string is really a string
   QualType Ty = getFunctionOrMethodArgType(d, ArgIdx);
 
-  if (Kind == CFStringFormat) {
+  if (is_CFString) {
     if (!isCFStringType(Ty, S.Context)) {
       S.Diag(Attr.getLoc(), diag::err_format_attribute_not)
         << "a CFString" << IdxExpr->getSourceRange();
       return;
     }
-  } else if (Kind == NSStringFormat) {
+  } else if (is_NSString) {
     // FIXME: do we need to check if the type is NSString*?  What are the
     // semantics?
     if (!isNSStringType(Ty, S.Context)) {
@@ -1346,7 +1327,7 @@ static void HandleFormatAttr(Decl *d, const AttributeList &Attr, Sema &S) {
 
   // strftime requires FirstArg to be 0 because it doesn't read from any
   // variable the input is just the current time + the format string.
-  if (Kind == StrftimeFormat) {
+  if (is_strftime) {
     if (FirstArg != 0) {
       S.Diag(Attr.getLoc(), diag::err_format_strftime_third_parameter)
         << FirstArgExpr->getSourceRange();
@@ -1359,8 +1340,8 @@ static void HandleFormatAttr(Decl *d, const AttributeList &Attr, Sema &S) {
     return;
   }
 
-  d->addAttr(::new (S.Context) FormatAttr(Format, Idx.getZExtValue(),
-                                          FirstArg.getZExtValue()));
+  d->addAttr(::new (S.Context) FormatAttr(std::string(Format, FormatLen),
+                            Idx.getZExtValue(), FirstArg.getZExtValue()));
 }
 
 static void HandleTransparentUnionAttr(Decl *d, const AttributeList &Attr,
@@ -1502,17 +1483,20 @@ static void HandleModeAttr(Decl *D, const AttributeList &Attr, Sema &S) {
     S.Diag(Attr.getLoc(), diag::err_attribute_missing_parameter_name);
     return;
   }
-
-  llvm::StringRef Str = Attr.getParameterName()->getName();
+  const char *Str = Name->getName();
+  unsigned Len = Name->getLength();
 
   // Normalize the attribute name, __foo__ becomes foo.
-  if (Str.startswith("__") && Str.endswith("__"))
-    Str = Str.substr(2, Str.size() - 4);
+  if (Len > 4 && Str[0] == '_' && Str[1] == '_' &&
+      Str[Len - 2] == '_' && Str[Len - 1] == '_') {
+    Str += 2;
+    Len -= 4;
+  }
 
   unsigned DestWidth = 0;
   bool IntegerMode = true;
   bool ComplexMode = false;
-  switch (Str.size()) {
+  switch (Len) {
   case 2:
     switch (Str[0]) {
     case 'Q': DestWidth = 8; break;
@@ -1534,13 +1518,13 @@ static void HandleModeAttr(Decl *D, const AttributeList &Attr, Sema &S) {
   case 4:
     // FIXME: glibc uses 'word' to define register_t; this is narrower than a
     // pointer on PIC16 and other embedded platforms.
-    if (Str == "word")
+    if (!memcmp(Str, "word", 4))
       DestWidth = S.Context.Target.getPointerWidth(0);
-    else if (Str == "byte")
+    if (!memcmp(Str, "byte", 4))
       DestWidth = S.Context.Target.getCharWidth();
     break;
   case 7:
-    if (Str == "pointer")
+    if (!memcmp(Str, "pointer", 7))
       DestWidth = S.Context.Target.getPointerWidth(0);
     break;
   }
@@ -1556,7 +1540,7 @@ static void HandleModeAttr(Decl *D, const AttributeList &Attr, Sema &S) {
     return;
   }
 
-  if (!OldTy->getAs<BuiltinType>() && !OldTy->isComplexType())
+  if (!OldTy->getAsBuiltinType() && !OldTy->isComplexType())
     S.Diag(Attr.getLoc(), diag::err_mode_not_primitive);
   else if (IntegerMode) {
     if (!OldTy->isIntegralType())
@@ -1642,7 +1626,7 @@ static void HandleModeAttr(Decl *D, const AttributeList &Attr, Sema &S) {
     cast<ValueDecl>(D)->setType(NewTy);
 }
 
-static void HandleNoDebugAttr(Decl *d, const AttributeList &Attr, Sema &S) {
+static void HandleNodebugAttr(Decl *d, const AttributeList &Attr, Sema &S) {
   // check the attribute arguments.
   if (Attr.getNumArgs() > 0) {
     S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 0;
@@ -1655,10 +1639,10 @@ static void HandleNoDebugAttr(Decl *d, const AttributeList &Attr, Sema &S) {
     return;
   }
 
-  d->addAttr(::new (S.Context) NoDebugAttr());
+  d->addAttr(::new (S.Context) NodebugAttr());
 }
 
-static void HandleNoInlineAttr(Decl *d, const AttributeList &Attr, Sema &S) {
+static void HandleNoinlineAttr(Decl *d, const AttributeList &Attr, Sema &S) {
   // check the attribute arguments.
   if (Attr.getNumArgs() != 0) {
     S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments) << 0;
@@ -1671,7 +1655,7 @@ static void HandleNoInlineAttr(Decl *d, const AttributeList &Attr, Sema &S) {
     return;
   }
 
-  d->addAttr(::new (S.Context) NoInlineAttr());
+  d->addAttr(::new (S.Context) NoinlineAttr());
 }
 
 static void HandleGNUInlineAttr(Decl *d, const AttributeList &Attr, Sema &S) {
@@ -1753,7 +1737,7 @@ static void HandleNSReturnsRetainedAttr(Decl *d, const AttributeList &Attr,
   }
 
   if (!(S.Context.isObjCNSObjectType(RetTy) || RetTy->getAs<PointerType>()
-        || RetTy->getAs<ObjCObjectPointerType>())) {
+        || RetTy->getAsObjCObjectPointerType())) {
     SourceLocation L = Attr.getLoc();
     S.Diag(d->getLocStart(), diag::warn_ns_attribute_wrong_return_type)
       << SourceRange(L, L) << Attr.getName();
@@ -1850,8 +1834,8 @@ static void ProcessDeclAttribute(Scope *scope, Decl *D,
   case AttributeList::AT_const:       HandleConstAttr     (D, Attr, S); break;
   case AttributeList::AT_pure:        HandlePureAttr      (D, Attr, S); break;
   case AttributeList::AT_cleanup:     HandleCleanupAttr   (D, Attr, S); break;
-  case AttributeList::AT_nodebug:     HandleNoDebugAttr   (D, Attr, S); break;
-  case AttributeList::AT_noinline:    HandleNoInlineAttr  (D, Attr, S); break;
+  case AttributeList::AT_nodebug:     HandleNodebugAttr   (D, Attr, S); break;
+  case AttributeList::AT_noinline:    HandleNoinlineAttr  (D, Attr, S); break;
   case AttributeList::AT_regparm:     HandleRegparmAttr   (D, Attr, S); break;
   case AttributeList::IgnoredAttribute:
   case AttributeList::AT_no_instrument_function:  // Interacts with -pg.
@@ -1874,7 +1858,8 @@ void Sema::ProcessDeclAttributeList(Scope *S, Decl *D, const AttributeList *Attr
 
 /// DeclClonePragmaWeak - clone existing decl (maybe definition),
 /// #pragma weak needs a non-definition decl and source may not have one
-NamedDecl * Sema::DeclClonePragmaWeak(NamedDecl *ND, IdentifierInfo *II) {
+NamedDecl * Sema::DeclClonePragmaWeak(NamedDecl *ND, IdentifierInfo *II)
+{
   assert(isa<FunctionDecl>(ND) || isa<VarDecl>(ND));
   NamedDecl *NewD = 0;
   if (FunctionDecl *FD = dyn_cast<FunctionDecl>(ND)) {
@@ -1893,22 +1878,23 @@ NamedDecl * Sema::DeclClonePragmaWeak(NamedDecl *ND, IdentifierInfo *II) {
 /// DeclApplyPragmaWeak - A declaration (maybe definition) needs #pragma weak
 /// applied to it, possibly with an alias.
 void Sema::DeclApplyPragmaWeak(Scope *S, NamedDecl *ND, WeakInfo &W) {
-  if (W.getUsed()) return; // only do this once
-  W.setUsed(true);
-  if (W.getAlias()) { // clone decl, impersonate __attribute(weak,alias(...))
-    IdentifierInfo *NDId = ND->getIdentifier();
-    NamedDecl *NewD = DeclClonePragmaWeak(ND, W.getAlias());
-    NewD->addAttr(::new (Context) AliasAttr(NDId->getName()));
-    NewD->addAttr(::new (Context) WeakAttr());
-    WeakTopLevelDecl.push_back(NewD);
-    // FIXME: "hideous" code from Sema::LazilyCreateBuiltin
-    // to insert Decl at TU scope, sorry.
-    DeclContext *SavedContext = CurContext;
-    CurContext = Context.getTranslationUnitDecl();
-    PushOnScopeChains(NewD, S);
-    CurContext = SavedContext;
-  } else { // just add weak to existing
-    ND->addAttr(::new (Context) WeakAttr());
+  if (!W.getUsed()) { // only do this once
+    W.setUsed(true);
+    if (W.getAlias()) { // clone decl, impersonate __attribute(weak,alias(...))
+      IdentifierInfo *NDId = ND->getIdentifier();
+      NamedDecl *NewD = DeclClonePragmaWeak(ND, W.getAlias());
+      NewD->addAttr(::new (Context) AliasAttr(NDId->getName()));
+      NewD->addAttr(::new (Context) WeakAttr());
+      WeakTopLevelDecl.push_back(NewD);
+      // FIXME: "hideous" code from Sema::LazilyCreateBuiltin
+      // to insert Decl at TU scope, sorry.
+      DeclContext *SavedContext = CurContext;
+      CurContext = Context.getTranslationUnitDecl();
+      PushOnScopeChains(NewD, S);
+      CurContext = SavedContext;
+    } else { // just add weak to existing
+      ND->addAttr(::new (Context) WeakAttr());
+    }
   }
 }
 

@@ -1,16 +1,10 @@
-// RUN: clang-cc -triple i386-apple-darwin10 -analyze -std=gnu99 -checker-cfref -verify %s -analyzer-constraints=basic -analyzer-store=basic &&
-// RUN: clang-cc -triple i386-apple-darwin10 -analyze -std=gnu99 -checker-cfref -verify %s -analyzer-constraints=range -analyzer-store=basic &&
-// RUN: clang-cc -triple i386-apple-darwin10 -analyze -std=gnu99 -checker-cfref -analyzer-store=region -analyzer-constraints=range -analyzer-purge-dead=false -verify %s &&
-// RUN: clang-cc -triple i386-apple-darwin10 -analyze -std=gnu99 -checker-cfref -analyzer-store=region -analyzer-constraints=range -verify %s
+// RUN: clang-cc -analyze -std=gnu99 -checker-cfref -verify %s -analyzer-constraints=basic -analyzer-store=basic &&
+// RUN: clang-cc -analyze -std=gnu99 -checker-cfref -verify %s -analyzer-constraints=range -analyzer-store=basic &&
+// RUN: clang-cc -analyze -std=gnu99 -checker-cfref -analyzer-store=region -analyzer-constraints=range -analyzer-purge-dead=false -verify %s &&
+// RUN: clang-cc -analyze -std=gnu99 -checker-cfref -analyzer-store=region -analyzer-constraints=range -verify %s
 
-typedef unsigned uintptr_t;
-
-extern void __assert_fail (__const char *__assertion, __const char *__file,
-    unsigned int __line, __const char *__function)
-     __attribute__ ((__noreturn__));
-
-#define assert(expr) \
-  ((expr)  ? (void)(0)  : __assert_fail (#expr, __FILE__, __LINE__, __func__))
+#include<stdint.h>
+#include <assert.h>
 
 void f1(int *p) {  
   if (p) *p = 1;
@@ -276,15 +270,6 @@ void f12(HF12ITEM i, char *q) {
 void f13() {
   int *x = 0;
   if (((((int) x) << 2) + 1) >> 1) *x = 1; // no-warning
-}
-
-// PR 4759 - Attribute non-null checking by the analyzer was not correctly
-// handling pointer values that were undefined.
-void pr4759_aux(int *p) __attribute__((nonnull));
-
-void pr4759() {
-  int *p;
-  pr4759_aux(p); // expected-warning{{undefined}}
 }
 
 

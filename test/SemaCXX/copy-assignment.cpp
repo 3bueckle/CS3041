@@ -11,7 +11,7 @@ struct ConvertibleToConstA {
 };
 
 struct B {
-  B& operator=(B&);  // expected-note 4 {{candidate function}}
+  B& operator=(B&);
 };
 
 struct ConvertibleToB {

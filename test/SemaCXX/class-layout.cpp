@@ -42,8 +42,3 @@ struct __attribute__((packed)) F : E {
 };
 
 SA(5, sizeof(F) == 6);
-
-struct G { G(); };
-struct H : G { };
-
-SA(6, sizeof(H) == 1);

@@ -62,11 +62,11 @@ public:
     : AST(ast), Filename(filename),
       DeclRefMap(ast->getASTContext()),
       SelMap(ast->getASTContext()) { }
-
+  
   virtual ASTContext &getASTContext() { return AST->getASTContext(); }
   virtual DeclReferenceMap &getDeclReferenceMap() { return DeclRefMap; }
   virtual SelectorMap &getSelectorMap() { return SelMap; }
-
+  
   llvm::OwningPtr<ASTUnit> AST;
   std::string Filename;
   DeclReferenceMap DeclRefMap;
@@ -85,7 +85,7 @@ enum ProgActions {
   PrintDecls      // Print declarations of the point-at node
 };
 
-static llvm::cl::opt<ProgActions>
+static llvm::cl::opt<ProgActions> 
 ProgAction(
         llvm::cl::desc("Choose action to perform on the pointed-at AST node:"),
         llvm::cl::ZeroOrMore,
@@ -119,7 +119,7 @@ static void ProcessObjCMessage(ObjCMessageExpr *Msg, Indexer &Idxer) {
     llvm::errs() << "Error: Cannot -print-refs on a ObjC message expression\n";
     HadErrors = true;
     return;
-
+    
   case PrintDecls: {
     Analyz.FindObjCMethods(Msg, Results);
     for (ResultsTy::iterator
@@ -132,7 +132,7 @@ static void ProcessObjCMessage(ObjCMessageExpr *Msg, Indexer &Idxer) {
     Analyz.FindObjCMethods(Msg, Results);
     for (ResultsTy::iterator
            I = Results.begin(), E = Results.end(); I != E; ++I) {
-      const ObjCMethodDecl *D = cast<ObjCMethodDecl>(I->AsDecl());
+      const ObjCMethodDecl *D = cast<ObjCMethodDecl>(I->getDecl());
       if (D->isThisDeclarationADefinition())
         I->print(OS);
     }
@@ -144,9 +144,9 @@ static void ProcessObjCMessage(ObjCMessageExpr *Msg, Indexer &Idxer) {
 
 static void ProcessASTLocation(ASTLocation ASTLoc, Indexer &Idxer) {
   assert(ASTLoc.isValid());
-
+  
   if (ObjCMessageExpr *Msg =
-        dyn_cast_or_null<ObjCMessageExpr>(ASTLoc.dyn_AsStmt()))
+        dyn_cast_or_null<ObjCMessageExpr>(ASTLoc.getStmt()))
     return ProcessObjCMessage(Msg, Idxer);
 
   Decl *D = ASTLoc.getReferencedDecl();
@@ -184,7 +184,7 @@ static void ProcessASTLocation(ASTLocation ASTLoc, Indexer &Idxer) {
     Analyz.FindDeclarations(D, Results);
     for (ResultsTy::iterator
            I = Results.begin(), E = Results.end(); I != E; ++I) {
-      const Decl *D = I->AsDecl();
+      const Decl *D = I->getDecl();
       bool isDef = false;
       if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(D))
         isDef = FD->isThisDeclarationADefinition();
@@ -210,22 +210,24 @@ int main(int argc, char **argv) {
   llvm::PrettyStackTraceProgram X(argc, argv);
   llvm::cl::ParseCommandLineOptions(argc, argv,
                      "LLVM 'Clang' Indexing Test Bed: http://clang.llvm.org\n");
+  
+  FileManager FileMgr;
 
   Program Prog;
   Indexer Idxer(Prog);
   llvm::SmallVector<TUnit*, 4> TUnits;
-
+  
   // If no input was specified, read from stdin.
   if (InputFilenames.empty())
     InputFilenames.push_back("-");
 
   for (unsigned i = 0, e = InputFilenames.size(); i != e; ++i) {
     const std::string &InFile = InputFilenames[i];
-
+    
     std::string ErrMsg;
     llvm::OwningPtr<ASTUnit> AST;
 
-    AST.reset(ASTUnit::LoadFromPCHFile(InFile, &ErrMsg));
+    AST.reset(ASTUnit::LoadFromPCHFile(InFile, FileMgr, &ErrMsg));
     if (!AST) {
       llvm::errs() << "[" << InFile << "] Error: " << ErrMsg << '\n';
       return 1;
@@ -233,7 +235,7 @@ int main(int argc, char **argv) {
 
     TUnit *TU = new TUnit(AST.take(), InFile);
     TUnits.push_back(TU);
-
+    
     Idxer.IndexAST(TU);
   }
 
@@ -243,7 +245,7 @@ int main(int argc, char **argv) {
 
   if (!PointAtLocation.empty()) {
     const std::string &Filename = PointAtLocation[0].FileName;
-    const FileEntry *File = FirstAST->getFileManager().getFile(Filename);
+    const FileEntry *File = FileMgr.getFile(Filename);
     if (File == 0) {
       llvm::errs() << "File '" << Filename << "' does not exist\n";
       return 1;
@@ -252,7 +254,7 @@ int main(int argc, char **argv) {
     // Safety check. Using an out-of-date AST file will only lead to crashes
     // or incorrect results.
     // FIXME: Check all the source files that make up the AST file.
-    const FileEntry *ASTFile = FirstAST->getFileManager().getFile(FirstFile);
+    const FileEntry *ASTFile = FileMgr.getFile(FirstFile);
     if (File->getModificationTime() > ASTFile->getModificationTime()) {
       llvm::errs() << "[" << FirstFile << "] Error: " <<
         "Pointing at a source file which was modified after creating "
@@ -270,7 +272,7 @@ int main(int argc, char **argv) {
         "Couldn't resolve source location (invalid location)\n";
       return 1;
     }
-
+    
     ASTLoc = ResolveLocationInAST(FirstAST->getASTContext(), Loc);
     if (ASTLoc.isInvalid()) {
       llvm::errs() << "[" << FirstFile << "] Error: " <<
@@ -278,19 +280,19 @@ int main(int argc, char **argv) {
       return 1;
     }
   }
-
+  
   if (ASTLoc.isValid()) {
     if (ProgAction == PrintPoint) {
       llvm::raw_ostream &OS = llvm::outs();
       ASTLoc.print(OS);
       if (const char *Comment =
-            FirstAST->getASTContext().getCommentForDecl(ASTLoc.dyn_AsDecl()))
+            FirstAST->getASTContext().getCommentForDecl(ASTLoc.getDecl()))
         OS << "Comment associated with this declaration:\n" << Comment << "\n";
     } else {
       ProcessASTLocation(ASTLoc, Idxer);
     }
   }
-
+  
   if (HadErrors)
     return 1;
 
@@ -302,6 +304,6 @@ int main(int argc, char **argv) {
   // Managed static deconstruction. Useful for making things like
   // -time-passes usable.
   llvm::llvm_shutdown();
-
+  
   return 0;
 }

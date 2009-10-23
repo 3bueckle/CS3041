@@ -20,21 +20,11 @@ struct Enum2 {
   operator E2();
 };
 
-
-struct X { 
-  void f();
-};
-
-typedef void (X::*pmf)();
-struct Xpmf {
-  operator pmf();
-};
-
 yes& islong(long);
 yes& islong(unsigned long); // FIXME: shouldn't be needed
 no& islong(int);
 
-void f(Short s, Long l, Enum1 e1, Enum2 e2, Xpmf pmf) {
+void f(Short s, Long l, Enum1 e1, Enum2 e2) {
   // C++ [over.built]p8
   int i1 = +e1;
   int i2 = -e2;
@@ -47,10 +37,6 @@ void f(Short s, Long l, Enum1 e1, Enum2 e2, Xpmf pmf) {
   (void)static_cast<yes&>(islong(s + l));
   (void)static_cast<no&>(islong(s + s));
 
-  // C++ [over.built]p16
-  (void)(pmf == &X::f);
-  (void)(pmf == 0);
-  
   // C++ [over.built]p17
   (void)static_cast<yes&>(islong(s % l));
   (void)static_cast<yes&>(islong(l << s));
@@ -59,7 +45,7 @@ void f(Short s, Long l, Enum1 e1, Enum2 e2, Xpmf pmf) {
   // FIXME: should pass (void)static_cast<no&>(islong(e1 % e2));
 }
 
-struct ShortRef { // expected-note{{candidate function}}
+struct ShortRef {
   operator short&();
 };
 
@@ -67,15 +53,7 @@ struct LongRef {
   operator volatile long&();
 };
 
-struct XpmfRef { // expected-note{{candidate function}}
-  operator pmf&();
-};
-
-struct E2Ref {
-  operator E2&();
-};
-
-void g(ShortRef sr, LongRef lr, E2Ref e2_ref, XpmfRef pmf_ref) {
+void g(ShortRef sr, LongRef lr) {
   // C++ [over.built]p3
   short s1 = sr++;
 
@@ -86,14 +64,6 @@ void g(ShortRef sr, LongRef lr, E2Ref e2_ref, XpmfRef pmf_ref) {
   short& sr1 = (sr *= lr);
   volatile long& lr1 = (lr *= sr);
 
-  // C++ [over.built]p20:
-  E2 e2r2;
-  e2r2 = e2_ref;
-  
-  pmf &pmr = (pmf_ref = &X::f); // expected-error{{no viable overloaded '='}}
-  pmf pmr2;
-  pmr2 = pmf_ref;
-               
   // C++ [over.built]p22
   short& sr2 = (sr %= lr);
   volatile long& lr2 = (lr <<= sr);
@@ -149,29 +119,4 @@ void test_with_ptrs(VolatileIntPtr vip, ConstIntPtr cip, ShortRef sr,
 
 void test_assign_restrictions(ShortRef& sr) {
   sr = (short)0; // expected-error{{no viable overloaded '='}}
-}
-
-struct Base { };
-struct Derived1 : Base { };
-struct Derived2 : Base { };
-
-template<typename T>
-struct ConvertibleToPtrOf {
-  operator T*();
-};
-
-bool test_with_base_ptrs(ConvertibleToPtrOf<Derived1> d1, 
-                         ConvertibleToPtrOf<Derived2> d2) {
-  return d1 == d2; // expected-error{{invalid operands}}
-}
-
-// DR425
-struct A {
-  template< typename T > operator T() const;
-};
-
-void test_dr425(A a) {
-  // FIXME: lots of candidates here!
-  (void)(1.0f * a); // expected-error{{ambiguous}} \
-                    // expected-note 81{{candidate}}
 }

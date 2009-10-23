@@ -15,24 +15,3 @@ typedef struct {
 }
 @end
 
-
-typedef struct _NSSize {
-    float width;
-    float height;
-} NSSize;
-
-
-@interface AnObject
-{
- NSSize size;
-}
-
-@property NSSize size;
-
-@end
-
-float f ()
-{
-  AnObject* obj;
-  return (obj.size).width;
-}

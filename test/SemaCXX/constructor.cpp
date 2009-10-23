@@ -83,4 +83,3 @@ void A::S::f2() {}
 A::S::operator int() { return 1; }
 
 A::S::~S() {}
-

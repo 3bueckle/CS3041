@@ -37,7 +37,7 @@ const APValue &APValue::operator=(const APValue &RHS) {
   else if (isFloat())
     setFloat(RHS.getFloat());
   else if (isVector())
-    setVector(((Vec*)(char*)RHS.Data)->Elts, RHS.getVectorLength());
+    setVector(((Vec*)(void*)RHS.Data)->Elts, RHS.getVectorLength());
   else if (isComplexInt())
     setComplexInt(RHS.getComplexIntReal(), RHS.getComplexIntImag());
   else if (isComplexFloat())
@@ -49,17 +49,17 @@ const APValue &APValue::operator=(const APValue &RHS) {
 
 void APValue::MakeUninit() {
   if (Kind == Int)
-    ((APSInt*)(char*)Data)->~APSInt();
+    ((APSInt*)(void*)Data)->~APSInt();
   else if (Kind == Float)
-    ((APFloat*)(char*)Data)->~APFloat();
+    ((APFloat*)(void*)Data)->~APFloat();
   else if (Kind == Vector)
-    ((Vec*)(char*)Data)->~Vec();
+    ((Vec*)(void*)Data)->~Vec();
   else if (Kind == ComplexInt)
-    ((ComplexAPSInt*)(char*)Data)->~ComplexAPSInt();
+    ((ComplexAPSInt*)(void*)Data)->~ComplexAPSInt();
   else if (Kind == ComplexFloat)
-    ((ComplexAPFloat*)(char*)Data)->~ComplexAPFloat();
+    ((ComplexAPFloat*)(void*)Data)->~ComplexAPFloat();
   else if (Kind == LValue) {
-    ((LV*)(char*)Data)->~LV();
+    ((LV*)(void*)Data)->~LV();
   }
   Kind = Uninitialized;
 }
@@ -91,7 +91,7 @@ void APValue::print(llvm::raw_ostream &OS) const {
     return;
   case Vector:
     OS << "Vector: " << getVectorElt(0);
-    for (unsigned i = 1; i != getVectorLength(); ++i)
+    for (unsigned i = 1; i != getVectorLength(); ++i) 
       OS << ", " << getVectorElt(i);
     return;
   case ComplexInt:

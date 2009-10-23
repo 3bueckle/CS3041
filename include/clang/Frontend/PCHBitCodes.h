@@ -29,11 +29,7 @@ namespace clang {
     /// incompatible with previous versions (such that a reader
     /// designed for the previous version could not support reading
     /// the new version), this number should be increased.
-    ///
-    /// Version 3 of PCH files also requires that the Subversion branch and
-    /// revision match exactly, since there is no backward compatibility of
-    /// PCH files at this time.
-    const unsigned VERSION_MAJOR = 3;
+    const unsigned VERSION_MAJOR = 2;
 
     /// \brief PCH minor version number supported by this version of
     /// Clang.
@@ -69,7 +65,7 @@ namespace clang {
     typedef uint32_t IdentID;
 
     typedef uint32_t SelectorID;
-
+    
     /// \brief Describes the various kinds of blocks that occur within
     /// a PCH file.
     enum BlockIDs {
@@ -86,33 +82,38 @@ namespace clang {
       PREPROCESSOR_BLOCK_ID,
 
       /// \brief The block containing the definitions of all of the
-      /// types and decls used within the PCH file.
-      DECLTYPES_BLOCK_ID
+      /// types used within the PCH file.
+      TYPES_BLOCK_ID,
+
+      /// \brief The block containing the definitions of all of the
+      /// declarations stored in the PCH file.
+      DECLS_BLOCK_ID
     };
 
     /// \brief Record types that occur within the PCH block itself.
     enum PCHRecordTypes {
-      /// \brief Record code for the offsets of each type.
+      /// \brief Offset of each type within the types block.
       ///
       /// The TYPE_OFFSET constant describes the record that occurs
-      /// within the PCH block. The record itself is an array of offsets that
-      /// point into the declarations and types block (identified by 
-      /// DECLTYPES_BLOCK_ID). The index into the array is based on the ID
+      /// within the block identified by TYPE_OFFSETS_BLOCK_ID within
+      /// the PCH file. The record itself is an array of offsets that
+      /// point into the types block (identified by TYPES_BLOCK_ID in
+      /// the PCH file). The index into the array is based on the ID
       /// of a type. For a given type ID @c T, the lower three bits of
       /// @c T are its qualifiers (const, volatile, restrict), as in
       /// the QualType class. The upper bits, after being shifted and
       /// subtracting NUM_PREDEF_TYPE_IDS, are used to index into the
       /// TYPE_OFFSET block to determine the offset of that type's
-      /// corresponding record within the DECLTYPES_BLOCK_ID block.
+      /// corresponding record within the TYPES_BLOCK_ID block.
       TYPE_OFFSET = 1,
-
+      
       /// \brief Record code for the offsets of each decl.
       ///
       /// The DECL_OFFSET constant describes the record that occurs
-      /// within the block identified by DECL_OFFSETS_BLOCK_ID within
-      /// the PCH block. The record itself is an array of offsets that
-      /// point into the declarations and types block (identified by
-      /// DECLTYPES_BLOCK_ID). The declaration ID is an index into this
+      /// within the block identifier by DECL_OFFSETS_BLOCK_ID within
+      /// the PCH file. The record itself is an array of offsets that
+      /// point into the declarations block (identified by
+      /// DECLS_BLOCK_ID). The declaration ID is an index into this
       /// record, after subtracting one to account for the use of
       /// declaration ID 0 for a NULL declaration pointer. Index 0 is
       /// reserved for the translation unit declaration.
@@ -181,7 +182,7 @@ namespace clang {
       /// \brief Record code for the array of locally-scoped external
       /// declarations.
       LOCALLY_SCOPED_EXTERNAL_DECLS = 11,
-
+      
       /// \brief Record code for the table of offsets into the
       /// Objective-C method pool.
       SELECTOR_OFFSETS = 12,
@@ -214,14 +215,10 @@ namespace clang {
       /// \brief Record code for the original file that was used to
       /// generate the precompiled header.
       ORIGINAL_FILE_NAME = 19,
-
+      
       /// \brief Record code for the sorted array of source ranges where
       /// comments were encountered in the source code.
-      COMMENT_RANGES = 20,
-      
-      /// \brief Record code for the Subversion branch and revision information
-      /// of the compiler used to build this PCH file.
-      SVN_BRANCH_REVISION = 21
+      COMMENT_RANGES = 20
     };
 
     /// \brief Record types used within a source manager block.
@@ -246,7 +243,7 @@ namespace clang {
       /// ControllingMacro is optional.
       SM_HEADER_FILE_INFO = 6
     };
-
+    
     /// \brief Record types used within a preprocessor block.
     enum PreprocessorRecordTypes {
       // The macros in the PP section are a PP_MACRO_* instance followed by a
@@ -260,7 +257,7 @@ namespace clang {
       /// [PP_MACRO_FUNCTION_LIKE, <ObjectLikeStuff>, IsC99Varargs, IsGNUVarars,
       ///  NumArgs, ArgIdentInfoID* ]
       PP_MACRO_FUNCTION_LIKE = 2,
-
+      
       /// \brief Describes one token.
       /// [PP_TOKEN, SLoc, Length, IdentInfoID, Kind, Flags]
       PP_TOKEN = 3
@@ -336,7 +333,7 @@ namespace clang {
       /// \brief The ObjC 'id' type.
       PREDEF_TYPE_OBJC_ID       = 26,
       /// \brief The ObjC 'Class' type.
-      PREDEF_TYPE_OBJC_CLASS    = 27
+      PREDEF_TYPE_OBJC_CLASS    = 27     
     };
 
     /// \brief The number of predefined type IDs that are reserved for
@@ -348,8 +345,8 @@ namespace clang {
 
     /// \brief Record codes for each kind of type.
     ///
-    /// These constants describe the type records that can occur within a
-    /// block identified by DECLTYPES_BLOCK_ID in the PCH file. Each
+    /// These constants describe the records that can occur within a
+    /// block identified by TYPES_BLOCK_ID in the PCH file. Each
     /// constant describes a record for a specific type class in the
     /// AST.
     enum TypeCode {
@@ -399,10 +396,10 @@ namespace clang {
       TYPE_OBJC_OBJECT_POINTER      = 22,
       /// \brief a DecltypeType record.
       TYPE_DECLTYPE                 = 23,
-      /// \brief An ElaboratedType record.
-      TYPE_ELABORATED               = 24,
-      /// \brief A SubstTemplateTypeParmType record.
-      TYPE_SUBST_TEMPLATE_TYPE_PARM = 25
+      /// \brief A ConstantArrayWithExprType record.
+      TYPE_CONSTANT_ARRAY_WITH_EXPR = 24,
+      /// \brief A ConstantArrayWithoutExprType record.
+      TYPE_CONSTANT_ARRAY_WITHOUT_EXPR = 25
     };
 
     /// \brief The type IDs for special types constructed by semantic
@@ -434,22 +431,18 @@ namespace clang {
       /// \brief Objective-C "id" redefinition type
       SPECIAL_TYPE_OBJC_ID_REDEFINITION        = 10,
       /// \brief Objective-C "Class" redefinition type
-      SPECIAL_TYPE_OBJC_CLASS_REDEFINITION     = 11,
-      /// \brief Block descriptor type for Blocks CodeGen
-      SPECIAL_TYPE_BLOCK_DESCRIPTOR            = 12,
-      /// \brief Block extedned descriptor type for Blocks CodeGen
-      SPECIAL_TYPE_BLOCK_EXTENDED_DESCRIPTOR   = 13
+      SPECIAL_TYPE_OBJC_CLASS_REDEFINITION     = 11
     };
 
     /// \brief Record codes for each kind of declaration.
     ///
-    /// These constants describe the declaration records that can occur within
-    /// a declarations block (identified by DECLS_BLOCK_ID). Each
+    /// These constants describe the records that can occur within a
+    /// declarations block (identified by DECLS_BLOCK_ID). Each
     /// constant describes a record for a specific declaration class
     /// in the AST.
     enum DeclCode {
       /// \brief Attributes attached to a declaration.
-      DECL_ATTR = 50,
+      DECL_ATTR = 1,
       /// \brief A TranslationUnitDecl record.
       DECL_TRANSLATION_UNIT,
       /// \brief A TypedefDecl record.
@@ -524,14 +517,14 @@ namespace clang {
     /// \brief Record codes for each kind of statement or expression.
     ///
     /// These constants describe the records that describe statements
-    /// or expressions. These records  occur within type and declarations
-    /// block, so they begin with record values of 100.  Each constant 
-    /// describes a record for a specific statement or expression class in the
-    /// AST.
+    /// or expressions. These records can occur within either the type
+    /// or declaration blocks, so they begin with record values of
+    /// 50.  Each constant describes a record for a specific
+    /// statement or expression class in the AST.
     enum StmtCode {
       /// \brief A marker record that indicates that we are at the end
       /// of an expression.
-      STMT_STOP = 100,
+      STMT_STOP = 50,
       /// \brief A NULL expression.
       STMT_NULL_PTR,
       /// \brief A NullStmt record.
@@ -634,7 +627,7 @@ namespace clang {
       EXPR_BLOCK_DECL_REF,
       
       // Objective-C
-
+      
       /// \brief An ObjCStringLiteral record.
       EXPR_OBJC_STRING_LITERAL,
       /// \brief An ObjCEncodeExpr record.
@@ -655,26 +648,24 @@ namespace clang {
       EXPR_OBJC_SUPER_EXPR,
       /// \brief An ObjCIsa Expr record.
       EXPR_OBJC_ISA,
-
-      /// \brief An ObjCForCollectionStmt record.
+      
+      /// \brief An ObjCForCollectionStmt record.      
       STMT_OBJC_FOR_COLLECTION,
-      /// \brief An ObjCAtCatchStmt record.
+      /// \brief An ObjCAtCatchStmt record.      
       STMT_OBJC_CATCH,
-      /// \brief An ObjCAtFinallyStmt record.
+      /// \brief An ObjCAtFinallyStmt record.      
       STMT_OBJC_FINALLY,
-      /// \brief An ObjCAtTryStmt record.
+      /// \brief An ObjCAtTryStmt record.      
       STMT_OBJC_AT_TRY,
-      /// \brief An ObjCAtSynchronizedStmt record.
+      /// \brief An ObjCAtSynchronizedStmt record.      
       STMT_OBJC_AT_SYNCHRONIZED,
-      /// \brief An ObjCAtThrowStmt record.
+      /// \brief An ObjCAtThrowStmt record.      
       STMT_OBJC_AT_THROW,
 
       // C++
 
-      /// \brief A CXXOperatorCallExpr record.
-      EXPR_CXX_OPERATOR_CALL,
-      /// \brief A CXXConstructExpr record.
-      EXPR_CXX_CONSTRUCT
+      /// \brief An CXXOperatorCallExpr record.      
+      EXPR_CXX_OPERATOR_CALL
     };
 
     /// \brief The kinds of designators that can occur in a

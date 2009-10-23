@@ -23,6 +23,7 @@
 #include "llvm/System/Path.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/Streams.h"
 #include <string>
 
 using namespace clang;
@@ -35,9 +36,9 @@ namespace {
     llvm::raw_ostream *Out;
     Sema *SemaPtr;
     MemorizeStatCalls *StatCalls; // owned by the FileManager
-
+    
   public:
-    explicit PCHGenerator(const Preprocessor &PP,
+    explicit PCHGenerator(const Preprocessor &PP, 
                           const char *isysroot,
                           llvm::raw_ostream *Out);
     virtual void InitializeSema(Sema &S) { SemaPtr = &S; }
@@ -45,15 +46,15 @@ namespace {
   };
 }
 
-PCHGenerator::PCHGenerator(const Preprocessor &PP,
+PCHGenerator::PCHGenerator(const Preprocessor &PP, 
                            const char *isysroot,
                            llvm::raw_ostream *OS)
-  : PP(PP), isysroot(isysroot), Out(OS), SemaPtr(0), StatCalls(0) {
+  : PP(PP), isysroot(isysroot), Out(OS), SemaPtr(0), StatCalls(0) { 
 
   // Install a stat() listener to keep track of all of the stat()
   // calls.
   StatCalls = new MemorizeStatCalls;
-  PP.getFileManager().addStatCache(StatCalls, /*AtBeginning=*/true);
+  PP.getFileManager().setStatCache(StatCalls);
 }
 
 void PCHGenerator::HandleTranslationUnit(ASTContext &Ctx) {
