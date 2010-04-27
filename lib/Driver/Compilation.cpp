@@ -61,21 +61,10 @@ void Compilation::PrintJob(llvm::raw_ostream &OS, const Job &J,
     OS << " \"" << C->getExecutable() << '"';
     for (ArgStringList::const_iterator it = C->getArguments().begin(),
            ie = C->getArguments().end(); it != ie; ++it) {
-      OS << ' ';
-      if (!Quote) {
-        OS << *it;
-        continue;
-      }
-
-      // Quote the argument and escape shell special characters; this isn't
-      // really complete but is good enough.
-      OS << '"';
-      for (const char *s = *it; *s; ++s) {
-        if (*s == '"' || *s == '\\' || *s == '$')
-          OS << '\\';
-        OS << *s;
-      }
-      OS << '"';
+      if (Quote)
+        OS << " \"" << *it << '"';
+      else
+        OS << ' ' << *it;
     }
     OS << Terminator;
   } else if (const PipedJob *PJ = dyn_cast<PipedJob>(&J)) {
@@ -134,34 +123,8 @@ int Compilation::ExecuteCommand(const Command &C,
   std::copy(C.getArguments().begin(), C.getArguments().end(), Argv+1);
   Argv[C.getArguments().size() + 1] = 0;
 
-  if (getDriver().CCCEcho || getDriver().CCPrintOptions ||
-      getArgs().hasArg(options::OPT_v)) {
-    llvm::raw_ostream *OS = &llvm::errs();
-
-    // Follow gcc implementation of CC_PRINT_OPTIONS; we could also cache the
-    // output stream.
-    if (getDriver().CCPrintOptions && getDriver().CCPrintOptionsFilename) {
-      std::string Error;
-      OS = new llvm::raw_fd_ostream(getDriver().CCPrintOptionsFilename,
-                                    Error,
-                                    llvm::raw_fd_ostream::F_Append);
-      if (!Error.empty()) {
-        getDriver().Diag(clang::diag::err_drv_cc_print_options_failure)
-          << Error;
-        FailingCommand = &C;
-        delete OS;
-        return 1;
-      }
-    }
-
-    if (getDriver().CCPrintOptions)
-      *OS << "[Logging clang options]";
-
-    PrintJob(*OS, C, "\n", /*Quote=*/getDriver().CCPrintOptions);
-
-    if (OS != &llvm::errs())
-      delete OS;
-  }
+  if (getDriver().CCCEcho || getArgs().hasArg(options::OPT_v))
+    PrintJob(llvm::errs(), C, "\n", false);
 
   std::string Error;
   int Res =

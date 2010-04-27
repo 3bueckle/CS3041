@@ -19,8 +19,9 @@
 #include "clang/Checker/PathSensitive/GRSimpleAPICheck.h"
 #include "clang/Checker/PathSensitive/GRExprEngine.h"
 #include "clang/Checker/PathSensitive/GRState.h"
-#include "clang/Checker/BugReporter/BugType.h"
+#include "clang/Checker/BugReporter/BugReporter.h"
 #include "clang/Checker/PathSensitive/MemRegion.h"
+#include "clang/Checker/BugReporter/PathDiagnostic.h"
 #include "clang/Checker/PathSensitive/CheckerVisitor.h"
 #include "clang/Checker/Checkers/LocalCheckers.h"
 #include "clang/AST/DeclObjC.h"
@@ -31,22 +32,13 @@
 using namespace clang;
 
 static const ObjCInterfaceType* GetReceiverType(const ObjCMessageExpr* ME) {
-  QualType T;
-  switch (ME->getReceiverKind()) {
-  case ObjCMessageExpr::Instance:
-    T = ME->getInstanceReceiver()->getType();
-    break;
+  const Expr* Receiver = ME->getReceiver();
 
-  case ObjCMessageExpr::SuperInstance:
-    T = ME->getSuperType();
-    break;
+  if (!Receiver)
+    return NULL;
 
-  case ObjCMessageExpr::Class:
-  case ObjCMessageExpr::SuperClass:
-    return 0;
-  }
-
-  if (const ObjCObjectPointerType *PT = T->getAs<ObjCObjectPointerType>())
+  if (const ObjCObjectPointerType *PT =
+      Receiver->getType()->getAs<ObjCObjectPointerType>())
     return PT->getInterfaceType();
 
   return NULL;
@@ -518,21 +510,11 @@ public:
 
 void ClassReleaseChecker::PreVisitObjCMessageExpr(CheckerContext &C,
                                                   const ObjCMessageExpr *ME) {
-  ObjCInterfaceDecl *Class = 0;
-  switch (ME->getReceiverKind()) {
-  case ObjCMessageExpr::Class:
-    Class = ME->getClassReceiver()->getAs<ObjCInterfaceType>()->getDecl();
-    break;
-
-  case ObjCMessageExpr::SuperClass:
-    Class = ME->getSuperType()->getAs<ObjCInterfaceType>()->getDecl();
-    break;
-
-  case ObjCMessageExpr::Instance:
-  case ObjCMessageExpr::SuperInstance:
+  
+  const IdentifierInfo *ClsName = ME->getClassName();
+  if (!ClsName)
     return;
-  }
-
+  
   Selector S = ME->getSelector();
   if (!(S == releaseS || S == retainS || S == autoreleaseS || S == drainS))
     return;
@@ -550,7 +532,7 @@ void ClassReleaseChecker::PreVisitObjCMessageExpr(CheckerContext &C,
   llvm::raw_svector_ostream os(buf);
 
   os << "The '" << S.getAsString() << "' message should be sent to instances "
-        "of class '" << Class->getName()
+        "of class '" << ClsName->getName()
      << "' and not the class directly";
   
   RangedBugReport *report = new RangedBugReport(*BT, os.str(), N);

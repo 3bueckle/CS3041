@@ -96,8 +96,6 @@ public:
     return TargetIsIPhoneOS;
   }
 
-  bool isTargetInitialized() const { return TargetInitialized; }
-
   void getTargetVersion(unsigned (&Res)[3]) const {
     assert(TargetInitialized && "Target not initialized!");
     Res[0] = TargetVersion[0];
@@ -160,20 +158,13 @@ public:
       return !isMacosxVersionLT(10, 6);
   }
   virtual bool IsObjCNonFragileABIDefault() const {
-    // Non-fragile ABI is default for everything but i386.
-    return getTriple().getArch() != llvm::Triple::x86;
+    // Non-fragile ABI default to on for iPhoneOS and x86-64.
+    return isTargetIPhoneOS() || getTriple().getArch() == llvm::Triple::x86_64;
   }
   virtual bool IsObjCLegacyDispatchDefault() const {
     // This is only used with the non-fragile ABI.
-
-    // Legacy dispatch is used everywhere except on x86_64.
-    return getTriple().getArch() != llvm::Triple::x86_64;
-  }
-  virtual bool UseObjCMixedDispatch() const {
-    // This is only used with the non-fragile ABI and non-legacy dispatch.
-
-    // Mixed dispatch is used everywhere except OS X before 10.6.
-    return !(!isTargetIPhoneOS() && isMacosxVersionLT(10, 6));
+    return (getTriple().getArch() == llvm::Triple::arm ||
+            getTriple().getArch() == llvm::Triple::thumb);
   }
   virtual bool IsUnwindTablesDefault() const;
   virtual unsigned GetDefaultStackProtectorLevel() const {
@@ -182,8 +173,6 @@ public:
   }
   virtual const char *GetDefaultRelocationModel() const;
   virtual const char *GetForcedPicModel() const;
-
-  virtual bool SupportsObjCGC() const;
 
   virtual bool UseDwarfDebugFlags() const;
 

@@ -43,19 +43,6 @@ struct Temporaries0 {
 
 template struct Temporaries0<5, 7>;
 
-// Ensure that both the constructor and the destructor are instantiated by
-// checking for parse errors from each.
-template<int N> struct BadX {
-  BadX() { int a[-N]; } // expected-error {{array size is negative}}
-  ~BadX() { int a[-N]; } // expected-error {{array size is negative}}
-};
-
-template<int N>
-struct PR6671 {
-  void f() { (void)BadX<1>(); } // expected-note 2 {{instantiation}}
-};
-template struct PR6671<1>;
-
 // ---------------------------------------------------------------------
 // new/delete expressions
 // ---------------------------------------------------------------------
@@ -166,7 +153,7 @@ struct TypeId0 {
     if (ptr)
       return typeid(ptr);
     else
-      return typeid(T); // expected-error{{'typeid' of incomplete type 'Incomplete'}}
+      return typeid(T); // expected-error{{'typeid' of incomplete type 'struct Incomplete'}}
   }
 };
 

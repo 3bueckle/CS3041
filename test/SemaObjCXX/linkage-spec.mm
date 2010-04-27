@@ -2,11 +2,3 @@
 extern "C" {
 @class Protocol;
 }
-
-// <rdar://problem/7827709>
-extern "C" {
-@class I;
-}
-
-@interface I
-@end

@@ -1,10 +1,7 @@
 // RUN: %clang_cc1 -fsyntax-only -verify %s
-// RUN: cp %s %t
-// RUN: %clang_cc1 -fsyntax-only -fixit -x c++ %t || true
-// RUN: %clang_cc1 -fsyntax-only -pedantic -Werror -x c++ %t
+// RUN: %clang_cc1 -fsyntax-only -fixit -o - %s | %clang_cc1 -fsyntax-only -pedantic -Werror -x c++ -
 namespace std {
   template<typename T> class basic_string { // expected-note 2{{'basic_string' declared here}}
-  public:
     int find(const char *substr); // expected-note{{'find' declared here}}
     static const int npos = -1; // expected-note{{'npos' declared here}}
   };
@@ -34,12 +31,12 @@ bool test_string(std::string s) {
   std::basic_sting<char> b2; // expected-error{{no template named 'basic_sting' in namespace 'std'; did you mean 'basic_string'?}}
   (void)b1;
   (void)b2;
-  return s.fnd("hello") // expected-error{{no member named 'fnd' in 'std::basic_string<char>'; did you mean 'find'?}}
-    == std::string::pos; // expected-error{{no member named 'pos' in 'std::basic_string<char>'; did you mean 'npos'?}}
+  return s.fnd("hello") // expected-error{{no member named 'fnd' in 'class std::basic_string<char>'; did you mean 'find'?}}
+    == std::string::pos; // expected-error{{no member named 'pos' in 'class std::basic_string<char>'; did you mean 'npos'?}}
 }
 
 struct Base { };
-struct Derived : public Base { // expected-note{{base class 'Base' specified here}}
+struct Derived : public Base { // expected-note{{base class 'struct Base' specified here}}
   int member; // expected-note 3{{'member' declared here}}
 
   Derived() : base(), // expected-error{{initializer 'base' does not name a non-static data member or base class; did you mean the base class 'Base'?}}

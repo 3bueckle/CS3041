@@ -23,12 +23,12 @@
 //@synthesize howMany, what;
 
 - (int) howMany {
-    return self.howMany;
+    return howMany;
 }
 // - (void) setHowMany: (int) value
 
 - (NSString*) what {
-    return self.what;
+    return what;
 }
 // - (void) setWhat: (NSString*) value    
 @end
@@ -44,12 +44,12 @@
 
 // - (int) howMany
 - (void) setHowMany: (int) value {
-    self.howMany = value;
+    howMany = value;
 }
 
 // - (NSString*) what
 - (void) setWhat: (NSString*) value {
-    if (self.what != value) {
+    if (what != value) {
     }
 }
 @end
@@ -64,32 +64,18 @@
 //@synthesize howMany, what;  // REM: Redundant anyway
 
 - (int) howMany {
-    return self.howMany;
+    return howMany;
 }
 - (void) setHowMany: (int) value {
-    self.howMany = value;
+    howMany = value;
 }
 
 - (NSString*) what {
-    return self.what;
+    return what;
 }
 - (void) setWhat: (NSString*) value {
-    if (self.what != value) {
+    if (what != value) {
     }
 }
 @end
 
-@protocol TopProtocol
-  @property (readonly) id myString;
-@end
-
-@interface TopClass <TopProtocol> 
-{
-  id myString; // expected-note {{previously declared 'myString' here}}
-}
-@end
-
-@interface SubClass : TopClass <TopProtocol> 
-@end
-
-@implementation SubClass @end // expected-error {{property 'myString' attempting to use ivar 'myString' declared in super class 'TopClass'}}

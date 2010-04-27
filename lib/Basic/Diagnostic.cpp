@@ -11,24 +11,23 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/AST/ASTDiagnostic.h"
-#include "clang/Analysis/AnalysisDiagnostic.h"
 #include "clang/Basic/Diagnostic.h"
-#include "clang/Basic/FileManager.h"
-#include "clang/Basic/IdentifierTable.h"
-#include "clang/Basic/PartialDiagnostic.h"
-#include "clang/Basic/SourceLocation.h"
-#include "clang/Basic/SourceManager.h"
-#include "clang/Driver/DriverDiagnostic.h"
-#include "clang/Frontend/FrontendDiagnostic.h"
+
 #include "clang/Lex/LexDiagnostic.h"
 #include "clang/Parse/ParseDiagnostic.h"
+#include "clang/AST/ASTDiagnostic.h"
 #include "clang/Sema/SemaDiagnostic.h"
+#include "clang/Frontend/FrontendDiagnostic.h"
+#include "clang/Analysis/AnalysisDiagnostic.h"
+#include "clang/Driver/DriverDiagnostic.h"
+
+#include "clang/Basic/FileManager.h"
+#include "clang/Basic/IdentifierTable.h"
+#include "clang/Basic/SourceLocation.h"
+#include "clang/Basic/SourceManager.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
-#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
-
 #include <vector>
 #include <map>
 #include <cstring>
@@ -125,20 +124,10 @@ const char *Diagnostic::getWarningOptionForDiag(unsigned DiagID) {
   return 0;
 }
 
-Diagnostic::SFINAEResponse 
-Diagnostic::getDiagnosticSFINAEResponse(unsigned DiagID) {
-  if (const StaticDiagInfoRec *Info = GetDiagInfo(DiagID)) {
-    if (!Info->SFINAE)
-      return SFINAE_Report;
-
-    if (Info->Class == CLASS_ERROR)
-      return SFINAE_SubstitutionFailure;
-    
-    // Suppress notes, warnings, and extensions;
-    return SFINAE_Suppress;
-  }
-  
-  return SFINAE_Report;
+bool Diagnostic::isBuiltinSFINAEDiag(unsigned DiagID) {
+  if (const StaticDiagInfoRec *Info = GetDiagInfo(DiagID))
+    return Info->SFINAE && Info->Class == CLASS_ERROR;
+  return false;
 }
 
 /// getDiagClass - Return the class field of the diagnostic.
@@ -223,20 +212,15 @@ Diagnostic::Diagnostic(DiagnosticClient *client) : Client(client) {
 
   ErrorOccurred = false;
   FatalErrorOccurred = false;
-  ErrorLimit = 0;
-  TemplateBacktraceLimit = 0;
-
-  NumWarnings = 0;
+  NumDiagnostics = 0;
+  
   NumErrors = 0;
-  NumErrorsSuppressed = 0;
   CustomDiagInfo = 0;
   CurDiagID = ~0U;
   LastDiagLevel = Ignored;
 
   ArgToStringFn = DummyArgToStringFn;
   ArgToStringCookie = 0;
-
-  DelayedDiagID = 0;
 
   // Set all mappings to 'unset'.
   DiagMappings BlankDiags(diag::DIAG_UPPER_LIMIT/2, 0);
@@ -289,18 +273,11 @@ bool Diagnostic::isBuiltinNote(unsigned DiagID) {
 }
 
 /// isBuiltinExtensionDiag - Determine whether the given built-in diagnostic
-/// ID is for an extension of some sort.  This also returns EnabledByDefault,
-/// which is set to indicate whether the diagnostic is ignored by default (in
-/// which case -pedantic enables it) or treated as a warning/error by default.
+/// ID is for an extension of some sort.
 ///
-bool Diagnostic::isBuiltinExtensionDiag(unsigned DiagID,
-                                        bool &EnabledByDefault) {
-  if (DiagID >= diag::DIAG_UPPER_LIMIT ||
-      getBuiltinDiagClass(DiagID) != CLASS_EXTENSION)
-    return false;
-  
-  EnabledByDefault = StaticDiagInfo[DiagID].Mapping != diag::MAP_IGNORE;
-  return true;
+bool Diagnostic::isBuiltinExtensionDiag(unsigned DiagID) {
+  return DiagID < diag::DIAG_UPPER_LIMIT &&
+         getBuiltinDiagClass(DiagID) == CLASS_EXTENSION;
 }
 
 
@@ -310,23 +287,6 @@ const char *Diagnostic::getDescription(unsigned DiagID) const {
   if (const StaticDiagInfoRec *Info = GetDiagInfo(DiagID))
     return Info->Description;
   return CustomDiagInfo->getDescription(DiagID);
-}
-
-void Diagnostic::SetDelayedDiagnostic(unsigned DiagID, llvm::StringRef Arg1,
-                                      llvm::StringRef Arg2) {
-  if (DelayedDiagID)
-    return;
-
-  DelayedDiagID = DiagID;
-  DelayedDiagArg1 = Arg1.str();
-  DelayedDiagArg2 = Arg2.str();
-}
-
-void Diagnostic::ReportDelayed() {
-  Report(DelayedDiagID) << DelayedDiagArg1 << DelayedDiagArg2;
-  DelayedDiagID = 0;
-  DelayedDiagArg1.clear();
-  DelayedDiagArg2.clear();
 }
 
 /// getDiagnosticLevel - Based on the way the client configured the Diagnostic
@@ -539,14 +499,8 @@ bool Diagnostic::ProcessDiag() {
 
   // If a fatal error has already been emitted, silence all subsequent
   // diagnostics.
-  if (FatalErrorOccurred) {
-    if (DiagLevel >= Diagnostic::Error) {
-      ++NumErrors;
-      ++NumErrorsSuppressed;
-    }
-    
+  if (FatalErrorOccurred)
     return false;
-  }
 
   // If the client doesn't care about this message, don't issue it.  If this is
   // a note and the last real diagnostic was ignored, ignore it too.
@@ -567,53 +521,15 @@ bool Diagnostic::ProcessDiag() {
   if (DiagLevel >= Diagnostic::Error) {
     ErrorOccurred = true;
     ++NumErrors;
-    
-    // If we've emitted a lot of errors, emit a fatal error after it to stop a
-    // flood of bogus errors.
-    if (ErrorLimit && NumErrors >= ErrorLimit &&
-        DiagLevel == Diagnostic::Error)
-      SetDelayedDiagnostic(diag::fatal_too_many_errors);
   }
 
   // Finally, report it.
   Client->HandleDiagnostic(DiagLevel, Info);
-  if (Client->IncludeInDiagnosticCounts()) {
-    if (DiagLevel == Diagnostic::Warning)
-      ++NumWarnings;
-  }
+  if (Client->IncludeInDiagnosticCounts()) ++NumDiagnostics;
 
   CurDiagID = ~0U;
 
   return true;
-}
-
-bool DiagnosticBuilder::Emit() {
-  // If DiagObj is null, then its soul was stolen by the copy ctor
-  // or the user called Emit().
-  if (DiagObj == 0) return false;
-
-  // When emitting diagnostics, we set the final argument count into
-  // the Diagnostic object.
-  DiagObj->NumDiagArgs = NumArgs;
-  DiagObj->NumDiagRanges = NumRanges;
-  DiagObj->NumFixItHints = NumFixItHints;
-
-  // Process the diagnostic, sending the accumulated information to the
-  // DiagnosticClient.
-  bool Emitted = DiagObj->ProcessDiag();
-
-  // Clear out the current diagnostic object.
-  unsigned DiagID = DiagObj->CurDiagID;
-  DiagObj->Clear();
-
-  // If there was a delayed diagnostic, emit it now.
-  if (DiagObj->DelayedDiagID && DiagObj->DelayedDiagID != DiagID)
-    DiagObj->ReportDelayed();
-
-  // This diagnostic is dead.
-  DiagObj = 0;
-
-  return Emitted;
 }
 
 
@@ -1021,9 +937,9 @@ StoredDiagnostic::StoredDiagnostic(Diagnostic::Level Level,
   for (unsigned I = 0, N = Info.getNumRanges(); I != N; ++I)
     Ranges.push_back(Info.getRange(I));
 
-  FixIts.reserve(Info.getNumFixItHints());
-  for (unsigned I = 0, N = Info.getNumFixItHints(); I != N; ++I)
-    FixIts.push_back(Info.getFixItHint(I));
+  FixIts.reserve(Info.getNumCodeModificationHints());
+  for (unsigned I = 0, N = Info.getNumCodeModificationHints(); I != N; ++I)
+    FixIts.push_back(Info.getCodeModificationHint(I));
 }
 
 StoredDiagnostic::~StoredDiagnostic() { }
@@ -1051,15 +967,8 @@ static void WriteSourceLocation(llvm::raw_ostream &OS,
 
   Location = SM->getInstantiationLoc(Location);
   std::pair<FileID, unsigned> Decomposed = SM->getDecomposedLoc(Location);
-
-  const FileEntry *FE = SM->getFileEntryForID(Decomposed.first);
-  if (FE)
-    WriteString(OS, FE->getName());
-  else {
-    // Fallback to using the buffer name when there is no entry.
-    WriteString(OS, SM->getBuffer(Decomposed.first)->getBufferIdentifier());
-  }
-
+  
+  WriteString(OS, SM->getFileEntryForID(Decomposed.first)->getName());
   WriteUnsigned(OS, SM->getLineNumber(Decomposed.first, Decomposed.second));
   WriteUnsigned(OS, SM->getColumnNumber(Decomposed.first, Decomposed.second));
 }
@@ -1263,7 +1172,7 @@ StoredDiagnostic::Deserialize(FileManager &FM, SourceManager &SM,
       return Diag;
     }
 
-    FixItHint Hint;
+    CodeModificationHint Hint;
     Hint.RemoveRange = SourceRange(RemoveBegin, RemoveEnd);
     Hint.InsertionLoc = InsertionLoc;
     Hint.CodeToInsert.assign(Memory, Memory + InsertLen);
@@ -1279,13 +1188,3 @@ StoredDiagnostic::Deserialize(FileManager &FM, SourceManager &SM,
 ///  DiagnosticClient should be included in the number of diagnostics
 ///  reported by Diagnostic.
 bool DiagnosticClient::IncludeInDiagnosticCounts() const { return true; }
-
-PartialDiagnostic::StorageAllocator::StorageAllocator() {
-  for (unsigned I = 0; I != NumCached; ++I)
-    FreeList[I] = Cached + I;
-  NumFreeListEntries = NumCached;
-}
-
-PartialDiagnostic::StorageAllocator::~StorageAllocator() {
-  assert(NumFreeListEntries == NumCached && "A partial is on the lamb");
-}

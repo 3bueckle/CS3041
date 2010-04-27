@@ -14,22 +14,30 @@
 #ifndef LLVM_CLANG_ANALYSIS_VALUESTATE_H
 #define LLVM_CLANG_ANALYSIS_VALUESTATE_H
 
+// FIXME: Reduce the number of includes.
+
+#include "clang/AST/ASTContext.h"
+#include "clang/AST/Decl.h"
+#include "clang/AST/Expr.h"
+#include "clang/Analysis/Analyses/LiveVariables.h"
 #include "clang/Checker/PathSensitive/ConstraintManager.h"
 #include "clang/Checker/PathSensitive/Environment.h"
+#include "clang/Checker/PathSensitive/GRCoreEngine.h"
 #include "clang/Checker/PathSensitive/Store.h"
 #include "clang/Checker/PathSensitive/ValueManager.h"
+#include "llvm/ADT/APSInt.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/FoldingSet.h"
 #include "llvm/ADT/ImmutableMap.h"
+#include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Allocator.h"
 #include "llvm/Support/Casting.h"
-
-namespace llvm {
-class APSInt;
-class BumpPtrAllocator;
-class raw_ostream;
-}
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/System/DataTypes.h"
+#include <functional>
 
 namespace clang {
-class ASTContext;
+
 class GRStateManager;
 class Checker;
 
@@ -294,8 +302,6 @@ public:
   template<typename T>
   const GRState *remove(typename GRStateTrait<T>::key_type K,
                         typename GRStateTrait<T>::context_type C) const;
-  template <typename T>
-  const GRState *remove() const;
 
   template<typename T>
   const GRState *set(typename GRStateTrait<T>::data_type D) const;
@@ -447,7 +453,6 @@ public:
   ConstraintManager& getConstraintManager() { return *ConstraintMgr; }
 
   const GRState* RemoveDeadBindings(const GRState* St, Stmt* Loc,
-                                    const StackFrameContext *LCtx,
                                     SymbolReaper& SymReaper);
 
 public:
@@ -458,7 +463,6 @@ public:
 
   // Methods that manipulate the GDM.
   const GRState* addGDM(const GRState* St, void* Key, void* Data);
-  const GRState *removeGDM(const GRState *state, void *Key);
 
   // Methods that query & manipulate the Store.
 
@@ -523,10 +527,6 @@ public:
      GRStateTrait<T>::MakeVoidPtr(GRStateTrait<T>::Remove(st->get<T>(), K, C)));
   }
 
-  template <typename T>
-  const GRState *remove(const GRState *st) {
-    return removeGDM(st, GRStateTrait<T>::GDMIndex());
-  }
 
   void* FindGDMContext(void* index,
                        void* (*CreateContext)(llvm::BumpPtrAllocator&),
@@ -699,11 +699,6 @@ template<typename T>
 const GRState *GRState::remove(typename GRStateTrait<T>::key_type K,
                                typename GRStateTrait<T>::context_type C) const {
   return getStateManager().remove<T>(this, K, C);
-}
-
-template <typename T>
-const GRState *GRState::remove() const {
-  return getStateManager().remove<T>(this);
 }
 
 template<typename T>

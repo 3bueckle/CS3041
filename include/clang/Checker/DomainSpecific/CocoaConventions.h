@@ -14,6 +14,7 @@
 #ifndef LLVM_CLANG_CHECKER_DS_COCOA
 #define LLVM_CLANG_CHECKER_DS_COCOA
 
+#include "clang/Basic/IdentifierTable.h"
 #include "clang/AST/Type.h"
 
 namespace clang {

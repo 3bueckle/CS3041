@@ -490,9 +490,6 @@ static bool HandleCommonNoReturnAttr(Decl *d, const AttributeList &Attr,
 }
 
 static void HandleNoReturnAttr(Decl *d, const AttributeList &Attr, Sema &S) {
-  // NOTE: We don't add the attribute to a FunctionDecl because the noreturn
-  //  trait will be part of the function's type.
-
   // Don't apply as a decl attribute to ValueDecl.
   // FIXME: probably ought to diagnose this.
   if (isa<ValueDecl>(d))
@@ -524,8 +521,7 @@ static void HandleUnusedAttr(Decl *d, const AttributeList &Attr, Sema &S) {
     return;
   }
 
-  if (!isa<VarDecl>(d) && !isa<ObjCIvarDecl>(d) && !isFunctionOrMethod(d) &&
-      !isa<TypeDecl>(d)) {
+  if (!isa<VarDecl>(d) && !isa<ObjCIvarDecl>(d) && !isFunctionOrMethod(d)) {
     S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
       << Attr.getName() << 2 /*variable and function*/;
     return;
@@ -838,24 +834,18 @@ static void HandleWarnUnusedResult(Decl *D, const AttributeList &Attr, Sema &S) 
     return;
   }
 
-  if (!isFunction(D) && !isa<ObjCMethodDecl>(D)) {
+  if (!isFunction(D)) {
     S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
       << Attr.getName() << 0 /*function*/;
     return;
   }
 
-  if (isFunction(D) && getFunctionType(D)->getResultType()->isVoidType()) {
-    S.Diag(Attr.getLoc(), diag::warn_attribute_void_function_method)
-      << Attr.getName() << 0;
+  if (getFunctionType(D)->getResultType()->isVoidType()) {
+    S.Diag(Attr.getLoc(), diag::warn_attribute_void_function)
+      << Attr.getName();
     return;
   }
-  if (const ObjCMethodDecl *MD = dyn_cast<ObjCMethodDecl>(D))
-    if (MD->getResultType()->isVoidType()) {
-      S.Diag(Attr.getLoc(), diag::warn_attribute_void_function_method)
-      << Attr.getName() << 1;
-      return;
-    }
-  
+
   D->addAttr(::new (S.Context) WarnUnusedResultAttr());
 }
 
@@ -900,12 +890,9 @@ static void HandleWeakImportAttr(Decl *D, const AttributeList &Attr, Sema &S) {
     // We ignore weak import on properties and methods
     return;
   } else if (!(S.LangOpts.ObjCNonFragileABI && isa<ObjCInterfaceDecl>(D))) {
-    // Don't issue the warning for darwin as target; yet, ignore the attribute.
-    if (S.Context.Target.getTriple().getOS() != llvm::Triple::Darwin ||
-        !isa<ObjCInterfaceDecl>(D)) 
-      S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
-        << Attr.getName() << 2 /*variable and function*/;
-      return;
+    S.Diag(Attr.getLoc(), diag::warn_attribute_wrong_decl_type)
+    << Attr.getName() << 2 /*variable and function*/;
+    return;
   }
 
   // Merge should handle any subsequent violations.
@@ -1025,11 +1012,8 @@ static void HandleCleanupAttr(Decl *d, const AttributeList &Attr, Sema &S) {
   }
 
   // Look up the function
-  // FIXME: Lookup probably isn't looking in the right place
-  // FIXME: The lookup source location should be in the attribute, not the
-  // start of the attribute.
   NamedDecl *CleanupDecl
-    = S.LookupSingleName(S.TUScope, Attr.getParameterName(), Attr.getLoc(),
+    = S.LookupSingleName(S.TUScope, Attr.getParameterName(),
                          Sema::LookupOrdinaryName);
   if (!CleanupDecl) {
     S.Diag(Attr.getLoc(), diag::err_attribute_cleanup_arg_not_found) <<
@@ -1131,7 +1115,6 @@ enum FormatAttrKind {
   NSStringFormat,
   StrftimeFormat,
   SupportedFormat,
-  IgnoredFormat,
   InvalidFormat
 };
 
@@ -1153,10 +1136,6 @@ static FormatAttrKind getFormatAttrKind(llvm::StringRef Format) {
       Format == "zcmn_err")
     return SupportedFormat;
 
-  if (Format == "gcc_diag" || Format == "gcc_cdiag" ||
-      Format == "gcc_cxxdiag" || Format == "gcc_tdiag")
-    return IgnoredFormat;
-  
   return InvalidFormat;
 }
 
@@ -1192,10 +1171,6 @@ static void HandleFormatAttr(Decl *d, const AttributeList &Attr, Sema &S) {
 
   // Check for supported formats.
   FormatAttrKind Kind = getFormatAttrKind(Format);
-  
-  if (Kind == IgnoredFormat)
-    return;
-  
   if (Kind == InvalidFormat) {
     S.Diag(Attr.getLoc(), diag::warn_attribute_type_not_supported)
       << "format" << Attr.getParameterName()->getName();
@@ -1970,20 +1945,11 @@ NamedDecl * Sema::DeclClonePragmaWeak(NamedDecl *ND, IdentifierInfo *II) {
     NewD = FunctionDecl::Create(FD->getASTContext(), FD->getDeclContext(),
                                 FD->getLocation(), DeclarationName(II),
                                 FD->getType(), FD->getTypeSourceInfo());
-    if (FD->getQualifier()) {
-      FunctionDecl *NewFD = cast<FunctionDecl>(NewD);
-      NewFD->setQualifierInfo(FD->getQualifier(), FD->getQualifierRange());
-    }
   } else if (VarDecl *VD = dyn_cast<VarDecl>(ND)) {
     NewD = VarDecl::Create(VD->getASTContext(), VD->getDeclContext(),
                            VD->getLocation(), II,
                            VD->getType(), VD->getTypeSourceInfo(),
-                           VD->getStorageClass(),
-                           VD->getStorageClassAsWritten());
-    if (VD->getQualifier()) {
-      VarDecl *NewVD = cast<VarDecl>(NewD);
-      NewVD->setQualifierInfo(VD->getQualifier(), VD->getQualifierRange());
-    }
+                           VD->getStorageClass());
   }
   return NewD;
 }
@@ -2064,8 +2030,6 @@ void Sema::PopParsingDeclaration(ParsingDeclStackState S, DeclPtrTy Ctx) {
   assert(SavedIndex <= DelayedDiagnostics.size() &&
          "saved index is out of bounds");
 
-  unsigned E = DelayedDiagnostics.size();
-
   // We only want to actually emit delayed diagnostics when we
   // successfully parsed a decl.
   Decl *D = Ctx ? Ctx.getAs<Decl>() : 0;
@@ -2076,7 +2040,7 @@ void Sema::PopParsingDeclaration(ParsingDeclStackState S, DeclPtrTy Ctx) {
     // only the declarator pops will be passed decls.  This is correct;
     // we really do need to consider delayed diagnostics from the decl spec
     // for each of the different declarations.
-    for (unsigned I = 0; I != E; ++I) {
+    for (unsigned I = 0, E = DelayedDiagnostics.size(); I != E; ++I) {
       if (DelayedDiagnostics[I].Triggered)
         continue;
 
@@ -2091,10 +2055,6 @@ void Sema::PopParsingDeclaration(ParsingDeclStackState S, DeclPtrTy Ctx) {
       }
     }
   }
-
-  // Destroy all the delayed diagnostics we're about to pop off.
-  for (unsigned I = SavedIndex; I != E; ++I)
-    DelayedDiagnostics[I].destroy();
 
   DelayedDiagnostics.set_size(SavedIndex);
 }

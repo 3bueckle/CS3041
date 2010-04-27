@@ -24,7 +24,6 @@
 #include "llvm/Support/ManagedStatic.h"
 #include "llvm/Support/PrettyStackTrace.h"
 #include "llvm/Support/Regex.h"
-#include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/System/Host.h"
 #include "llvm/System/Path.h"
@@ -74,10 +73,10 @@ static const char *SaveStringInSet(std::set<std::string> &SavedStrings,
 /// \param Args - The vector of command line arguments.
 /// \param Edit - The override command to perform.
 /// \param SavedStrings - Set to use for storing string representations.
-static void ApplyOneQAOverride(llvm::raw_ostream &OS,
-                               std::vector<const char*> &Args,
-                               llvm::StringRef Edit,
-                               std::set<std::string> &SavedStrings) {
+void ApplyOneQAOverride(llvm::raw_ostream &OS,
+                        std::vector<const char*> &Args,
+                        llvm::StringRef Edit,
+                        std::set<std::string> &SavedStrings) {
   // This does not need to be efficient.
 
   if (Edit[0] == '^') {
@@ -141,9 +140,8 @@ static void ApplyOneQAOverride(llvm::raw_ostream &OS,
 
 /// ApplyQAOverride - Apply a comma separate list of edits to the
 /// input argument lists. See ApplyOneQAOverride.
-static void ApplyQAOverride(std::vector<const char*> &Args,
-                            const char *OverrideStr,
-                            std::set<std::string> &SavedStrings) {
+void ApplyQAOverride(std::vector<const char*> &Args, const char *OverrideStr,
+                     std::set<std::string> &SavedStrings) {
   llvm::raw_ostream *OS = &llvm::errs();
 
   if (OverrideStr[0] == '#') {
@@ -196,20 +194,13 @@ int main(int argc, const char **argv) {
   Diagnostic Diags(&DiagClient);
 
 #ifdef CLANG_IS_PRODUCTION
-  const bool IsProduction = true;
-#  ifdef CLANGXX_IS_PRODUCTION
-  const bool CXXIsProduction = true;
-#  else
-  const bool CXXIsProduction = false;
-#  endif
+  bool IsProduction = true;
 #else
-  const bool IsProduction = false;
-  const bool CXXIsProduction = false;
+  bool IsProduction = false;
 #endif
   Driver TheDriver(Path.getBasename(), Path.getDirname(),
                    llvm::sys::getHostTriple(),
-                   "a.out", IsProduction, CXXIsProduction,
-                   Diags);
+                   "a.out", IsProduction, Diags);
 
   // Check for ".*++" or ".*++-[^-]*" to determine if we are a C++
   // compiler. This matches things like "c++", "clang++", and "clang++-1.1".
@@ -226,11 +217,6 @@ int main(int argc, const char **argv) {
   }
 
   llvm::OwningPtr<Compilation> C;
-
-  // Handle CC_PRINT_OPTIONS and CC_PRINT_OPTIONS_FILE.
-  TheDriver.CCPrintOptions = !!::getenv("CC_PRINT_OPTIONS");
-  if (TheDriver.CCPrintOptions)
-    TheDriver.CCPrintOptionsFilename = ::getenv("CC_PRINT_OPTIONS_FILE");
 
   // Handle QA_OVERRIDE_GCC3_OPTIONS and CCC_ADD_ARGS, used for editing a
   // command line behind the scenes.
@@ -274,11 +260,6 @@ int main(int argc, const char **argv) {
   if (C.get())
     Res = TheDriver.ExecuteCompilation(*C);
 
-  
-  // If any timers were active but haven't been destroyed yet, print their
-  // results now.  This happens in -disable-free mode.
-  llvm::TimerGroup::printAll(llvm::errs());
-  
   llvm::llvm_shutdown();
 
   return Res;

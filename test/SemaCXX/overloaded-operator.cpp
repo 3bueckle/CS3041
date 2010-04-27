@@ -38,7 +38,7 @@ bool operator==(A&, Z&); // expected-note 2{{candidate function}}
 void h(A a, const A ac, Z z) {
   make_A() == z;
   a == z; // expected-error{{use of overloaded operator '==' is ambiguous; candidates are:}}
-  ac == z; // expected-error{{invalid operands to binary expression ('A const' and 'Z')}}
+  ac == z; // expected-error{{invalid operands to binary expression ('struct A const' and 'struct Z')}}
 }
 
 struct B {
@@ -88,7 +88,6 @@ enum pr5244_bar
 
 class pr5244_baz
 {
-public:
     pr5244_bar quux;
 };
 
@@ -173,7 +172,7 @@ void test_callable(Callable c, Callable2 c2, const Callable2& c2c,
   int &ir = c(1);
   float &fr = c(1, 3.14159, 17, 42);
 
-  c(); // expected-error{{no matching function for call to object of type 'Callable'}}
+  c(); // expected-error{{no matching function for call to object of type 'struct Callable'; candidates are:}}
 
   double &dr = c(1.0f);
 
@@ -201,12 +200,12 @@ struct ConvertToFuncDerived : ConvertToFunc { };
 void test_funcptr_call(ConvertToFunc ctf, ConvertToFuncDerived ctfd) {
   int &i1 = ctf(1.0f, 2.0);
   float &f1 = ctf((short int)1, 1.0f);
-  ctf((long int)17, 2.0); // expected-error{{call to object of type 'ConvertToFunc' is ambiguous}}
+  ctf((long int)17, 2.0); // expected-error{{error: call to object of type 'struct ConvertToFunc' is ambiguous; candidates are:}}
   ctf();
 
   int &i2 = ctfd(1.0f, 2.0);
   float &f2 = ctfd((short int)1, 1.0f);
-  ctfd((long int)17, 2.0); // expected-error{{call to object of type 'ConvertToFuncDerived' is ambiguous}}
+  ctfd((long int)17, 2.0); // expected-error{{error: call to object of type 'struct ConvertToFuncDerived' is ambiguous; candidates are:}}
   ctfd();
 }
 
@@ -259,7 +258,7 @@ bool x(BB y, BB z) { return y != z; }
 
 
 struct AX { 
-  AX& operator ->();	 // expected-note {{declared here}}
+  AX& operator ->();	 // expected-note {{declared at}}
   int b;
 }; 
 
@@ -269,14 +268,14 @@ void m() {
 }
 
 struct CircA {
-  struct CircB& operator->(); // expected-note {{declared here}}
+  struct CircB& operator->(); // expected-note {{declared at}}
   int val;
 };
 struct CircB {
-  struct CircC& operator->(); // expected-note {{declared here}}
+  struct CircC& operator->(); // expected-note {{declared at}}
 };
 struct CircC {
-  struct CircA& operator->(); // expected-note {{declared here}}
+  struct CircA& operator->(); // expected-note {{declared at}}
 };
 
 void circ() {
@@ -355,25 +354,4 @@ namespace pr5900 {
     NotAFunction x;
     x(); // expected-error {{does not provide a call operator}}
   }
-}
-
-// Operator lookup through using declarations.
-namespace N {
-  struct X2 { };
-}
-
-namespace N2 {
-  namespace M {
-    namespace Inner {
-      template<typename T>
-      N::X2 &operator<<(N::X2&, const T&);
-    }
-    using Inner::operator<<;
-  }
-}
-
-void test_lookup_through_using() {
-  using namespace N2::M;
-  N::X2 x;
-  x << 17;
 }

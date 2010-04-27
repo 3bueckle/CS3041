@@ -9,10 +9,10 @@
 typedef int &intref;
 typedef intref &intrefref;
 
-template <class T> class RefMem { // expected-warning{{class 'RefMem<int &>' does not declare any constructor to initialize its non-modifiable members}}
+template <class T> class RefMem {
   T
     &
-      member; // expected-note{{ reference member 'member' will never be initialized}}
+      member;
 };
 
 struct RefRef {
@@ -34,7 +34,7 @@ struct RefRef {
          int
             &
              >
-               refref3; // collapses expected-note{{in instantiation of template class 'RefMem<int &>' requested here}}
+               refref3; // collapses
 };
 
 

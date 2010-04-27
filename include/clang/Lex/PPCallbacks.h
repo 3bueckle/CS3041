@@ -44,20 +44,6 @@ public:
                            SrcMgr::CharacteristicKind FileType) {
   }
 
-  /// FileSkipped - This callback is invoked whenever a source file is
-  /// skipped as the result of header guard optimization.  ParentFile
-  /// is the file that #includes the skipped file.  FilenameTok is the
-  /// token in ParentFile that indicates the skipped file.
-  virtual void FileSkipped(const FileEntry &ParentFile,
-                           const Token &FilenameTok,
-                           SrcMgr::CharacteristicKind FileType) {
-  }
-
-  /// EndOfMainFile - This callback is invoked when the end of the main file is
-  /// reach, no subsequent callbacks will be made.
-  virtual void EndOfMainFile() {
-  }
-
   /// Ident - This callback is invoked when a #ident or #sccs directive is read.
   ///
   virtual void Ident(SourceLocation Loc, const std::string &str) {
@@ -102,18 +88,6 @@ public:
                            SrcMgr::CharacteristicKind FileType) {
     First->FileChanged(Loc, Reason, FileType);
     Second->FileChanged(Loc, Reason, FileType);
-  }
-
-  virtual void FileSkipped(const FileEntry &ParentFile,
-                           const Token &FilenameTok,
-                           SrcMgr::CharacteristicKind FileType) {
-    First->FileSkipped(ParentFile, FilenameTok, FileType);
-    Second->FileSkipped(ParentFile, FilenameTok, FileType);
-  }
-
-  virtual void EndOfMainFile() {
-    First->EndOfMainFile();
-    Second->EndOfMainFile();
   }
 
   virtual void Ident(SourceLocation Loc, const std::string &str) {

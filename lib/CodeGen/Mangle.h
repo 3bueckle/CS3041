@@ -21,67 +21,37 @@
 #include "CGCXX.h"
 #include "clang/AST/Type.h"
 #include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/SmallString.h"
+
+namespace llvm {
+  template<typename T> class SmallVectorImpl;
+}
 
 namespace clang {
   class ASTContext;
   class CXXConstructorDecl;
   class CXXDestructorDecl;
-  class CXXMethodDecl;
   class FunctionDecl;
   class NamedDecl;
   class VarDecl;
 
 namespace CodeGen {
-  struct ThisAdjustment;
-  struct ThunkInfo;
-
-/// MangleBuffer - a convenient class for storing a name which is
-/// either the result of a mangling or is a constant string with
-/// external memory ownership.
-class MangleBuffer {
-public:
-  void setString(llvm::StringRef Ref) {
-    String = Ref;
-  }
-
-  llvm::SmallVectorImpl<char> &getBuffer() {
-    return Buffer;
-  }
-
-  llvm::StringRef getString() const {
-    if (!String.empty()) return String;
-    return Buffer.str();
-  }
-
-  operator llvm::StringRef() const {
-    return getString();
-  }
-
-private:
-  llvm::StringRef String;
-  llvm::SmallString<256> Buffer;
-};
+  class CovariantThunkAdjustment;
+  class ThunkAdjustment;
    
 /// MangleContext - Context for tracking state which persists across multiple
 /// calls to the C++ name mangler.
 class MangleContext {
   ASTContext &Context;
-  Diagnostic &Diags;
 
   llvm::DenseMap<const TagDecl *, uint64_t> AnonStructIds;
   unsigned Discriminator;
   llvm::DenseMap<const NamedDecl*, unsigned> Uniquifier;
   
 public:
-  explicit MangleContext(ASTContext &Context,
-                         Diagnostic &Diags)
-    : Context(Context), Diags(Diags) { }
+  explicit MangleContext(ASTContext &Context)
+    : Context(Context) { }
 
   ASTContext &getASTContext() const { return Context; }
-
-  Diagnostic &getDiags() const { return Diags; }
 
   uint64_t getAnonymousStructId(const TagDecl *TD) {
     std::pair<llvm::DenseMap<const TagDecl *,
@@ -96,16 +66,19 @@ public:
   bool shouldMangleDeclName(const NamedDecl *D);
 
   void mangleName(const NamedDecl *D, llvm::SmallVectorImpl<char> &);
-  void mangleThunk(const CXXMethodDecl *MD,
-                   const ThunkInfo &Thunk,
+  void mangleThunk(const FunctionDecl *FD, 
+                   const ThunkAdjustment &ThisAdjustment,
                    llvm::SmallVectorImpl<char> &);
-  void mangleCXXDtorThunk(const CXXDestructorDecl *DD, CXXDtorType Type,
-                          const ThisAdjustment &ThisAdjustment,
+  void mangleCXXDtorThunk(const CXXDestructorDecl *D, CXXDtorType Type,
+                          const ThunkAdjustment &ThisAdjustment,
                           llvm::SmallVectorImpl<char> &);
+  void mangleCovariantThunk(const FunctionDecl *FD, 
+                            const CovariantThunkAdjustment& Adjustment,
+                            llvm::SmallVectorImpl<char> &);
   void mangleGuardVariable(const VarDecl *D, llvm::SmallVectorImpl<char> &);
-  void mangleCXXVTable(const CXXRecordDecl *RD, llvm::SmallVectorImpl<char> &);
+  void mangleCXXVtable(const CXXRecordDecl *RD, llvm::SmallVectorImpl<char> &);
   void mangleCXXVTT(const CXXRecordDecl *RD, llvm::SmallVectorImpl<char> &);
-  void mangleCXXCtorVTable(const CXXRecordDecl *RD, int64_t Offset,
+  void mangleCXXCtorVtable(const CXXRecordDecl *RD, int64_t Offset,
                            const CXXRecordDecl *Type,
                            llvm::SmallVectorImpl<char> &);
   void mangleCXXRTTI(QualType T, llvm::SmallVectorImpl<char> &);

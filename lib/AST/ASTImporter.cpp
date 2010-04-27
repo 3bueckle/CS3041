@@ -73,7 +73,7 @@ namespace {
     // FIXME: SubstTemplateTypeParmType
     // FIXME: TemplateSpecializationType
     QualType VisitQualifiedNameType(QualifiedNameType *T);
-    // FIXME: DependentNameType
+    // FIXME: TypenameType
     QualType VisitObjCInterfaceType(ObjCInterfaceType *T);
     QualType VisitObjCObjectPointerType(ObjCObjectPointerType *T);
                             
@@ -484,8 +484,10 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
                                   Function1->getResultType(),
                                   Function2->getResultType()))
       return false;
-      if (Function1->getExtInfo() != Function2->getExtInfo())
-        return false;
+    if (Function1->getNoReturnAttr() != Function2->getNoReturnAttr())
+      return false;
+    if (Function1->getCallConv() != Function2->getCallConv())
+      return false;
     break;
   }
    
@@ -608,19 +610,9 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
     break;
   }
 
-  case Type::InjectedClassName: {
-    const InjectedClassNameType *Inj1 = cast<InjectedClassNameType>(T1);
-    const InjectedClassNameType *Inj2 = cast<InjectedClassNameType>(T2);
-    if (!IsStructurallyEquivalent(Context,
-                                  Inj1->getInjectedSpecializationType(),
-                                  Inj2->getInjectedSpecializationType()))
-      return false;
-    break;
-  }
-
-  case Type::DependentName: {
-    const DependentNameType *Typename1 = cast<DependentNameType>(T1);
-    const DependentNameType *Typename2 = cast<DependentNameType>(T2);
+  case Type::Typename: {
+    const TypenameType *Typename1 = cast<TypenameType>(T1);
+    const TypenameType *Typename2 = cast<TypenameType>(T2);
     if (!IsStructurallyEquivalent(Context, 
                                   Typename1->getQualifier(),
                                   Typename2->getQualifier()))
@@ -1198,9 +1190,10 @@ QualType ASTNodeImporter::VisitFunctionNoProtoType(FunctionNoProtoType *T) {
   QualType ToResultType = Importer.Import(T->getResultType());
   if (ToResultType.isNull())
     return QualType();
-
+  
   return Importer.getToContext().getFunctionNoProtoType(ToResultType,
-                                                        T->getExtInfo());
+                                                        T->getNoReturnAttr(), 
+                                                        T->getCallConv());
 }
 
 QualType ASTNodeImporter::VisitFunctionProtoType(FunctionProtoType *T) {
@@ -1238,7 +1231,8 @@ QualType ASTNodeImporter::VisitFunctionProtoType(FunctionProtoType *T) {
                                                  T->hasAnyExceptionSpec(),
                                                  ExceptionTypes.size(),
                                                  ExceptionTypes.data(),
-                                                 T->getExtInfo());
+                                                 T->getNoReturnAttr(),
+                                                 T->getCallConv());
 }
 
 QualType ASTNodeImporter::VisitTypedefType(TypedefType *T) {
@@ -1438,7 +1432,7 @@ Decl *ASTNodeImporter::VisitNamespaceDecl(NamespaceDecl *D) {
     for (DeclContext::lookup_result Lookup = DC->lookup(Name);
          Lookup.first != Lookup.second; 
          ++Lookup.first) {
-      if (!(*Lookup.first)->isInIdentifierNamespace(Decl::IDNS_Namespace))
+      if (!(*Lookup.first)->isInIdentifierNamespace(Decl::IDNS_Ordinary))
         continue;
       
       if (NamespaceDecl *FoundNS = dyn_cast<NamespaceDecl>(*Lookup.first)) {
@@ -1451,7 +1445,7 @@ Decl *ASTNodeImporter::VisitNamespaceDecl(NamespaceDecl *D) {
     }
     
     if (!ConflictingDecls.empty()) {
-      Name = Importer.HandleNameConflict(Name, DC, Decl::IDNS_Namespace,
+      Name = Importer.HandleNameConflict(Name, DC, Decl::IDNS_Ordinary,
                                          ConflictingDecls.data(), 
                                          ConflictingDecls.size());
     }
@@ -1588,12 +1582,6 @@ Decl *ASTNodeImporter::VisitEnumDecl(EnumDecl *D) {
                                       Name.getAsIdentifierInfo(),
                                       Importer.Import(D->getTagKeywordLoc()),
                                       0);
-  // Import the qualifier, if any.
-  if (D->getQualifier()) {
-    NestedNameSpecifier *NNS = Importer.Import(D->getQualifier());
-    SourceRange NNSRange = Importer.Import(D->getQualifierRange());
-    D2->setQualifierInfo(NNS, NNSRange);
-  }
   D2->setAccess(D->getAccess());
   D2->setLexicalDeclContext(LexicalDC);
   Importer.Imported(D, D2);
@@ -1735,12 +1723,6 @@ Decl *ASTNodeImporter::VisitRecordDecl(RecordDecl *D) {
                                     DC, Loc,
                                     Name.getAsIdentifierInfo(), 
                                     Importer.Import(D->getTagKeywordLoc()));
-    }
-    // Import the qualifier, if any.
-    if (D->getQualifier()) {
-      NestedNameSpecifier *NNS = Importer.Import(D->getQualifier());
-      SourceRange NNSRange = Importer.Import(D->getQualifierRange());
-      D2->setQualifierInfo(NNS, NNSRange);
     }
     D2->setLexicalDeclContext(LexicalDC);
     LexicalDC->addDecl(D2);
@@ -1905,16 +1887,8 @@ Decl *ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
   } else {
     ToFunction = FunctionDecl::Create(Importer.getToContext(), DC, Loc, 
                                       Name, T, TInfo, D->getStorageClass(), 
-                                      D->getStorageClassAsWritten(),
                                       D->isInlineSpecified(),
                                       D->hasWrittenPrototype());
-  }
-
-  // Import the qualifier, if any.
-  if (D->getQualifier()) {
-    NestedNameSpecifier *NNS = Importer.Import(D->getQualifier());
-    SourceRange NNSRange = Importer.Import(D->getQualifierRange());
-    ToFunction->setQualifierInfo(NNS, NNSRange);
   }
   ToFunction->setAccess(D->getAccess());
   ToFunction->setLexicalDeclContext(LexicalDC);
@@ -2014,8 +1988,7 @@ Decl *ASTNodeImporter::VisitObjCIvarDecl(ObjCIvarDecl *D) {
   if (!BitWidth && D->getBitWidth())
     return 0;
   
-  ObjCIvarDecl *ToIvar = ObjCIvarDecl::Create(Importer.getToContext(),
-                                              cast<ObjCContainerDecl>(DC),
+  ObjCIvarDecl *ToIvar = ObjCIvarDecl::Create(Importer.getToContext(), DC, 
                                               Loc, Name.getAsIdentifierInfo(),
                                               T, TInfo, D->getAccessControl(),
                                               BitWidth);
@@ -2126,14 +2099,7 @@ Decl *ASTNodeImporter::VisitVarDecl(VarDecl *D) {
   TypeSourceInfo *TInfo = Importer.Import(D->getTypeSourceInfo());
   VarDecl *ToVar = VarDecl::Create(Importer.getToContext(), DC, Loc, 
                                    Name.getAsIdentifierInfo(), T, TInfo,
-                                   D->getStorageClass(),
-                                   D->getStorageClassAsWritten());
-  // Import the qualifier, if any.
-  if (D->getQualifier()) {
-    NestedNameSpecifier *NNS = Importer.Import(D->getQualifier());
-    SourceRange NNSRange = Importer.Import(D->getQualifierRange());
-    ToVar->setQualifierInfo(NNS, NNSRange);
-  }
+                                   D->getStorageClass());
   ToVar->setAccess(D->getAccess());
   ToVar->setLexicalDeclContext(LexicalDC);
   Importer.Imported(D, ToVar);
@@ -2199,9 +2165,7 @@ Decl *ASTNodeImporter::VisitParmVarDecl(ParmVarDecl *D) {
   ParmVarDecl *ToParm = ParmVarDecl::Create(Importer.getToContext(), DC,
                                             Loc, Name.getAsIdentifierInfo(),
                                             T, TInfo, D->getStorageClass(),
-                                             D->getStorageClassAsWritten(),
                                             /*FIXME: Default argument*/ 0);
-  ToParm->setHasInheritedDefaultArg(D->hasInheritedDefaultArg());
   return Importer.Imported(D, ToParm);
 }
 
@@ -2280,14 +2244,12 @@ Decl *ASTNodeImporter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
   if (ResultTy.isNull())
     return 0;
 
-  TypeSourceInfo *ResultTInfo = Importer.Import(D->getResultTypeSourceInfo());
-
   ObjCMethodDecl *ToMethod
     = ObjCMethodDecl::Create(Importer.getToContext(),
                              Loc,
                              Importer.Import(D->getLocEnd()),
                              Name.getObjCSelector(),
-                             ResultTy, ResultTInfo, DC,
+                             ResultTy, DC,
                              D->isInstanceMethod(),
                              D->isVariadic(),
                              D->isSynthesized(),
@@ -2315,8 +2277,7 @@ Decl *ASTNodeImporter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
     ToMethod->addDecl(ToParams[I]);
   }
   ToMethod->setMethodParams(Importer.getToContext(), 
-                            ToParams.data(), ToParams.size(),
-                            ToParams.size());
+                            ToParams.data(), ToParams.size());
 
   ToMethod->setLexicalDeclContext(LexicalDC);
   Importer.Imported(D, ToMethod);
@@ -2885,11 +2846,8 @@ Expr *ASTNodeImporter::VisitImplicitCastExpr(ImplicitCastExpr *E) {
   if (!SubExpr)
     return 0;
   
-  // FIXME: Initialize the base path.
-  assert(E->getBasePath().empty() && "FIXME: Must copy base path!");
-  CXXBaseSpecifierArray BasePath;
   return new (Importer.getToContext()) ImplicitCastExpr(T, E->getCastKind(),
-                                                        SubExpr, BasePath,
+                                                        SubExpr, 
                                                         E->isLvalueCast());
 }
 
@@ -2906,11 +2864,8 @@ Expr *ASTNodeImporter::VisitCStyleCastExpr(CStyleCastExpr *E) {
   if (!TInfo && E->getTypeInfoAsWritten())
     return 0;
   
-  // FIXME: Initialize the base path.
-  assert(E->getBasePath().empty() && "FIXME: Must copy base path!");
-  CXXBaseSpecifierArray BasePath;
   return new (Importer.getToContext()) CStyleCastExpr(T, E->getCastKind(),
-                                                      SubExpr, BasePath, TInfo,
+                                                      SubExpr, TInfo,
                                             Importer.Import(E->getLParenLoc()),
                                             Importer.Import(E->getRParenLoc()));
 }
@@ -3096,9 +3051,10 @@ FileID ASTImporter::Import(FileID FromID) {
                              FromSLoc.getFile().getFileCharacteristic());
   } else {
     // FIXME: We want to re-use the existing MemoryBuffer!
-    const llvm::MemoryBuffer *FromBuf = Cache->getBuffer(getDiags(), FromSM);
+    const llvm::MemoryBuffer *FromBuf = Cache->getBuffer();
     llvm::MemoryBuffer *ToBuf
-      = llvm::MemoryBuffer::getMemBufferCopy(FromBuf->getBuffer(),
+      = llvm::MemoryBuffer::getMemBufferCopy(FromBuf->getBufferStart(),
+                                             FromBuf->getBufferEnd(),
                                              FromBuf->getBufferIdentifier());
     ToID = ToSM.createFileIDForMemBuffer(ToBuf);
   }

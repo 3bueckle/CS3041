@@ -150,7 +150,7 @@ public:
 
     if (isa<FunctionDecl>(D) || isa<ObjCMethodDecl>(D)) {
       const NamedDecl *ND = cast<NamedDecl>(D);
-      llvm::errs() << ' ' << ND << '\n';
+      llvm::errs() << ' ' << ND->getNameAsString() << '\n';
     }
     else if (isa<BlockDecl>(D)) {
       llvm::errs() << ' ' << "block(line:" << Loc.getLine() << ",col:"
@@ -176,7 +176,6 @@ public:
     Mgr.reset(new AnalysisManager(*Ctx, PP.getDiagnostics(),
                                   PP.getLangOptions(), PD,
                                   CreateStoreMgr, CreateConstraintMgr,
-                                  Opts.MaxNodes,
                                   Opts.VisualizeEGDot, Opts.VisualizeEGUbi,
                                   Opts.PurgeDead, Opts.EagerlyAssume,
                                   Opts.TrimGraph));
@@ -359,7 +358,7 @@ static void ActionGRExprEngine(AnalysisConsumer &C, AnalysisManager& mgr,
   }
 
   // Execute the worklist algorithm.
-  Eng.ExecuteWorkList(mgr.getStackFrame(D), mgr.getMaxNodes());
+  Eng.ExecuteWorkList(mgr.getStackFrame(D));
 
   // Release the auditor (if any) so that it doesn't monitor the graph
   // created BugReporter.

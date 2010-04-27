@@ -24,17 +24,69 @@
 using namespace clang;
 
 /// \brief Find the current instantiation that associated with the given type.
-static CXXRecordDecl *getCurrentInstantiationOf(QualType T) {
+static CXXRecordDecl *
+getCurrentInstantiationOf(ASTContext &Context, DeclContext *CurContext, 
+                          QualType T) {
   if (T.isNull())
     return 0;
-
-  const Type *Ty = T->getCanonicalTypeInternal().getTypePtr();
-  if (isa<RecordType>(Ty))
-    return cast<CXXRecordDecl>(cast<RecordType>(Ty)->getDecl());
-  else if (isa<InjectedClassNameType>(Ty))
-    return cast<InjectedClassNameType>(Ty)->getDecl();
-  else
-    return 0;
+  
+  T = Context.getCanonicalType(T).getUnqualifiedType();
+  
+  for (DeclContext *Ctx = CurContext; Ctx; Ctx = Ctx->getLookupParent()) {
+    // If we've hit a namespace or the global scope, then the
+    // nested-name-specifier can't refer to the current instantiation.
+    if (Ctx->isFileContext())
+      return 0;
+    
+    // Skip non-class contexts.
+    CXXRecordDecl *Record = dyn_cast<CXXRecordDecl>(Ctx);
+    if (!Record)
+      continue;
+    
+    // If this record type is not dependent,
+    if (!Record->isDependentType())
+      return 0;
+    
+    // C++ [temp.dep.type]p1:
+    //
+    //   In the definition of a class template, a nested class of a
+    //   class template, a member of a class template, or a member of a
+    //   nested class of a class template, a name refers to the current
+    //   instantiation if it is
+    //     -- the injected-class-name (9) of the class template or
+    //        nested class,
+    //     -- in the definition of a primary class template, the name
+    //        of the class template followed by the template argument
+    //        list of the primary template (as described below)
+    //        enclosed in <>,
+    //     -- in the definition of a nested class of a class template,
+    //        the name of the nested class referenced as a member of
+    //        the current instantiation, or
+    //     -- in the definition of a partial specialization, the name
+    //        of the class template followed by the template argument
+    //        list of the partial specialization enclosed in <>. If
+    //        the nth template parameter is a parameter pack, the nth
+    //        template argument is a pack expansion (14.6.3) whose
+    //        pattern is the name of the parameter pack.
+    //        (FIXME: parameter packs)
+    //
+    // All of these options come down to having the
+    // nested-name-specifier type that is equivalent to the
+    // injected-class-name of one of the types that is currently in
+    // our context.
+    if (Context.getCanonicalType(Context.getTypeDeclType(Record)) == T)
+      return Record;
+    
+    if (ClassTemplateDecl *Template = Record->getDescribedClassTemplate()) {
+      QualType InjectedClassName
+        = Template->getInjectedClassNameType(Context);
+      if (T == Context.getCanonicalType(InjectedClassName))
+        return Template->getTemplatedDecl();
+    }
+    // FIXME: check for class template partial specializations
+  }  
+  
+  return 0;
 }
 
 /// \brief Compute the DeclContext that is associated with the given type.
@@ -48,7 +100,7 @@ DeclContext *Sema::computeDeclContext(QualType T) {
   if (const TagType *Tag = T->getAs<TagType>())
     return Tag->getDecl();
 
-  return ::getCurrentInstantiationOf(T);
+  return ::getCurrentInstantiationOf(Context, CurContext, T);
 }
 
 /// \brief Compute the DeclContext that is associated with the given
@@ -78,11 +130,8 @@ DeclContext *Sema::computeDeclContext(const CXXScopeSpec &SS,
       return Record;
 
     if (EnteringContext) {
-      const Type *NNSType = NNS->getAsType();
-      if (!NNSType) {
-        // do nothing, fall out
-      } else if (const TemplateSpecializationType *SpecType
-                   = NNSType->getAs<TemplateSpecializationType>()) {
+      if (const TemplateSpecializationType *SpecType
+            = dyn_cast_or_null<TemplateSpecializationType>(NNS->getAsType())) {
         // We are entering the context of the nested name specifier, so try to
         // match the nested name specifier to either a primary class template
         // or a class template partial specialization.
@@ -95,8 +144,7 @@ DeclContext *Sema::computeDeclContext(const CXXScopeSpec &SS,
           // If the type of the nested name specifier is the same as the
           // injected class name of the named class template, we're entering
           // into that class template definition.
-          QualType Injected
-            = ClassTemplate->getInjectedClassNameSpecialization(Context);
+          QualType Injected = ClassTemplate->getInjectedClassNameType(Context);
           if (Context.hasSameType(Injected, ContextType))
             return ClassTemplate->getTemplatedDecl();
 
@@ -108,7 +156,8 @@ DeclContext *Sema::computeDeclContext(const CXXScopeSpec &SS,
                 = ClassTemplate->findPartialSpecialization(ContextType))
             return PartialSpec;
         }
-      } else if (const RecordType *RecordT = NNSType->getAs<RecordType>()) {
+      } else if (const RecordType *RecordT
+                   = dyn_cast_or_null<RecordType>(NNS->getAsType())) {
         // The nested name specifier refers to a member of a class template.
         return RecordT->getDecl();
       }
@@ -174,7 +223,7 @@ CXXRecordDecl *Sema::getCurrentInstantiationOf(NestedNameSpecifier *NNS) {
     return 0;
 
   QualType T = QualType(NNS->getAsType(), 0);
-  return ::getCurrentInstantiationOf(T);
+  return ::getCurrentInstantiationOf(Context, CurContext, T);
 }
 
 /// \brief Require that the context specified by SS be complete.
@@ -186,21 +235,11 @@ CXXRecordDecl *Sema::getCurrentInstantiationOf(NestedNameSpecifier *NNS) {
 /// that is currently being defined. Or, if we have a type that names
 /// a class template specialization that is not a complete type, we
 /// will attempt to instantiate that class template.
-bool Sema::RequireCompleteDeclContext(CXXScopeSpec &SS) {
+bool Sema::RequireCompleteDeclContext(const CXXScopeSpec &SS) {
   if (!SS.isSet() || SS.isInvalid())
     return false;
 
   DeclContext *DC = computeDeclContext(SS, true);
-  if (!DC) {
-    // It's dependent.
-    assert(isDependentScopeSpecifier(SS) && 
-           "No context for non-dependent scope specifier?");
-    Diag(SS.getRange().getBegin(), diag::err_dependent_nested_name_spec)
-      << SS.getRange();
-    SS.setScopeRep(0);
-    return true;
-  }
-  
   if (TagDecl *Tag = dyn_cast<TagDecl>(DC)) {
     // If this is a dependent type, then we consider it complete.
     if (Tag->isDependentContext())
@@ -209,17 +248,14 @@ bool Sema::RequireCompleteDeclContext(CXXScopeSpec &SS) {
     // If we're currently defining this type, then lookup into the
     // type is okay: don't complain that it isn't complete yet.
     const TagType *TagT = Context.getTypeDeclType(Tag)->getAs<TagType>();
-    if (TagT && TagT->isBeingDefined())
+    if (TagT->isBeingDefined())
       return false;
 
     // The type must be complete.
-    if (RequireCompleteType(SS.getRange().getBegin(),
-                            Context.getTypeDeclType(Tag),
-                            PDiag(diag::err_incomplete_nested_name_spec)
-                            << SS.getRange())) {
-      SS.setScopeRep(0);  // Mark the ScopeSpec invalid.
-      return true;
-    }
+    return RequireCompleteType(SS.getRange().getBegin(),
+                               Context.getTypeDeclType(Tag),
+                               PDiag(diag::err_incomplete_nested_name_spec)
+                                 << SS.getRange());
   }
 
   return false;
@@ -291,7 +327,7 @@ NamedDecl *Sema::FindFirstQualifierInScope(Scope *S, NestedNameSpecifier *NNS) {
   return 0;
 }
 
-bool Sema::isNonTypeNestedNameSpecifier(Scope *S, CXXScopeSpec &SS,
+bool Sema::isNonTypeNestedNameSpecifier(Scope *S, const CXXScopeSpec &SS,
                                         SourceLocation IdLoc,
                                         IdentifierInfo &II,
                                         TypeTy *ObjectTypePtr) {
@@ -353,7 +389,7 @@ bool Sema::isNonTypeNestedNameSpecifier(Scope *S, CXXScopeSpec &SS,
 /// scope if it *knows* that the result is correct.  It should not return in a
 /// dependent context, for example.
 Sema::CXXScopeTy *Sema::BuildCXXNestedNameSpecifier(Scope *S,
-                                                    CXXScopeSpec &SS,
+                                                    const CXXScopeSpec &SS,
                                                     SourceLocation IdLoc,
                                                     SourceLocation CCLoc,
                                                     IdentifierInfo &II,
@@ -449,20 +485,19 @@ Sema::CXXScopeTy *Sema::BuildCXXNestedNameSpecifier(Scope *S,
     // We haven't found anything, and we're not recovering from a
     // different kind of error, so look for typos.
     DeclarationName Name = Found.getLookupName();
-    if (CorrectTypo(Found, S, &SS, LookupCtx, EnteringContext,  
-                    CTC_NoKeywords) &&
+    if (CorrectTypo(Found, S, &SS, LookupCtx, EnteringContext) &&
         Found.isSingleResult() &&
         isAcceptableNestedNameSpecifier(Found.getAsSingle<NamedDecl>())) {
       if (LookupCtx)
         Diag(Found.getNameLoc(), diag::err_no_member_suggest)
           << Name << LookupCtx << Found.getLookupName() << SS.getRange()
-          << FixItHint::CreateReplacement(Found.getNameLoc(),
-                                          Found.getLookupName().getAsString());
+          << CodeModificationHint::CreateReplacement(Found.getNameLoc(),
+                                           Found.getLookupName().getAsString());
       else
         Diag(Found.getNameLoc(), diag::err_undeclared_var_use_suggest)
           << Name << Found.getLookupName()
-          << FixItHint::CreateReplacement(Found.getNameLoc(),
-                                          Found.getLookupName().getAsString());
+          << CodeModificationHint::CreateReplacement(Found.getNameLoc(),
+                                           Found.getLookupName().getAsString());
       
       if (NamedDecl *ND = Found.getAsSingle<NamedDecl>())
         Diag(ND->getLocation(), diag::note_previous_decl)
@@ -563,7 +598,7 @@ Sema::CXXScopeTy *Sema::BuildCXXNestedNameSpecifier(Scope *S,
 /// 'CCLoc' is the location of '::' and 'II' is the identifier for 'bar'.
 /// Returns a CXXScopeTy* object representing the C++ scope.
 Sema::CXXScopeTy *Sema::ActOnCXXNestedNameSpecifier(Scope *S,
-                                                    CXXScopeSpec &SS,
+                                                    const CXXScopeSpec &SS,
                                                     SourceLocation IdLoc,
                                                     SourceLocation CCLoc,
                                                     IdentifierInfo &II,
@@ -581,7 +616,7 @@ Sema::CXXScopeTy *Sema::ActOnCXXNestedNameSpecifier(Scope *S,
 /// conservatively correct to always return false from this method.
 ///
 /// The arguments are the same as those passed to ActOnCXXNestedNameSpecifier.
-bool Sema::IsInvalidUnlessNestedName(Scope *S, CXXScopeSpec &SS,
+bool Sema::IsInvalidUnlessNestedName(Scope *S, const CXXScopeSpec &SS,
                                      IdentifierInfo &II, TypeTy *ObjectType,
                                      bool EnteringContext) {
   return BuildCXXNestedNameSpecifier(S, SS, SourceLocation(), SourceLocation(),
@@ -646,7 +681,7 @@ bool Sema::ShouldEnterDeclaratorScope(Scope *S, const CXXScopeSpec &SS) {
 /// looked up in the declarator-id's scope, until the declarator is parsed and
 /// ActOnCXXExitDeclaratorScope is called.
 /// The 'SS' should be a non-empty valid CXXScopeSpec.
-bool Sema::ActOnCXXEnterDeclaratorScope(Scope *S, CXXScopeSpec &SS) {
+bool Sema::ActOnCXXEnterDeclaratorScope(Scope *S, const CXXScopeSpec &SS) {
   assert(SS.isSet() && "Parser passed invalid CXXScopeSpec.");
 
   if (SS.isInvalid()) return true;
@@ -660,11 +695,6 @@ bool Sema::ActOnCXXEnterDeclaratorScope(Scope *S, CXXScopeSpec &SS) {
     return true;
     
   EnterDeclaratorContext(S, DC);
-
-  // Rebuild the nested name specifier for the new scope.
-  if (DC->isDependentContext())
-    RebuildNestedNameSpecifierInCurrentInstantiation(SS);
-
   return false;
 }
 

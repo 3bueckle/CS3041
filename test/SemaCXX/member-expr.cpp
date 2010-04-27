@@ -2,7 +2,7 @@
 
 class X{
 public:
-  enum E {Enumerator}; // expected-note 2{{declared here}}
+  enum E {Enumerator};
   int f();
   static int mem;
   static float g();
@@ -11,8 +11,8 @@ public:
 void test(X* xp, X x) {
   int i1 = x.f();
   int i2 = xp->f();
-  x.E; // expected-error{{cannot refer to type member 'E' in 'X' with '.'}}
-  xp->E; // expected-error{{cannot refer to type member 'E' in 'X' with '->'}}
+  x.E; // expected-error{{cannot refer to type member 'E' with '.'}}
+  xp->E; // expected-error{{cannot refer to type member 'E' with '->'}}
   int i3 = x.Enumerator;
   int i4 = xp->Enumerator;
   x.mem = 1;
@@ -55,20 +55,4 @@ namespace test3 {
       return !getIdentifier();
     }
   };
-}
-
-namespace test4 {
-  class X {
-  protected:
-    template<typename T> void f(T);
-  };
-
-  class Y : public X {
-  public:
-    using X::f;
-  };
-
-  void test_f(Y y) {
-    y.f(17);
-  }
 }

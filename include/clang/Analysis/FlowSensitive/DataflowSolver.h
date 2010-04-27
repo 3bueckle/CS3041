@@ -17,8 +17,7 @@
 #include "clang/Analysis/CFG.h"
 #include "clang/Analysis/ProgramPoint.h"
 #include "clang/Analysis/FlowSensitive/DataflowValues.h"
-#include "llvm/ADT/DenseMap.h"
-#include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "functional" // STL
 
 namespace clang {
@@ -29,30 +28,23 @@ namespace clang {
 //===----------------------------------------------------------------------===//
 
 class DataflowWorkListTy {
-  llvm::DenseMap<const CFGBlock*, unsigned char> BlockSet;
-  llvm::SmallVector<const CFGBlock *, 10> BlockQueue;
+  typedef llvm::SmallPtrSet<const CFGBlock*,20> BlockSet;
+  BlockSet wlist;
 public:
   /// enqueue - Add a block to the worklist.  Blocks already on the
   ///  worklist are not added a second time.
-  void enqueue(const CFGBlock* B) {
-    unsigned char &x = BlockSet[B];
-    if (x == 1)
-      return;
-    x = 1;
-    BlockQueue.push_back(B);
-  }
+  void enqueue(const CFGBlock* B) { wlist.insert(B); }
 
   /// dequeue - Remove a block from the worklist.
   const CFGBlock* dequeue() {
-    assert(!BlockQueue.empty());
-    const CFGBlock *B = BlockQueue.back();
-    BlockQueue.pop_back();
-    BlockSet[B] = 0;
+    assert (!wlist.empty());
+    const CFGBlock* B = *wlist.begin();
+    wlist.erase(B);
     return B;
   }
 
   /// isEmpty - Return true if the worklist is empty.
-  bool isEmpty() const { return BlockQueue.empty(); }
+  bool isEmpty() const { return wlist.empty(); }
 };
 
 //===----------------------------------------------------------------------===//
@@ -196,7 +188,10 @@ private:
   /// SolveDataflowEquations - Perform the actual worklist algorithm
   ///  to compute dataflow values.
   void SolveDataflowEquations(CFG& cfg, bool recordStmtValues) {
-    EnqueueBlocksOnWorklist(cfg, AnalysisDirTag());
+    // Enqueue all blocks to ensure the dataflow values are computed
+    // for every block.  Not all blocks are guaranteed to reach the exit block.
+    for (CFG::iterator I=cfg.begin(), E=cfg.end(); I!=E; ++I)
+      WorkList.enqueue(&**I);
 
     while (!WorkList.isEmpty()) {
       const CFGBlock* B = WorkList.dequeue();
@@ -204,22 +199,6 @@ private:
       ProcessBlock(B, recordStmtValues, AnalysisDirTag());
       UpdateEdges(cfg, B, TF.getVal());
     }
-  }
-
-  void EnqueueBlocksOnWorklist(CFG &cfg, dataflow::forward_analysis_tag) {
-    // Enqueue all blocks to ensure the dataflow values are computed
-    // for every block.  Not all blocks are guaranteed to reach the exit block.
-    for (CFG::iterator I=cfg.begin(), E=cfg.end(); I!=E; ++I)
-      WorkList.enqueue(&**I);
-  }
-
-  void EnqueueBlocksOnWorklist(CFG &cfg, dataflow::backward_analysis_tag) {
-    // Enqueue all blocks to ensure the dataflow values are computed
-    // for every block.  Not all blocks are guaranteed to reach the exit block.
-    // Enqueue in reverse order since that will more likely match with
-    // the order they should ideally processed by the dataflow algorithm.
-    for (CFG::reverse_iterator I=cfg.rbegin(), E=cfg.rend(); I!=E; ++I)
-      WorkList.enqueue(&**I);
   }
 
   void ProcessMerge(CFG& cfg, const CFGBlock* B) {

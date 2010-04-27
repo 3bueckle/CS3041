@@ -22,8 +22,6 @@ namespace llvm {
 
 namespace clang {
 
-class StackFrameContext;
-
 class GRBlockCounter {
   void* Data;
 
@@ -32,8 +30,7 @@ class GRBlockCounter {
 public:
   GRBlockCounter() : Data(0) {}
 
-  unsigned getNumVisited(const StackFrameContext *CallSite, 
-                         unsigned BlockID) const;
+  unsigned getNumVisited(unsigned BlockID) const;
 
   class Factory {
     void* F;
@@ -42,9 +39,7 @@ public:
     ~Factory();
 
     GRBlockCounter GetEmptyCounter();
-    GRBlockCounter IncrementCount(GRBlockCounter BC, 
-                                  const StackFrameContext *CallSite,
-                                  unsigned BlockID);
+    GRBlockCounter IncrementCount(GRBlockCounter BC, unsigned BlockID);
   };
 
   friend class Factory;

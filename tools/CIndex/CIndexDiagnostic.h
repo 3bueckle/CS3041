@@ -13,21 +13,20 @@
 #ifndef LLVM_CLANG_CINDEX_DIAGNOSTIC_H
 #define LLVM_CLANG_CINDEX_DIAGNOSTIC_H
 
-struct CXUnsavedFile;
+#include "clang-c/Index.h"
+#include "clang/Basic/Diagnostic.h"
+#include "clang/Basic/LangOptions.h"
+#include "llvm/ADT/SmallVector.h"
 
-namespace llvm {
-template<typename T> class SmallVectorImpl;
-namespace sys { class Path; }
-}
+namespace llvm { namespace sys {
+class Path;
+} }
 
 namespace clang {
 
 class Diagnostic;
-class FileManager;
 class LangOptions;
 class Preprocessor;
-class StoredDiagnostic;
-class SourceManager;
 
 /// \brief The storage behind a CXDiagnostic
 struct CXStoredDiagnostic {

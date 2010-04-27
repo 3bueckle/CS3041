@@ -22,6 +22,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/Support/ValueHandle.h"
+#include <map>
 #include "CodeGenModule.h"
 #include "CGBlocks.h"
 #include "CGBuilder.h"
@@ -148,17 +149,19 @@ public:
   /// block.
   class EHCleanupBlock {
     CodeGenFunction& CGF;
-    llvm::BasicBlock *PreviousInsertionBlock;
+    llvm::BasicBlock *Cont;
     llvm::BasicBlock *CleanupHandler;
+    llvm::BasicBlock *CleanupEntryBB;
     llvm::BasicBlock *PreviousInvokeDest;
   public:
     EHCleanupBlock(CodeGenFunction &cgf) 
-      : CGF(cgf),
-        PreviousInsertionBlock(CGF.Builder.GetInsertBlock()),
-        CleanupHandler(CGF.createBasicBlock("ehcleanup", CGF.CurFn)),
+      : CGF(cgf), Cont(CGF.createBasicBlock("cont")),
+        CleanupHandler(CGF.createBasicBlock("ehcleanup")),
+        CleanupEntryBB(CGF.createBasicBlock("ehcleanup.rest")),
         PreviousInvokeDest(CGF.getInvokeDest()) {
+      CGF.EmitBranch(Cont);
       llvm::BasicBlock *TerminateHandler = CGF.getTerminateHandler();
-      CGF.Builder.SetInsertPoint(CleanupHandler);
+      CGF.Builder.SetInsertPoint(CleanupEntryBB);
       CGF.setInvokeDest(TerminateHandler);
     }
     ~EHCleanupBlock();
@@ -184,8 +187,7 @@ public:
   public:
     DelayedCleanupBlock(CodeGenFunction &cgf, bool ehonly = false)
       : CGF(cgf), CurBB(CGF.Builder.GetInsertBlock()),
-        CleanupEntryBB(CGF.createBasicBlock("cleanup")),
-        CleanupExitBB(0),
+        CleanupEntryBB(CGF.createBasicBlock("cleanup")), CleanupExitBB(0),
         CurInvokeDest(CGF.getInvokeDest()),
         EHOnly(ehonly) {
       CGF.Builder.SetInsertPoint(CleanupEntryBB);
@@ -251,27 +253,6 @@ public:
       PerformCleanup = false;
     }
   };
-
-  /// CXXTemporariesCleanupScope - Enters a new scope for catching live
-  /// temporaries, all of which will be popped once the scope is exited.
-  class CXXTemporariesCleanupScope {
-    CodeGenFunction &CGF;
-    size_t NumLiveTemporaries;
-    
-    // DO NOT IMPLEMENT
-    CXXTemporariesCleanupScope(const CXXTemporariesCleanupScope &); 
-    CXXTemporariesCleanupScope &operator=(const CXXTemporariesCleanupScope &);
-    
-  public:
-    explicit CXXTemporariesCleanupScope(CodeGenFunction &CGF)
-      : CGF(CGF), NumLiveTemporaries(CGF.LiveTemporaries.size()) { }
-    
-    ~CXXTemporariesCleanupScope() {
-      while (CGF.LiveTemporaries.size() > NumLiveTemporaries)
-        CGF.PopCXXTemporary();
-    }
-  };
-
 
   /// EmitCleanupBlocks - Takes the old cleanup stack size and emits the cleanup
   /// blocks that have been added.
@@ -478,8 +459,6 @@ public:
   /// for the given property.
   void GenerateObjCSetter(ObjCImplementationDecl *IMP,
                           const ObjCPropertyImplDecl *PID);
-  bool IndirectObjCSetterArg(const CGFunctionInfo &FI);
-  bool IvarTypeWithAggrGCObjects(QualType Ty);
 
   //===--------------------------------------------------------------------===//
   //                                  Block Bits
@@ -525,29 +504,30 @@ public:
   /// legal to call this function even if there is no current insertion point.
   void FinishFunction(SourceLocation EndLoc=SourceLocation());
 
-  /// GenerateThunk - Generate a thunk for the given method.
-  void GenerateThunk(llvm::Function *Fn, GlobalDecl GD, const ThunkInfo &Thunk);
-  
+  /// DynamicTypeAdjust - Do the non-virtual and virtual adjustments on an
+  /// object pointer to alter the dynamic type of the pointer.  Used by
+  /// GenerateCovariantThunk for building thunks.
+  llvm::Value *DynamicTypeAdjust(llvm::Value *V, 
+                                 const ThunkAdjustment &Adjustment);
+
+  /// GenerateThunk - Generate a thunk for the given method
+  llvm::Constant *GenerateThunk(llvm::Function *Fn, GlobalDecl GD,
+                                bool Extern, 
+                                const ThunkAdjustment &ThisAdjustment);
+  llvm::Constant *
+  GenerateCovariantThunk(llvm::Function *Fn, GlobalDecl GD,
+                         bool Extern,
+                         const CovariantThunkAdjustment &Adjustment);
+
   void EmitCtorPrologue(const CXXConstructorDecl *CD, CXXCtorType Type);
 
-  /// InitializeVTablePointer - Initialize the vtable pointer of the given
-  /// subobject.
-  ///
-  void InitializeVTablePointer(BaseSubobject Base, 
-                               const CXXRecordDecl *NearestVBase,
-                               llvm::Constant *VTable,
-                               const CXXRecordDecl *VTableClass);
+  void InitializeVtablePtrs(const CXXRecordDecl *ClassDecl);
 
-  typedef llvm::SmallPtrSet<const CXXRecordDecl *, 4> VisitedVirtualBasesSetTy;
-  void InitializeVTablePointers(BaseSubobject Base, 
-                                const CXXRecordDecl *NearestVBase,
-                                bool BaseIsNonVirtualPrimaryBase,
-                                llvm::Constant *VTable,
-                                const CXXRecordDecl *VTableClass,
-                                VisitedVirtualBasesSetTy& VBases);
-
-  void InitializeVTablePointers(const CXXRecordDecl *ClassDecl);
-
+  void InitializeVtablePtrsRecursive(const CXXRecordDecl *ClassDecl,
+                                     llvm::Constant *Vtable,
+                                     CGVtableInfo::AddrSubMap_t& AddressPoints,
+                                     llvm::Value *ThisPtr,
+                                     uint64_t Offset);
 
   void SynthesizeCXXCopyConstructor(const FunctionArgList &Args);
   void SynthesizeCXXCopyAssignment(const FunctionArgList &Args);
@@ -671,9 +651,6 @@ public:
   llvm::AllocaInst *CreateTempAlloca(const llvm::Type *Ty,
                                      const llvm::Twine &Name = "tmp");
 
-  /// InitTempAlloca - Provide an initial value for the given alloca.
-  void InitTempAlloca(llvm::AllocaInst *Alloca, llvm::Value *Value);
-
   /// CreateIRTemp - Create a temporary IR object of the given type, with
   /// appropriate alignment. This routine should only be used when an temporary
   /// value needs to be stored into an alloca (for example, to avoid explicit
@@ -707,12 +684,6 @@ public:
   /// always be accessible even if no aggregate location is provided.
   RValue EmitAnyExprToTemp(const Expr *E, bool IsAggLocVolatile = false,
                            bool IsInitializer = false);
-
-  /// EmitsAnyExprToMem - Emits the code necessary to evaluate an
-  /// arbitrary expression into the given memory location.
-  void EmitAnyExprToMem(const Expr *E, llvm::Value *Location,
-                        bool IsLocationVolatile = false,
-                        bool IsInitializer = false);
 
   /// EmitAggregateCopy - Emit an aggrate copy.
   ///
@@ -775,27 +746,22 @@ public:
   }
 
   /// GetAddressOfBaseOfCompleteClass - Convert the given pointer to a
-  /// complete class to the given direct base.
-  llvm::Value *
-  GetAddressOfDirectBaseInCompleteClass(llvm::Value *Value,
-                                        const CXXRecordDecl *Derived,
-                                        const CXXRecordDecl *Base,
-                                        bool BaseIsVirtual);
-
-  llvm::Value *OldGetAddressOfBaseClass(llvm::Value *Value,
-                                        const CXXRecordDecl *ClassDecl,
-                                        const CXXRecordDecl *BaseClassDecl);
-
+  /// complete class down to one of its virtual bases.
+  llvm::Value *GetAddressOfBaseOfCompleteClass(llvm::Value *Value,
+                                               bool IsVirtual,
+                                               const CXXRecordDecl *Derived,
+                                               const CXXRecordDecl *Base);
+  
   /// GetAddressOfBaseClass - This function will add the necessary delta to the
   /// load of 'this' and returns address of the base class.
-  llvm::Value *GetAddressOfBaseClass(llvm::Value *Value, 
-                                     const CXXRecordDecl *Derived,
-                                     const CXXBaseSpecifierArray &BasePath, 
+  llvm::Value *GetAddressOfBaseClass(llvm::Value *Value,
+                                     const CXXRecordDecl *ClassDecl,
+                                     const CXXRecordDecl *BaseClassDecl,
                                      bool NullCheckValue);
-
+  
   llvm::Value *GetAddressOfDerivedClass(llvm::Value *Value,
-                                        const CXXRecordDecl *Derived,
-                                        const CXXBaseSpecifierArray &BasePath,
+                                        const CXXRecordDecl *ClassDecl,
+                                        const CXXRecordDecl *DerivedClassDecl,
                                         bool NullCheckValue);
 
   llvm::Value *GetVirtualBaseClassOffset(llvm::Value *This,
@@ -1048,7 +1014,6 @@ public:
 
   // Note: only availabe for agg return types
   LValue EmitBinaryOperatorLValue(const BinaryOperator *E);
-  LValue EmitCompoundAssignOperatorLValue(const CompoundAssignOperator *E);
   // Note: only available for agg return types
   LValue EmitCallExprLValue(const CallExpr *E);
   // Note: only available for agg return types
@@ -1266,12 +1231,6 @@ public:
                                  llvm::Constant **Decls,
                                  unsigned NumDecls);
 
-  /// GenerateCXXGlobalDtorFunc - Generates code for destroying global
-  /// variables.
-  void GenerateCXXGlobalDtorFunc(llvm::Function *Fn,
-                                 const std::vector<std::pair<llvm::Constant*,
-                                   llvm::Constant*> > &DtorsAndObjects);
-
   void GenerateCXXGlobalVarDeclInitFunc(llvm::Function *Fn, const VarDecl *D);
 
   void EmitCXXConstructExpr(llvm::Value *Dest, const CXXConstructExpr *E);
@@ -1307,10 +1266,6 @@ public:
   /// getTrapBB - Create a basic block that will call the trap intrinsic.  We'll
   /// generate a branch around the created basic block as necessary.
   llvm::BasicBlock* getTrapBB();
-  
-  /// EmitCallArg - Emit a single call argument.
-  RValue EmitCallArg(const Expr *E, QualType ArgType);
-
 private:
 
   void EmitReturnOfRValue(RValue RV, QualType Ty);
@@ -1341,6 +1296,9 @@ private:
   /// AddBranchFixup - adds a branch instruction to the list of fixups for the
   /// current cleanup scope.
   void AddBranchFixup(llvm::BranchInst *BI);
+
+  /// EmitCallArg - Emit a single call argument.
+  RValue EmitCallArg(const Expr *E, QualType ArgType);
 
   /// EmitCallArgs - Emit call arguments for a function.
   /// The CallArgTypeInfo parameter is used for iterating over the known

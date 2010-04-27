@@ -12,16 +12,15 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/Analysis/CFG.h"
+#include "clang/Analysis/AnalysisContext.h"
+#include "clang/Analysis/Analyses/LiveVariables.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/ParentMap.h"
 #include "clang/AST/StmtVisitor.h"
-#include "clang/Analysis/Analyses/LiveVariables.h"
-#include "clang/Analysis/AnalysisContext.h"
-#include "clang/Analysis/CFG.h"
 #include "clang/Analysis/Support/BumpVector.h"
-#include "llvm/ADT/SmallSet.h"
 #include "llvm/Support/ErrorHandling.h"
 
 using namespace clang;
@@ -54,12 +53,8 @@ const ImplicitParamDecl *AnalysisContext::getSelfDecl() const {
 }
 
 CFG *AnalysisContext::getCFG() {
-  if (!builtCFG) {
+  if (!cfg)
     cfg = CFG::buildCFG(D, getBody(), &D->getASTContext(), AddEHEdges);
-    // Even when the cfg is not successfully built, we don't
-    // want to try building it again.
-    builtCFG = true;
-  }
   return cfg;
 }
 
@@ -130,9 +125,9 @@ LocationContextManager::getLocationContext(AnalysisContext *ctx,
   llvm::FoldingSetNodeID ID;
   LOC::Profile(ID, ctx, parent, d);
   void *InsertPos;
-
+  
   LOC *L = cast_or_null<LOC>(Contexts.FindNodeOrInsertPos(ID, InsertPos));
-
+  
   if (!L) {
     L = new LOC(ctx, parent, d);
     Contexts.InsertNode(L, InsertPos);
@@ -148,7 +143,7 @@ LocationContextManager::getStackFrame(AnalysisContext *ctx,
   llvm::FoldingSetNodeID ID;
   StackFrameContext::Profile(ID, ctx, parent, s, blk, idx);
   void *InsertPos;
-  StackFrameContext *L =
+  StackFrameContext *L = 
    cast_or_null<StackFrameContext>(Contexts.FindNodeOrInsertPos(ID, InsertPos));
   if (!L) {
     L = new StackFrameContext(ctx, parent, s, blk, idx);
@@ -212,17 +207,11 @@ class FindBlockDeclRefExprsVals : public StmtVisitor<FindBlockDeclRefExprsVals>{
   BumpVector<const VarDecl*> &BEVals;
   BumpVectorContext &BC;
   llvm::DenseMap<const VarDecl*, unsigned> Visited;
-  llvm::SmallSet<const DeclContext*, 4> IgnoredContexts;
 public:
   FindBlockDeclRefExprsVals(BumpVector<const VarDecl*> &bevals,
                             BumpVectorContext &bc)
   : BEVals(bevals), BC(bc) {}
-
-  bool IsTrackedDecl(const VarDecl *VD) {
-    const DeclContext *DC = VD->getDeclContext();
-    return IgnoredContexts.count(DC) == 0;
-  }
-
+  
   void VisitStmt(Stmt *S) {
     for (Stmt::child_iterator I = S->child_begin(), E = S->child_end();I!=E;++I)
       if (Stmt *child = *I)
@@ -240,24 +229,17 @@ public:
         }
       }
   }
-
+  
   void VisitBlockDeclRefExpr(BlockDeclRefExpr *DR) {
     if (const VarDecl *VD = dyn_cast<VarDecl>(DR->getDecl())) {
       unsigned &flag = Visited[VD];
       if (!flag) {
         flag = 1;
-        if (IsTrackedDecl(VD))
-          BEVals.push_back(VD, BC);
+        BEVals.push_back(VD, BC);
       }
     }
   }
-
-  void VisitBlockExpr(BlockExpr *BR) {
-    // Blocks containing blocks can transitively capture more variables.
-    IgnoredContexts.insert(BR->getBlockDecl());
-    Visit(BR->getBlockDecl()->getBody());
-  }
-};
+};  
 } // end anonymous namespace
 
 typedef BumpVector<const VarDecl*> DeclVec;
@@ -267,16 +249,16 @@ static DeclVec* LazyInitializeReferencedDecls(const BlockDecl *BD,
                                               llvm::BumpPtrAllocator &A) {
   if (Vec)
     return (DeclVec*) Vec;
-
+  
   BumpVectorContext BC(A);
   DeclVec *BV = (DeclVec*) A.Allocate<DeclVec>();
   new (BV) DeclVec(BC, 10);
-
+  
   // Find the referenced variables.
   FindBlockDeclRefExprsVals F(*BV, BC);
   F.Visit(BD->getBody());
-
-  Vec = BV;
+  
+  Vec = BV;  
   return BV;
 }
 
@@ -285,7 +267,7 @@ std::pair<AnalysisContext::referenced_decls_iterator,
 AnalysisContext::getReferencedBlockVars(const BlockDecl *BD) {
   if (!ReferencedBlockVars)
     ReferencedBlockVars = new llvm::DenseMap<const BlockDecl*,void*>();
-
+  
   DeclVec *V = LazyInitializeReferencedDecls(BD, (*ReferencedBlockVars)[BD], A);
   return std::make_pair(V->begin(), V->end());
 }
@@ -314,12 +296,12 @@ LocationContextManager::~LocationContextManager() {
 
 void LocationContextManager::clear() {
   for (llvm::FoldingSet<LocationContext>::iterator I = Contexts.begin(),
-       E = Contexts.end(); I != E; ) {
+       E = Contexts.end(); I != E; ) {    
     LocationContext *LC = &*I;
     ++I;
     delete LC;
   }
-
+  
   Contexts.clear();
 }
 

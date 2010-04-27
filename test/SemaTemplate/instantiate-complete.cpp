@@ -11,19 +11,18 @@ struct X {
        // expected-error{{data member instantiated with function type 'int (int)'}} \
        // expected-error{{data member instantiated with function type 'char (char)'}} \
        // expected-error{{data member instantiated with function type 'short (short)'}} \
-       // expected-error{{data member instantiated with function type 'float (float)'}} \
-       // expected-error{{data member instantiated with function type 'long (long)'}}
+       // expected-error{{data member instantiated with function type 'float (float)'}}
 };
 
 X<int> f() { return 0; }
 
 struct XField {
-  X<float(int)> xf; // expected-note{{in instantiation of template class 'X<float (int)>' requested here}}
+  X<float(int)> xf; // expected-note{{in instantiation of template class 'struct X<float (int)>' requested here}}
 };
 
 void test_subscript(X<double> *ptr1, X<int(int)> *ptr2, int i) {
   (void)ptr1[i];
-  (void)ptr2[i]; // expected-note{{in instantiation of template class 'X<int (int)>' requested here}}
+  (void)ptr2[i]; // expected-note{{in instantiation of template class 'struct X<int (int)>' requested here}}
 }
 
 void test_arith(X<signed char> *ptr1, X<unsigned char> *ptr2,
@@ -31,20 +30,20 @@ void test_arith(X<signed char> *ptr1, X<unsigned char> *ptr2,
   (void)(ptr1 + 5);
   // FIXME: if I drop the ')' after void, below, it still parses (!)
   (void)(5 + ptr2);
-  (void)(ptr3 + 5); // expected-note{{in instantiation of template class 'X<char (char)>' requested here}}
-  (void)(5 + ptr4); // expected-note{{in instantiation of template class 'X<short (short)>' requested here}}
+  (void)(ptr3 + 5); // expected-note{{in instantiation of template class 'struct X<char (char)>' requested here}}
+  (void)(5 + ptr4); // expected-note{{in instantiation of template class 'struct X<short (short)>' requested here}}
 }
 
 void test_new() {
   (void)new X<float>(0);
-  (void)new X<float(float)>; // expected-note{{in instantiation of template class 'X<float (float)>' requested here}}
+  (void)new X<float(float)>; // expected-note{{in instantiation of template class 'struct X<float (float)>' requested here}}
 }
 
 void test_memptr(X<long> *p1, long X<long>::*pm1,
                  X<long(long)> *p2, 
                  long (X<long(long)>::*pm2)(long)) {
   (void)(p1->*pm1);
-  (void)((p2->*pm2)(0)); // expected-note{{in instantiation of template class 'X<long (long)>' requested here}}
+  (void)((p2->*pm2)(0));
 }
 
 // Reference binding to a base
@@ -83,19 +82,4 @@ namespace PR6376 {
   struct Y : public X<T>::template apply<U>::type { };
 
   template struct Y<int, float>;
-}
-
-namespace TemporaryObjectCopy {
-  // Make sure we instantiate classes when we create a temporary copy.
-  template<typename T>
-  struct X {
-    X(T); 
-  };
-
-  template<typename T>
-  void f(T t) {
-    const X<int> &x = X<int>(t);
-  }
-
-  template void f(int);
 }

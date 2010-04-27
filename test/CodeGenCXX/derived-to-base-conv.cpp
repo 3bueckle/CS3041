@@ -7,21 +7,16 @@ extern "C" int printf(...);
 extern "C" void exit(int);
 
 struct A {
-  A (const A&) { printf("A::A(const A&)\n"); }
-  A() {};
-  ~A() { printf("A::~A()\n"); }
+ A (const A&) { printf("A::A(const A&)\n"); }
+ A() {};
 }; 
 
 struct B : public A {
   B() {};
-  B(const B& Other) : A(Other) { printf("B::B(const B&)\n"); }
-  ~B() { printf("B::~B()\n"); }
-};
+}; 
 
 struct C : public B {
   C() {};
-  C(const C& Other) : B(Other) { printf("C::C(const C&)\n"); }
-  ~C() { printf("C::~C()\n"); }
 }; 
 
 struct X {
@@ -29,7 +24,6 @@ struct X {
 	operator C&() {printf("X::operator C&()\n"); return c; }
  	X (const X&) { printf("X::X(const X&)\n"); }
  	X () { printf("X::X()\n"); }
- 	~X () { printf("X::~X()\n"); }
 	B b;
 	C c;
 };

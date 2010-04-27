@@ -11,12 +11,8 @@ LEVEL = ../../../..
 TOOLNAME = clang
 ifndef CLANG_IS_PRODUCTION
 TOOLALIAS = clang++
-else
-  ifdef CLANGXX_IS_PRODUCTION
-    TOOLALIAS = clang++
-  endif
 endif
-CPP.Flags += -I$(PROJ_SRC_DIR)/../../include -I$(PROJ_OBJ_DIR)/../../include
+CPPFLAGS += -I$(PROJ_SRC_DIR)/../../include -I$(PROJ_OBJ_DIR)/../../include
 
 # Clang tool has no plugins, optimize startup time.
 TOOL_NO_EXPORTS = 1
@@ -37,6 +33,4 @@ include $(LLVM_SRC_ROOT)/Makefile.rules
 ifdef CLANG_IS_PRODUCTION
 CPP.Defines += -DCLANG_IS_PRODUCTION
 endif
-ifdef CLANGXX_IS_PRODUCTION
-CPP.Defines += -DCLANGXX_IS_PRODUCTION
-endif
+

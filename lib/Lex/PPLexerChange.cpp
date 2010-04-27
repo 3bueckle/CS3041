@@ -64,8 +64,8 @@ PreprocessorLexer *Preprocessor::getCurrentFileLexer() const {
 
 /// EnterSourceFile - Add a source file to the top of the include stack and
 /// start lexing tokens from it instead of the current buffer.
-void Preprocessor::EnterSourceFile(FileID FID, const DirectoryLookup *CurDir,
-                                   SourceLocation Loc) {
+bool Preprocessor::EnterSourceFile(FileID FID, const DirectoryLookup *CurDir,
+                                   std::string &ErrorStr) {
   assert(CurTokenLexer == 0 && "Cannot #include a file inside a macro!");
   ++NumEnteredSourceFiles;
 
@@ -75,23 +75,18 @@ void Preprocessor::EnterSourceFile(FileID FID, const DirectoryLookup *CurDir,
   if (PTH) {
     if (PTHLexer *PL = PTH->CreateLexer(FID)) {
       EnterSourceFileWithPTH(PL, CurDir);
-      return;
+      return false;
     }
   }
   
   // Get the MemoryBuffer for this FID, if it fails, we fail.
-  bool Invalid = false;
-  const llvm::MemoryBuffer *InputFile = 
-    getSourceManager().getBuffer(FID, Loc, &Invalid);
-  if (Invalid) {
-    SourceLocation FileStart = SourceMgr.getLocForStartOfFile(FID);
-    Diag(Loc, diag::err_pp_error_opening_file)
-      << std::string(SourceMgr.getBufferName(FileStart)) << "";
-    return;
-  }
+  const llvm::MemoryBuffer *InputFile =
+    getSourceManager().getBuffer(FID, &ErrorStr);
+  if (!ErrorStr.empty())
+    return true;
   
   EnterSourceFileWithLexer(new Lexer(FID, InputFile, *this), CurDir);
-  return;
+  return false;
 }
 
 /// EnterSourceFileWithLexer - Add a source file to the top of the include stack
@@ -259,7 +254,6 @@ bool Preprocessor::HandleEndOfFile(Token &Result, bool isEndOfMacro) {
       if (!I->second->isUsed())
         Diag(I->second->getDefinitionLoc(), diag::pp_macro_not_used);
   }
-
   return true;
 }
 

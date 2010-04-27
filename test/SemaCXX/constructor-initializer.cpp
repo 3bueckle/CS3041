@@ -1,7 +1,6 @@
 // RUN: %clang_cc1 -Wreorder -fsyntax-only -verify %s
 class A { 
   int m;
-public:
    A() : A::m(17) { } // expected-error {{member initializer 'm' does not name a non-static data member or base class}}
    A(int);
 };
@@ -28,7 +27,7 @@ public:
 
 class E : public D, public B { 
 public:
-  E() : B(), D() { } // expected-error{{base class initializer 'B' names both a direct base class and an inherited virtual base class}}
+  E() : B(), D() { } // expected-error{{base class initializer 'class B' names both a direct base class and an inherited virtual base class}}
 };
 
 
@@ -66,16 +65,15 @@ struct S : Y, virtual X {
 };
 
 struct Z : S { 
-  Z() : X(), S(), E()  {} // expected-error {{type 'E' is not a direct or virtual base of 'Z'}}
+  Z() : X(), S(), E()  {} // expected-error {{type 'class E' is not a direct or virtual base of 'Z'}}
 };
 
 class U { 
   union { int a; char* p; };
   union { int b; double d; };
 
-  U() :  a(1), // expected-note {{previous initialization is here}}
-         p(0), // expected-error {{initializing multiple members of anonymous union}}
-         d(1.0)  {}
+  U() :  a(1), p(0), d(1.0)  {} // expected-error {{multiple initializations given for non-static member 'p'}} \
+                        // expected-note {{previous initialization is here}}
 };
 
 struct V {};
@@ -88,11 +86,12 @@ struct Derived : Base, Base1, virtual V {
 
 struct Current : Derived {
   int Derived;
-  Current() : Derived(1), ::Derived(), // expected-warning {{field 'Derived' will be initialized after base '::Derived'}} \
-                                       // expected-warning {{base class '::Derived' will be initialized after base 'Derived::V'}}
+  Current() : Derived(1), ::Derived(), // expected-warning {{member 'Derived' will be initialized after}} \
+                                       // expected-note {{base '::Derived'}} \
+                                       // expected-warning {{base class '::Derived' will be initialized after}}
                           ::Derived::Base(), // expected-error {{type '::Derived::Base' is not a direct or virtual base of 'Current'}}
                            Derived::Base1(), // expected-error {{type 'Derived::Base1' is not a direct or virtual base of 'Current'}}
-                           Derived::V(),
+                           Derived::V(), // expected-note {{base 'Derived::V'}}
                            ::NonExisting(), // expected-error {{member initializer 'NonExisting' does not name a non-static data member or}}
                            INT::NonExisting()  {} // expected-error {{expected a class or namespace}} \
                                                   // expected-error {{member initializer 'NonExisting' does not name a non-static data member or}}
@@ -105,13 +104,13 @@ struct M {              // expected-note 2 {{candidate constructor (the implicit
 };
 
 struct N : M  {
-  N() : M(1),        // expected-error {{no matching constructor for initialization of 'M'}}
-        m1(100) {  } // expected-error {{no matching constructor for initialization of 'M'}}
+  N() : M(1),        // expected-error {{no matching constructor for initialization of 'struct M'}}
+        m1(100) {  } // expected-error {{no matching constructor for initialization of 'struct M'}}
   M m1;
 };
 
 struct P : M  {
-  P()  {  } // expected-error {{constructor for 'P' must explicitly initialize the base class 'M' which does not have a default constructor}} \
+  P()  {  } // expected-error {{base class 'struct M'}} \
             // expected-error {{member 'm'}}
   M m; // expected-note {{member is declared here}}
 };
@@ -126,7 +125,7 @@ struct Q {
 
 // A silly class used to demonstrate field-is-uninitialized in constructors with
 // multiple params.
-class TwoInOne { public: TwoInOne(TwoInOne a, TwoInOne b) {} };
+class TwoInOne { TwoInOne(TwoInOne a, TwoInOne b) {} };
 class InitializeUsingSelfTest {
   bool A;
   char* B;
@@ -171,36 +170,3 @@ struct X0 : NDC<int> {
   
   NDC<int> ndc;
 };
-
-namespace Test0 {
-
-struct A { A(); };
-
-struct B {
-  B() { } 
-  const A a;
-};
-
-}
-
-namespace Test1 {
-  struct A {
-    enum Kind { Foo } Kind;
-    A() : Kind(Foo) {}
-  };
-}
-
-namespace Test2 {
-
-struct A { 
-  A(const A&);
-};
-
-struct B : virtual A { };
-struct C : A, B { };
-
-C f(C c) {
-  return c;
-}
-
-}

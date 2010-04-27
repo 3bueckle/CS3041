@@ -1,7 +1,5 @@
 // RUN: %clang_cc1 -fsyntax-only -verify %s
-// RUN: cp %s %t
-// RUN: %clang_cc1 -fsyntax-only -fixit -x c %t || true
-// RUN: %clang_cc1 -fsyntax-only -pedantic -Werror -x c %t
+// RUN: %clang_cc1 -fsyntax-only -fixit -o - %s | %clang_cc1 -fsyntax-only -pedantic -Werror -x c -
 struct Point {
   float x, y;
 };

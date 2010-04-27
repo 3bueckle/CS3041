@@ -13,9 +13,9 @@ namespace A {
 }
 
 A:: ; // expected-error {{expected unqualified-id}}
-// FIXME: there is a member 'ax'; it's just not a class.
-::A::ax::undef ex3; // expected-error {{no member named 'ax'}}
-A::undef1::undef2 ex4; // expected-error {{no member named 'undef1'}}
+// FIXME: redundant errors
+::A::ax::undef ex3; // expected-error {{no member named}} expected-error {{unknown type name}}
+A::undef1::undef2 ex4; // expected-error {{no member named 'undef1'}} expected-error {{unknown type name}}
 
 int A::C::Ag1() { return 0; }
 
@@ -36,9 +36,9 @@ class C2 {
   int x;
 };
 
-void C2::m() const { } // expected-error{{out-of-line definition of 'm' does not match any declaration in 'C2'}}
+void C2::m() const { } // expected-error{{out-of-line definition of 'm' does not match any declaration in 'class C2'}}
 
-void C2::f(int) { } // expected-error{{out-of-line definition of 'f' does not match any declaration in 'C2'}}
+void C2::f(int) { } // expected-error{{out-of-line definition of 'f' does not match any declaration in 'class C2'}}
 
 void C2::m() {
   x = 0;
@@ -64,7 +64,7 @@ void f2() {
 A::C c1;
 struct A::C c2;
 struct S : public A::C {};
-struct A::undef; // expected-error {{no struct named 'undef' in namespace 'A'}}
+struct A::undef; // expected-error {{'undef' does not name a tag member in the specified scope}}
 
 namespace A2 {
   typedef int INT;
@@ -125,7 +125,7 @@ class Operators {
   operator bool();
 };
 
-Operators Operators::operator+(const Operators&) { // expected-error{{out-of-line definition of 'operator+' does not match any declaration in 'Operators'}}
+Operators Operators::operator+(const Operators&) { // expected-error{{out-of-line definition of 'operator+' does not match any declaration in 'class Operators'}}
   Operators ops;
   return ops;
 }
@@ -149,7 +149,7 @@ void A::g(const int&) { } // expected-error{{out-of-line definition of 'g' does 
 
 struct Struct { };
 
-void Struct::f() { } // expected-error{{out-of-line definition of 'f' does not match any declaration in 'Struct'}}
+void Struct::f() { } // expected-error{{out-of-line definition of 'f' does not match any declaration in 'struct Struct'}}
 
 void global_func(int);
 void global_func2(int);
@@ -164,8 +164,9 @@ void ::global_func2(int) { } // expected-error{{definition or redeclaration of '
 
 void N::f() { } // okay
 
-struct Y;  // expected-note{{forward declaration of 'Y'}}
-Y::foo y; // expected-error{{incomplete type 'Y' named in nested name specifier}}
+struct Y;  // expected-note{{forward declaration of 'struct Y'}}
+Y::foo y; // expected-error{{incomplete type 'struct Y' named in nested name specifier}} \
+         // expected-error{{no type named 'foo' in}}
 
 X::X() : a(5) { } // expected-error{{use of undeclared identifier 'X'}} \
       // expected-error{{C++ requires a type specifier for all declarations}} \
@@ -194,7 +195,7 @@ somens::a a3 = a2; // expected-error {{no viable conversion}}
 // typedefs and using declarations.
 namespace test1 {
   namespace ns {
-    class Counter { public: static int count; };
+    class Counter { static int count; };
     typedef Counter counter;
   }
   using ns::counter;
@@ -223,8 +224,9 @@ namespace test2 {
 
 // PR6259, invalid case
 namespace test3 {
-  class A; // expected-note {{forward declaration}}
+  // FIXME: this should really only trigger once
+  class A; // expected-note 2 {{forward declaration}}
   void foo(const char *path) {
-    A::execute(path); // expected-error {{incomplete type 'test3::A' named in nested name specifier}}
+    A::execute(path); // expected-error 2 {{incomplete type 'class test3::A' named in nested name specifier}}
   }
 }

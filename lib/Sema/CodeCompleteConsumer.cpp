@@ -17,6 +17,7 @@
 #include "clang-c/Index.h"
 #include "Sema.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/raw_ostream.h"
 #include <algorithm>
 #include <cstring>
@@ -86,7 +87,7 @@ CodeCompletionString::Chunk::Chunk(ChunkKind Kind, llvm::StringRef Text)
     break;
 
   case CK_Colon:
-    this->Text = ":";
+    this->Text = ": ";
     break;
 
   case CK_SemiColon:
@@ -425,7 +426,7 @@ PrintingCodeCompleteConsumer::ProcessCodeCompleteResults(Sema &SemaRef,
     OS << "COMPLETION: ";
     switch (Results[I].Kind) {
     case Result::RK_Declaration:
-      OS << Results[I].Declaration;
+      OS << Results[I].Declaration->getNameAsString() ;
       if (Results[I].Hidden)
         OS << " (Hidden)";
       if (CodeCompletionString *CCS 
@@ -582,12 +583,9 @@ CIndexCodeCompleteConsumer::ProcessCodeCompleteResults(Sema &SemaRef,
         break;
       }
       break;
-
-    case Result::RK_Macro:
-      Kind = CXCursor_MacroDefinition;
-      break;
-
+        
     case Result::RK_Keyword:
+    case Result::RK_Macro:
     case Result::RK_Pattern:
       Kind = CXCursor_NotImplemented;
       break;

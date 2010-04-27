@@ -554,9 +554,9 @@ unsigned PCHStmtReader::VisitExtVectorElementExpr(ExtVectorElementExpr *E) {
 unsigned PCHStmtReader::VisitInitListExpr(InitListExpr *E) {
   VisitExpr(E);
   unsigned NumInits = Record[Idx++];
-  E->reserveInits(*Reader.getContext(), NumInits);
+  E->reserveInits(NumInits);
   for (unsigned I = 0; I != NumInits; ++I)
-    E->updateInit(*Reader.getContext(), I,
+    E->updateInit(I,
                   cast<Expr>(StmtStack[StmtStack.size() - NumInits - 1 + I]));
   E->setSyntacticForm(cast_or_null<InitListExpr>(StmtStack.back()));
   E->setLBraceLoc(SourceLocation::getFromRawEncoding(Record[Idx++]));
@@ -725,7 +725,7 @@ unsigned PCHStmtReader::VisitObjCStringLiteral(ObjCStringLiteral *E) {
 
 unsigned PCHStmtReader::VisitObjCEncodeExpr(ObjCEncodeExpr *E) {
   VisitExpr(E);
-  E->setEncodedTypeSourceInfo(Reader.GetTypeSourceInfo(Record, Idx));
+  E->setEncodedType(Reader.GetType(Record[Idx++]));
   E->setAtLoc(SourceLocation::getFromRawEncoding(Record[Idx++]));
   E->setRParenLoc(SourceLocation::getFromRawEncoding(Record[Idx++]));
   return 0;
@@ -782,42 +782,24 @@ unsigned PCHStmtReader::VisitObjCImplicitSetterGetterRefExpr(
 
 unsigned PCHStmtReader::VisitObjCMessageExpr(ObjCMessageExpr *E) {
   VisitExpr(E);
-  assert(Record[Idx] == E->getNumArgs());
-  ++Idx;
-  ObjCMessageExpr::ReceiverKind Kind
-    = static_cast<ObjCMessageExpr::ReceiverKind>(Record[Idx++]);
-  switch (Kind) {
-  case ObjCMessageExpr::Instance:
-    E->setInstanceReceiver(
-         cast_or_null<Expr>(StmtStack[StmtStack.size() - E->getNumArgs() - 1]));
-    break;
-
-  case ObjCMessageExpr::Class:
-    E->setClassReceiver(Reader.GetTypeSourceInfo(Record, Idx));
-    break;
-
-  case ObjCMessageExpr::SuperClass:
-  case ObjCMessageExpr::SuperInstance: {
-    QualType T = Reader.GetType(Record[Idx++]);
-    SourceLocation SuperLoc = SourceLocation::getFromRawEncoding(Record[Idx++]);
-    E->setSuper(SuperLoc, T, Kind == ObjCMessageExpr::SuperInstance);
-    break;
-  }
-  }
-
-  assert(Kind == E->getReceiverKind());
-
-  if (Record[Idx++])
-    E->setMethodDecl(cast_or_null<ObjCMethodDecl>(Reader.GetDecl(Record[Idx++])));
-  else
-    E->setSelector(Reader.GetSelector(Record, Idx));
-
+  E->setNumArgs(Record[Idx++]);
   E->setLeftLoc(SourceLocation::getFromRawEncoding(Record[Idx++]));
   E->setRightLoc(SourceLocation::getFromRawEncoding(Record[Idx++]));
+  E->setSelector(Reader.GetSelector(Record, Idx));
+  E->setMethodDecl(cast_or_null<ObjCMethodDecl>(Reader.GetDecl(Record[Idx++])));
+
+  E->setReceiver(
+         cast_or_null<Expr>(StmtStack[StmtStack.size() - E->getNumArgs() - 1]));
+  if (!E->getReceiver()) {
+    ObjCMessageExpr::ClassInfo CI;
+    CI.first = cast_or_null<ObjCInterfaceDecl>(Reader.GetDecl(Record[Idx++]));
+    CI.second = Reader.GetIdentifierInfo(Record, Idx);
+    E->setClassInfo(CI);
+  }
 
   for (unsigned I = 0, N = E->getNumArgs(); I != N; ++I)
     E->setArg(I, cast<Expr>(StmtStack[StmtStack.size() - N + I]));
-  return E->getNumArgs() + (Kind == ObjCMessageExpr::Instance);
+  return E->getNumArgs() + 1;
 }
 
 unsigned PCHStmtReader::VisitObjCSuperExpr(ObjCSuperExpr *E) {
@@ -838,11 +820,12 @@ unsigned PCHStmtReader::VisitObjCForCollectionStmt(ObjCForCollectionStmt *S) {
 
 unsigned PCHStmtReader::VisitObjCAtCatchStmt(ObjCAtCatchStmt *S) {
   VisitStmt(S);
-  S->setCatchBody(cast_or_null<Stmt>(StmtStack.back()));
-  S->setCatchParamDecl(cast_or_null<VarDecl>(Reader.GetDecl(Record[Idx++])));
+  S->setCatchBody(cast_or_null<Stmt>(StmtStack[StmtStack.size() - 2]));
+  S->setNextCatchStmt(cast_or_null<Stmt>(StmtStack[StmtStack.size() - 1]));
+  S->setCatchParamDecl(cast_or_null<ParmVarDecl>(Reader.GetDecl(Record[Idx++])));
   S->setAtCatchLoc(SourceLocation::getFromRawEncoding(Record[Idx++]));
   S->setRParenLoc(SourceLocation::getFromRawEncoding(Record[Idx++]));
-  return 1;
+  return 2;
 }
 
 unsigned PCHStmtReader::VisitObjCAtFinallyStmt(ObjCAtFinallyStmt *S) {
@@ -854,21 +837,11 @@ unsigned PCHStmtReader::VisitObjCAtFinallyStmt(ObjCAtFinallyStmt *S) {
 
 unsigned PCHStmtReader::VisitObjCAtTryStmt(ObjCAtTryStmt *S) {
   VisitStmt(S);
-  assert(Record[Idx] == S->getNumCatchStmts());
-  ++Idx;
-  bool HasFinally = Record[Idx++];
-  for (unsigned I = 0, N = S->getNumCatchStmts(); I != N; ++I) {
-    unsigned Offset = StmtStack.size() - N - HasFinally + I;
-    S->setCatchStmt(I, cast_or_null<ObjCAtCatchStmt>(StmtStack[Offset]));
-  }
-
-  unsigned TryOffset
-    = StmtStack.size() - S->getNumCatchStmts() - HasFinally - 1;
-  S->setTryBody(cast_or_null<Stmt>(StmtStack[TryOffset]));
-  if (HasFinally)
-    S->setFinallyStmt(cast_or_null<Stmt>(StmtStack[StmtStack.size() - 1]));
+  S->setTryBody(cast_or_null<Stmt>(StmtStack[StmtStack.size() - 3]));
+  S->setCatchStmts(cast_or_null<Stmt>(StmtStack[StmtStack.size() - 2]));
+  S->setFinallyStmt(cast_or_null<Stmt>(StmtStack[StmtStack.size() - 1]));
   S->setAtTryLoc(SourceLocation::getFromRawEncoding(Record[Idx++]));
-  return 1 + S->getNumCatchStmts() + HasFinally;
+  return 3;
 }
 
 unsigned PCHStmtReader::VisitObjCAtSynchronizedStmt(ObjCAtSynchronizedStmt *S) {
@@ -1150,7 +1123,7 @@ Stmt *PCHReader::ReadStmt(llvm::BitstreamCursor &Cursor) {
       break;
 
     case pch::EXPR_INIT_LIST:
-      S = new (Context) InitListExpr(*getContext(), Empty);
+      S = new (Context) InitListExpr(Empty);
       break;
 
     case pch::EXPR_DESIGNATED_INIT:
@@ -1221,8 +1194,7 @@ Stmt *PCHReader::ReadStmt(llvm::BitstreamCursor &Cursor) {
       S = new (Context) ObjCImplicitSetterGetterRefExpr(Empty);
       break;
     case pch::EXPR_OBJC_MESSAGE_EXPR:
-      S = ObjCMessageExpr::CreateEmpty(*Context,
-                                     Record[PCHStmtReader::NumExprFields]);
+      S = new (Context) ObjCMessageExpr(Empty);
       break;
     case pch::EXPR_OBJC_SUPER_EXPR:
       S = new (Context) ObjCSuperExpr(Empty);
@@ -1240,9 +1212,7 @@ Stmt *PCHReader::ReadStmt(llvm::BitstreamCursor &Cursor) {
       S = new (Context) ObjCAtFinallyStmt(Empty);
       break;
     case pch::STMT_OBJC_AT_TRY:
-      S = ObjCAtTryStmt::CreateEmpty(*Context, 
-                                     Record[PCHStmtReader::NumStmtFields],
-                                     Record[PCHStmtReader::NumStmtFields + 1]);
+      S = new (Context) ObjCAtTryStmt(Empty);
       break;
     case pch::STMT_OBJC_AT_SYNCHRONIZED:
       S = new (Context) ObjCAtSynchronizedStmt(Empty);

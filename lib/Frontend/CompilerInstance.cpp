@@ -29,7 +29,6 @@
 #include "llvm/LLVMContext.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
-#include "llvm/ADT/Statistic.h"
 #include "llvm/Support/Timer.h"
 #include "llvm/System/Host.h"
 #include "llvm/System/Path.h"
@@ -52,7 +51,7 @@ void CompilerInstance::setInvocation(CompilerInvocation *Value) {
 }
 
 void CompilerInstance::setDiagnostics(Diagnostic *Value) {
-  Diagnostics = Value;
+  Diagnostics.reset(Value);
 }
 
 void CompilerInstance::setDiagnosticClient(DiagnosticClient *Value) {
@@ -108,13 +107,15 @@ void BinaryDiagnosticSerializer::HandleDiagnostic(Diagnostic::Level DiagLevel,
 
 static void SetUpBuildDumpLog(const DiagnosticOptions &DiagOpts,
                               unsigned argc, char **argv,
-                              Diagnostic &Diags) {
+                              llvm::OwningPtr<DiagnosticClient> &DiagClient) {
   std::string ErrorInfo;
-  llvm::OwningPtr<llvm::raw_ostream> OS(
-    new llvm::raw_fd_ostream(DiagOpts.DumpBuildInformation.c_str(), ErrorInfo));
+  llvm::raw_ostream *OS =
+    new llvm::raw_fd_ostream(DiagOpts.DumpBuildInformation.c_str(), ErrorInfo);
   if (!ErrorInfo.empty()) {
-    Diags.Report(diag::err_fe_unable_to_open_logfile)
-                 << DiagOpts.DumpBuildInformation << ErrorInfo;
+    // FIXME: Do not fail like this.
+    llvm::errs() << "error opening -dump-build-information file '"
+                 << DiagOpts.DumpBuildInformation << "', option ignored!\n";
+    delete OS;
     return;
   }
 
@@ -125,21 +126,20 @@ static void SetUpBuildDumpLog(const DiagnosticOptions &DiagOpts,
 
   // Chain in a diagnostic client which will log the diagnostics.
   DiagnosticClient *Logger =
-    new TextDiagnosticPrinter(*OS.take(), DiagOpts, /*OwnsOutputStream=*/true);
-  Diags.setClient(new ChainedDiagnosticClient(Diags.getClient(), Logger));
+    new TextDiagnosticPrinter(*OS, DiagOpts, /*OwnsOutputStream=*/true);
+  DiagClient.reset(new ChainedDiagnosticClient(DiagClient.take(), Logger));
 }
 
 void CompilerInstance::createDiagnostics(int Argc, char **Argv) {
-  Diagnostics = createDiagnostics(getDiagnosticOpts(), Argc, Argv);
+  Diagnostics.reset(createDiagnostics(getDiagnosticOpts(), Argc, Argv));
 
   if (Diagnostics)
     DiagClient.reset(Diagnostics->getClient());
 }
 
-llvm::IntrusiveRefCntPtr<Diagnostic> 
-CompilerInstance::createDiagnostics(const DiagnosticOptions &Opts,
-                                    int Argc, char **Argv) {
-  llvm::IntrusiveRefCntPtr<Diagnostic> Diags(new Diagnostic());
+Diagnostic *CompilerInstance::createDiagnostics(const DiagnosticOptions &Opts,
+                                                int Argc, char **Argv) {
+  llvm::OwningPtr<Diagnostic> Diags(new Diagnostic());
 
   // Create the diagnostic client for reporting errors or for
   // implementing -verify.
@@ -153,7 +153,7 @@ CompilerInstance::createDiagnostics(const DiagnosticOptions &Opts,
       DiagClient.reset(new TextDiagnosticPrinter(llvm::errs(), Opts));
       Diags->setClient(DiagClient.take());
       Diags->Report(diag::err_fe_stderr_binary);
-      return Diags;
+      return Diags.take();
     } else {
       DiagClient.reset(new BinaryDiagnosticSerializer(llvm::errs()));
     }
@@ -165,14 +165,15 @@ CompilerInstance::createDiagnostics(const DiagnosticOptions &Opts,
   if (Opts.VerifyDiagnostics)
     DiagClient.reset(new VerifyDiagnosticsClient(*Diags, DiagClient.take()));
 
-  Diags->setClient(DiagClient.take());
   if (!Opts.DumpBuildInformation.empty())
-    SetUpBuildDumpLog(Opts, Argc, Argv, *Diags);
+    SetUpBuildDumpLog(Opts, Argc, Argv, DiagClient);
 
   // Configure our handling of diagnostics.
-  ProcessWarningOptions(*Diags, Opts);
+  Diags->setClient(DiagClient.take());
+  if (ProcessWarningOptions(*Diags, Opts))
+    return 0;
 
-  return Diags;
+  return Diags.take();
 }
 
 // File Manager
@@ -184,7 +185,7 @@ void CompilerInstance::createFileManager() {
 // Source Manager
 
 void CompilerInstance::createSourceManager() {
-  SourceMgr.reset(new SourceManager(getDiagnostics()));
+  SourceMgr.reset(new SourceManager());
 }
 
 // Preprocessor
@@ -226,9 +227,6 @@ CompilerInstance::createPreprocessor(Diagnostic &Diags,
     PP->setPTHManager(PTHMgr);
   }
 
-  if (PPOpts.DetailedRecord)
-    PP->createPreprocessingRecord();
-  
   InitializePreprocessor(*PP, PPOpts, HSOpts, FEOpts);
 
   // Handle generating dependencies, if requested.
@@ -296,8 +294,6 @@ void CompilerInstance::createCodeCompletionConsumer() {
                                  getFrontendOpts().DebugCodeCompletionPrinter,
                                  getFrontendOpts().ShowMacrosInCodeCompletion,
                                  llvm::outs()));
-  if (!CompletionConsumer)
-    return;
 
   if (CompletionConsumer->isOutputBinary() &&
       llvm::sys::Program::ChangeStdoutToBinary()) {
@@ -431,7 +427,12 @@ bool CompilerInstance::InitializeSourceManager(llvm::StringRef InputFile,
                                                SourceManager &SourceMgr,
                                                const FrontendOptions &Opts) {
   // Figure out where to get and map in the main file.
-  if (InputFile != "-") {
+  if (Opts.EmptyInputOnly) {
+    const char *EmptyStr = "";
+    llvm::MemoryBuffer *SB =
+      llvm::MemoryBuffer::getMemBuffer(EmptyStr, EmptyStr, "<empty input>");
+    SourceMgr.createMainFileIDForMemBuffer(SB);
+  } else if (InputFile != "-") {
     const FileEntry *File = FileMgr.getFile(InputFile);
     if (File) SourceMgr.createMainFileID(File, SourceLocation());
     if (SourceMgr.getMainFileID().isInvalid()) {
@@ -481,9 +482,6 @@ bool CompilerInstance::ExecuteAction(FrontendAction &Act) {
   if (getFrontendOpts().ShowTimers)
     createFrontendTimer();
 
-  if (getFrontendOpts().ShowStats)
-    llvm::EnableStatistics();
-    
   for (unsigned i = 0, e = getFrontendOpts().Inputs.size(); i != e; ++i) {
     const std::string &InFile = getFrontendOpts().Inputs[i].second;
 
@@ -513,20 +511,11 @@ bool CompilerInstance::ExecuteAction(FrontendAction &Act) {
     }
   }
 
-  if (getDiagnosticOpts().ShowCarets) {
-    unsigned NumWarnings = getDiagnostics().getNumWarnings();
-    unsigned NumErrors = getDiagnostics().getNumErrors() - 
-                               getDiagnostics().getNumErrorsSuppressed();
-    
-    if (NumWarnings)
-      OS << NumWarnings << " warning" << (NumWarnings == 1 ? "" : "s");
-    if (NumWarnings && NumErrors)
-      OS << " and ";
-    if (NumErrors)
-      OS << NumErrors << " error" << (NumErrors == 1 ? "" : "s");
-    if (NumWarnings || NumErrors)
-      OS << " generated.\n";
-  }
+  if (getDiagnosticOpts().ShowCarets)
+    if (unsigned NumDiagnostics = getDiagnostics().getNumDiagnostics())
+      OS << NumDiagnostics << " diagnostic"
+         << (NumDiagnostics == 1 ? "" : "s")
+         << " generated.\n";
 
   if (getFrontendOpts().ShowStats) {
     getFileManager().PrintStats();

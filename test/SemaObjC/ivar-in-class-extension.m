@@ -31,12 +31,12 @@ int fn3(SomeClass *obj) {
 @end
 
 @interface SomeClass (Category)
-    {	
-        int categoryIvar; // expected-error {{ivars may not be placed in categories}}
+    {	// expected-error {{ivar may be placed in a class extension}}
+        int categoryIvar;
     }
 @end
 
 @interface SomeClass (Category1)
-    {	
+    {	// expected-error {{ivar may be placed in a class extension}}
     }
 @end

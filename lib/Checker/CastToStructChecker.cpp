@@ -13,7 +13,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/Checker/BugReporter/BugType.h"
 #include "clang/Checker/PathSensitive/CheckerVisitor.h"
 #include "GRExprEngineInternalChecks.h"
 
@@ -51,7 +50,7 @@ void CastToStructChecker::PreVisitCastExpr(CheckerContext &C,
   QualType OrigPointeeTy = OrigPTy->getPointeeType();
   QualType ToPointeeTy = ToPTy->getPointeeType();
 
-  if (!ToPointeeTy->isStructureOrClassType())
+  if (!ToPointeeTy->isStructureType())
     return;
 
   // We allow cast from void*.

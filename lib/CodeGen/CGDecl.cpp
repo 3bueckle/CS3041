@@ -31,44 +31,11 @@ using namespace CodeGen;
 
 void CodeGenFunction::EmitDecl(const Decl &D) {
   switch (D.getKind()) {
-  case Decl::TranslationUnit:
-  case Decl::Namespace:
-  case Decl::UnresolvedUsingTypename:
-  case Decl::ClassTemplateSpecialization:
-  case Decl::ClassTemplatePartialSpecialization:
-  case Decl::TemplateTypeParm:
-  case Decl::UnresolvedUsingValue:
-    case Decl::NonTypeTemplateParm:
-  case Decl::CXXMethod:
-  case Decl::CXXConstructor:
-  case Decl::CXXDestructor:
-  case Decl::CXXConversion:
-  case Decl::Field:
-  case Decl::ObjCIvar:
-  case Decl::ObjCAtDefsField:      
+  default:
+    CGM.ErrorUnsupported(&D, "decl");
+    return;
   case Decl::ParmVar:
-  case Decl::ImplicitParam:
-  case Decl::ClassTemplate:
-  case Decl::FunctionTemplate:
-  case Decl::TemplateTemplateParm:
-  case Decl::ObjCMethod:
-  case Decl::ObjCCategory:
-  case Decl::ObjCProtocol:
-  case Decl::ObjCInterface:
-  case Decl::ObjCCategoryImpl:
-  case Decl::ObjCImplementation:
-  case Decl::ObjCProperty:
-  case Decl::ObjCCompatibleAlias:
-  case Decl::LinkageSpec:
-  case Decl::ObjCPropertyImpl:
-  case Decl::ObjCClass:
-  case Decl::ObjCForwardProtocol:
-  case Decl::FileScopeAsm:
-  case Decl::Friend:
-  case Decl::FriendTemplate:
-  case Decl::Block:
-    
-    assert(0 && "Declaration not should not be in declstmts!");
+    assert(0 && "Parmdecls should not be in declstmts!");
   case Decl::Function:  // void X();
   case Decl::Record:    // struct/union/class X;
   case Decl::Enum:      // enum X;
@@ -77,7 +44,6 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
   case Decl::Using:          // using X; [C++]
   case Decl::UsingShadow:
   case Decl::UsingDirective: // using namespace X; [C++]
-  case Decl::NamespaceAlias:
   case Decl::StaticAssert: // static_assert(X, ""); [C++0x]
     // None of these decls require codegen support.
     return;
@@ -137,18 +103,13 @@ void CodeGenFunction::EmitBlockVarDecl(const VarDecl &D) {
 static std::string GetStaticDeclName(CodeGenFunction &CGF, const VarDecl &D,
                                      const char *Separator) {
   CodeGenModule &CGM = CGF.CGM;
-  if (CGF.getContext().getLangOptions().CPlusPlus) {
-    MangleBuffer Name;
-    CGM.getMangledName(Name, &D);
-    return Name.getString().str();
-  }
+  if (CGF.getContext().getLangOptions().CPlusPlus)
+    return CGM.getMangledName(&D);
   
   std::string ContextName;
-  if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(CGF.CurFuncDecl)) {
-    MangleBuffer Name;
-    CGM.getMangledName(Name, FD);
-    ContextName = Name.getString().str();
-  } else if (isa<ObjCMethodDecl>(CGF.CurFuncDecl))
+  if (const FunctionDecl *FD = dyn_cast<FunctionDecl>(CGF.CurFuncDecl))
+    ContextName = CGM.getMangledName(FD);
+  else if (isa<ObjCMethodDecl>(CGF.CurFuncDecl))
     ContextName = CGF.CurFn->getName();
   else
     // FIXME: What about in a block??
@@ -239,8 +200,6 @@ void CodeGenFunction::EmitStaticBlockVarDecl(const VarDecl &D,
   // Store into LocalDeclMap before generating initializer to handle
   // circular references.
   DMEntry = GV;
-  if (getContext().getLangOptions().CPlusPlus)
-    CGM.setStaticLocalDeclAddress(&D, GV);
 
   // Make sure to evaluate VLA bounds now so that we have them for later.
   //
@@ -251,8 +210,6 @@ void CodeGenFunction::EmitStaticBlockVarDecl(const VarDecl &D,
   // If this value has an initializer, emit it.
   if (D.getInit())
     GV = AddInitializerToGlobalBlockVarDecl(D, GV);
-
-  GV->setAlignment(getContext().getDeclAlign(&D).getQuantity());
 
   // FIXME: Merge attribute handling.
   if (const AnnotateAttr *AA = D.getAttr<AnnotateAttr>()) {
@@ -514,6 +471,68 @@ void CodeGenFunction::EmitLocalBlockVarDecl(const VarDecl &D) {
       EnsureInsertPoint();
   }
 
+  if (Init) {
+    llvm::Value *Loc = DeclPtr;
+    if (isByRef)
+      Loc = Builder.CreateStructGEP(DeclPtr, getByRefValueLLVMField(&D), 
+                                    D.getNameAsString());
+
+    bool isVolatile =
+      getContext().getCanonicalType(D.getType()).isVolatileQualified();
+    
+    // If the initializer was a simple constant initializer, we can optimize it
+    // in various ways.
+    if (IsSimpleConstantInitializer) {
+      llvm::Constant *Init = CGM.EmitConstantExpr(D.getInit(),D.getType(),this);
+      assert(Init != 0 && "Wasn't a simple constant init?");
+      
+      llvm::Value *AlignVal = 
+        llvm::ConstantInt::get(llvm::Type::getInt32Ty(VMContext), 
+            Align.getQuantity());
+      const llvm::Type *IntPtr =
+        llvm::IntegerType::get(VMContext, LLVMPointerWidth);
+      llvm::Value *SizeVal =
+        llvm::ConstantInt::get(IntPtr, 
+            getContext().getTypeSizeInChars(Ty).getQuantity());
+
+      const llvm::Type *BP = llvm::Type::getInt8PtrTy(VMContext);
+      if (Loc->getType() != BP)
+        Loc = Builder.CreateBitCast(Loc, BP, "tmp");
+      
+      // If the initializer is all zeros, codegen with memset.
+      if (isa<llvm::ConstantAggregateZero>(Init)) {
+        llvm::Value *Zero =
+          llvm::ConstantInt::get(llvm::Type::getInt8Ty(VMContext), 0);
+        Builder.CreateCall4(CGM.getMemSetFn(), Loc, Zero, SizeVal, AlignVal);
+      } else {
+        // Otherwise, create a temporary global with the initializer then 
+        // memcpy from the global to the alloca.
+        std::string Name = GetStaticDeclName(*this, D, ".");
+        llvm::GlobalVariable *GV =
+          new llvm::GlobalVariable(CGM.getModule(), Init->getType(), true,
+                                   llvm::GlobalValue::InternalLinkage,
+                                   Init, Name, 0, false, 0);
+        GV->setAlignment(Align.getQuantity());
+
+        llvm::Value *SrcPtr = GV;
+        if (SrcPtr->getType() != BP)
+          SrcPtr = Builder.CreateBitCast(SrcPtr, BP, "tmp");
+        
+        Builder.CreateCall4(CGM.getMemCpyFn(), Loc, SrcPtr, SizeVal, AlignVal);
+      }
+    } else if (Ty->isReferenceType()) {
+      RValue RV = EmitReferenceBindingToExpr(Init, /*IsInitializer=*/true);
+      EmitStoreOfScalar(RV.getScalarVal(), Loc, false, Ty);
+    } else if (!hasAggregateLLVMType(Init->getType())) {
+      llvm::Value *V = EmitScalarExpr(Init);
+      EmitStoreOfScalar(V, Loc, isVolatile, D.getType());
+    } else if (Init->getType()->isAnyComplexType()) {
+      EmitComplexExprIntoAddr(Init, Loc, isVolatile);
+    } else {
+      EmitAggExpr(Init, Loc, isVolatile);
+    }
+  }
+
   if (isByRef) {
     const llvm::PointerType *PtrToInt8Ty = llvm::Type::getInt8PtrTy(VMContext);
 
@@ -572,74 +591,6 @@ void CodeGenFunction::EmitLocalBlockVarDecl(const VarDecl &D) {
     }
   }
 
-  if (Init) {
-    llvm::Value *Loc = DeclPtr;
-    if (isByRef)
-      Loc = Builder.CreateStructGEP(DeclPtr, getByRefValueLLVMField(&D), 
-                                    D.getNameAsString());
-    
-    bool isVolatile =
-    getContext().getCanonicalType(D.getType()).isVolatileQualified();
-    
-    // If the initializer was a simple constant initializer, we can optimize it
-    // in various ways.
-    if (IsSimpleConstantInitializer) {
-      llvm::Constant *Init = CGM.EmitConstantExpr(D.getInit(),D.getType(),this);
-      assert(Init != 0 && "Wasn't a simple constant init?");
-      
-      llvm::Value *AlignVal = 
-      llvm::ConstantInt::get(llvm::Type::getInt32Ty(VMContext), 
-                             Align.getQuantity());
-      const llvm::Type *IntPtr =
-      llvm::IntegerType::get(VMContext, LLVMPointerWidth);
-      llvm::Value *SizeVal =
-      llvm::ConstantInt::get(IntPtr, 
-                             getContext().getTypeSizeInChars(Ty).getQuantity());
-      
-      const llvm::Type *BP = llvm::Type::getInt8PtrTy(VMContext);
-      if (Loc->getType() != BP)
-        Loc = Builder.CreateBitCast(Loc, BP, "tmp");
-      
-      llvm::Value *NotVolatile =
-        llvm::ConstantInt::get(llvm::Type::getInt1Ty(VMContext), 0);
-
-      // If the initializer is all zeros, codegen with memset.
-      if (isa<llvm::ConstantAggregateZero>(Init)) {
-        llvm::Value *Zero =
-          llvm::ConstantInt::get(llvm::Type::getInt8Ty(VMContext), 0);
-        Builder.CreateCall5(CGM.getMemSetFn(Loc->getType(), SizeVal->getType()),
-                            Loc, Zero, SizeVal, AlignVal, NotVolatile);
-      } else {
-        // Otherwise, create a temporary global with the initializer then 
-        // memcpy from the global to the alloca.
-        std::string Name = GetStaticDeclName(*this, D, ".");
-        llvm::GlobalVariable *GV =
-        new llvm::GlobalVariable(CGM.getModule(), Init->getType(), true,
-                                 llvm::GlobalValue::InternalLinkage,
-                                 Init, Name, 0, false, 0);
-        GV->setAlignment(Align.getQuantity());
-        
-        llvm::Value *SrcPtr = GV;
-        if (SrcPtr->getType() != BP)
-          SrcPtr = Builder.CreateBitCast(SrcPtr, BP, "tmp");
-
-        Builder.CreateCall5(CGM.getMemCpyFn(Loc->getType(), SrcPtr->getType(),
-                                            SizeVal->getType()),
-                            Loc, SrcPtr, SizeVal, AlignVal, NotVolatile);
-      }
-    } else if (Ty->isReferenceType()) {
-      RValue RV = EmitReferenceBindingToExpr(Init, /*IsInitializer=*/true);
-      EmitStoreOfScalar(RV.getScalarVal(), Loc, false, Ty);
-    } else if (!hasAggregateLLVMType(Init->getType())) {
-      llvm::Value *V = EmitScalarExpr(Init);
-      EmitStoreOfScalar(V, Loc, isVolatile, D.getType());
-    } else if (Init->getType()->isAnyComplexType()) {
-      EmitComplexExprIntoAddr(Init, Loc, isVolatile);
-    } else {
-      EmitAggExpr(Init, Loc, isVolatile);
-    }
-  }
-  
   // Handle CXX destruction of variables.
   QualType DtorTy(Ty);
   while (const ArrayType *Array = getContext().getAsArrayType(DtorTy))

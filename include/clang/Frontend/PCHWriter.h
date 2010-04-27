@@ -33,7 +33,6 @@ namespace clang {
 
 class ASTContext;
 class LabelStmt;
-class MacroDefinition;
 class MemorizeStatCalls;
 class Preprocessor;
 class Sema;
@@ -161,14 +160,6 @@ private:
   /// defined.
   llvm::DenseMap<const IdentifierInfo *, uint64_t> MacroOffsets;
 
-  /// \brief Mapping from macro definitions (as they occur in the preprocessing
-  /// record) to the index into the macro definitions table.
-  llvm::DenseMap<const MacroDefinition *, pch::IdentID> MacroDefinitions;
-  
-  /// \brief Mapping from the macro definition indices in \c MacroDefinitions
-  /// to the corresponding offsets within the preprocessor block.
-  std::vector<uint32_t> MacroDefinitionOffsets;
-  
   /// \brief Declarations encountered that might be external
   /// definitions.
   ///
@@ -215,6 +206,7 @@ private:
                                const Preprocessor &PP,
                                const char* isysroot);
   void WritePreprocessor(const Preprocessor &PP);
+  void WriteComments(ASTContext &Context);
   void WriteType(QualType T);
   uint64_t WriteDeclContextLexicalBlock(ASTContext &Context, DeclContext *DC);
   uint64_t WriteDeclContextVisibleBlock(ASTContext &Context, DeclContext *DC);
@@ -242,9 +234,6 @@ public:
   ///
   /// \param isysroot if non-NULL, write a relocatable PCH file whose headers
   /// are relative to the given system root.
-  ///
-  /// \param PPRec Record of the preprocessing actions that occurred while
-  /// preprocessing this file, e.g., macro instantiations
   void WritePCH(Sema &SemaRef, MemorizeStatCalls *StatCalls,
                 const char* isysroot);
 
@@ -280,10 +269,6 @@ public:
     return MacroOffsets[II];
   }
 
-  /// \brief Retrieve the ID number corresponding to the given macro 
-  /// definition.
-  pch::IdentID getMacroDefinitionID(MacroDefinition *MD);
-  
   /// \brief Emit a reference to a type.
   void AddTypeRef(QualType T, RecordData &Record);
 

@@ -87,7 +87,7 @@ void ASTLocation::print(llvm::raw_ostream &OS) const {
   case N_Decl:
     OS << "[Decl: " << AsDecl()->getDeclKindName() << " ";
     if (const NamedDecl *ND = dyn_cast<NamedDecl>(AsDecl()))
-      OS << ND;
+      OS << ND->getNameAsString();
     break;
 
   case N_Stmt:
@@ -97,7 +97,7 @@ void ASTLocation::print(llvm::raw_ostream &OS) const {
     
   case N_NamedRef:
     OS << "[NamedRef: " << AsNamedRef().ND->getDeclKindName() << " ";
-    OS << AsNamedRef().ND;
+    OS << AsNamedRef().ND->getNameAsString();
     break;
     
   case N_Type: {

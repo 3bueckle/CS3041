@@ -45,9 +45,8 @@ bool FrontendAction::BeginSourceFile(CompilerInstance &CI,
            "Attempt to pass AST file to preprocessor only action!");
     assert(hasASTSupport() && "This action does not have AST support!");
 
-    llvm::IntrusiveRefCntPtr<Diagnostic> Diags(&CI.getDiagnostics());
     std::string Error;
-    ASTUnit *AST = ASTUnit::LoadFromPCHFile(Filename, Diags);
+    ASTUnit *AST = ASTUnit::LoadFromPCHFile(Filename, CI.getDiagnostics());
     if (!AST)
       goto failure;
 
@@ -136,7 +135,7 @@ void FrontendAction::Execute() {
     // simplest way to reuse the logic in ParseAST.
     const char *EmptyStr = "";
     llvm::MemoryBuffer *SB =
-      llvm::MemoryBuffer::getMemBuffer(EmptyStr, "<dummy input>");
+      llvm::MemoryBuffer::getMemBuffer(EmptyStr, EmptyStr, "<dummy input>");
     CI.getSourceManager().createMainFileIDForMemBuffer(SB);
   } else {
     if (!CI.InitializeSourceManager(getCurrentFile()))
@@ -169,10 +168,6 @@ void FrontendAction::EndSourceFile() {
     if (!isCurrentFileAST())
       CI.setASTContext(0);
   }
-
-  // Inform the preprocessor we are done.
-  if (CI.hasPreprocessor())
-    CI.getPreprocessor().EndSourceFile();
 
   if (CI.getFrontendOpts().ShowStats) {
     llvm::errs() << "\nSTATISTICS FOR '" << getCurrentFile() << "':\n";

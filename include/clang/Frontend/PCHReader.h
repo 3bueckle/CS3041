@@ -21,7 +21,6 @@
 #include "clang/AST/Type.h"
 #include "clang/AST/TemplateBase.h"
 #include "clang/Lex/ExternalPreprocessorSource.h"
-#include "clang/Lex/PreprocessingRecord.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/SourceManager.h"
@@ -54,7 +53,6 @@ class Decl;
 class DeclContext;
 class GotoStmt;
 class LabelStmt;
-class MacroDefinition;
 class NamedDecl;
 class Preprocessor;
 class Sema;
@@ -108,7 +106,7 @@ public:
   }
 
   /// \brief Receives a HeaderFileInfo entry.
-  virtual void ReadHeaderFileInfo(const HeaderFileInfo &HFI, unsigned ID) {}
+  virtual void ReadHeaderFileInfo(const HeaderFileInfo &HFI) {}
 
   /// \brief Receives __COUNTER__ value.
   virtual void ReadCounter(unsigned Value) {}
@@ -132,11 +130,8 @@ public:
                                     FileID PCHBufferID,
                                     llvm::StringRef OriginalFileName,
                                     std::string &SuggestedPredefines);
-  virtual void ReadHeaderFileInfo(const HeaderFileInfo &HFI, unsigned ID);
+  virtual void ReadHeaderFileInfo(const HeaderFileInfo &HFI);
   virtual void ReadCounter(unsigned Value);
-
-private:
-  void Error(const char *Msg);
 };
 
 /// \brief Reads a precompiled head containing the contents of a
@@ -153,14 +148,13 @@ private:
 /// actually required will be de-serialized.
 class PCHReader
   : public ExternalPreprocessorSource,
-    public ExternalPreprocessingRecordSource,
     public ExternalSemaSource,
     public IdentifierInfoLookup,
     public ExternalIdentifierLookup,
     public ExternalSLocEntrySource {
 public:
   enum PCHReadResult { Success, Failure, IgnorePCH };
-  friend class PCHValidator;
+
 private:
   /// \ brief The receiver of some callbacks invoked by PCHReader.
   llvm::OwningPtr<PCHReaderListener> Listener;
@@ -299,17 +293,12 @@ private:
   /// been loaded.
   llvm::SmallVector<Selector, 16> SelectorsLoaded;
 
-  /// \brief Offsets of all of the macro definitions in the preprocessing
-  /// record in the PCH file.
-  const uint32_t *MacroDefinitionOffsets;
-      
-  /// \brief The macro definitions we have already loaded.
-  llvm::SmallVector<MacroDefinition *, 16> MacroDefinitionsLoaded;
-      
-  /// \brief The number of preallocated preprocessing entities in the
-  /// preprocessing record.
-  unsigned NumPreallocatedPreprocessingEntities;
-      
+  /// \brief A sorted array of source ranges containing comments.
+  SourceRange *Comments;
+
+  /// \brief The number of source ranges in the Comments array.
+  unsigned NumComments;
+
   /// \brief The set of external definitions stored in the the PCH
   /// file.
   llvm::SmallVector<uint64_t, 16> ExternalDefinitions;
@@ -436,7 +425,7 @@ private:
   std::deque<PendingIdentifierInfo> PendingIdentifierInfos;
 
   /// \brief FIXME: document!
-  llvm::SmallVector<uint64_t, 16> SpecialTypes;
+  llvm::SmallVector<uint64_t, 4> SpecialTypes;
 
   /// \brief Contains declarations and definitions that will be
   /// "interesting" to the ASTConsumer, when we get that AST consumer.
@@ -483,7 +472,7 @@ private:
   ///
   /// This routine should only be used for fatal errors that have to
   /// do with non-routine failures (e.g., corrupted PCH file).
-  void Error(const char *Msg);
+  bool Error(const char *Msg);
 
   PCHReader(const PCHReader&); // do not implement
   PCHReader &operator=(const PCHReader &); // do not implement
@@ -535,7 +524,9 @@ public:
   }
 
   /// \brief Set the Preprocessor to use.
-  void setPreprocessor(Preprocessor &pp);
+  void setPreprocessor(Preprocessor &pp) {
+    PP = &pp;
+  }
 
   /// \brief Sets and initializes the given Context.
   void InitializeContext(ASTContext &Context);
@@ -556,9 +547,14 @@ public:
   /// which contains a (typically-empty) subset of the predefines
   /// build prior to including the precompiled header.
   const std::string &getSuggestedPredefines() { return SuggestedPredefines; }
-      
-  /// \brief Read preprocessed entities into the 
-  virtual void ReadPreprocessedEntities();
+
+  /// \brief Reads the source ranges that correspond to comments from
+  /// an external AST source.
+  ///
+  /// \param Comments the contents of this vector will be
+  /// replaced with the sorted set of source ranges corresponding to
+  /// comments in the source code.
+  virtual void ReadComments(std::vector<SourceRange> &Comments);
 
   /// \brief Reads a TemplateArgumentLocInfo appropriate for the
   /// given TemplateArgument kind.
@@ -688,9 +684,6 @@ public:
 
   Selector DecodeSelector(unsigned Idx);
 
-  virtual Selector GetSelector(uint32_t ID);
-  virtual uint32_t GetNumKnownSelectors();
-
   Selector GetSelector(const RecordData &Record, unsigned &Idx) {
     return DecodeSelector(Record[Idx++]);
   }
@@ -731,9 +724,6 @@ public:
   /// \brief Read the set of macros defined by this external macro source.
   virtual void ReadDefinedMacros();
 
-  /// \brief Retrieve the macro definition with the given ID.
-  MacroDefinition *getMacroDefinition(pch::IdentID ID);
-      
   /// \brief Retrieve the AST context that this PCH reader
   /// supplements.
   ASTContext *getContext() { return Context; }
@@ -799,10 +789,6 @@ private:
   llvm::BitstreamCursor &Cursor;
   uint64_t Offset;
 };
-
-inline void PCHValidator::Error(const char *Msg) {
-  Reader.Error(Msg);
-}
 
 } // end namespace clang
 

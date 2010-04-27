@@ -71,11 +71,7 @@ void Preprocessor::ReadMacroName(Token &MacroNameTok, char isDefineUndef) {
 
   IdentifierInfo *II = MacroNameTok.getIdentifierInfo();
   if (II == 0) {
-    bool Invalid = false;
-    std::string Spelling = getSpelling(MacroNameTok, &Invalid);
-    if (Invalid)
-      return;
-    
+    std::string Spelling = getSpelling(MacroNameTok);
     const IdentifierInfo &Info = Identifiers.get(Spelling);
     if (Info.isCPlusPlusOperatorKeyword())
       // C++ 2.5p2: Alternative tokens behave the same as its primary token
@@ -127,10 +123,10 @@ void Preprocessor::CheckEndOfDirective(const char *DirType, bool EnableMacros) {
     // Add a fixit in GNU/C99/C++ mode.  Don't offer a fixit for strict-C89,
     // because it is more trouble than it is worth to insert /**/ and check that
     // there is no /**/ in the range also.
-    FixItHint Hint;
+    CodeModificationHint FixItHint;
     if (Features.GNUMode || Features.C99 || Features.CPlusPlus)
-      Hint = FixItHint::CreateInsertion(Tmp.getLocation(),"//");
-    Diag(Tmp, diag::ext_pp_extra_tokens_at_eol) << DirType << Hint;
+      FixItHint = CodeModificationHint::CreateInsertion(Tmp.getLocation(),"//");
+    Diag(Tmp, diag::ext_pp_extra_tokens_at_eol) << DirType << FixItHint;
     DiscardUntilEndOfDirective();
   }
 }
@@ -208,12 +204,7 @@ void Preprocessor::SkipExcludedConditionalBlock(SourceLocation IfTokenLoc,
     // to spell an i/e in a strange way that is another letter.  Skipping this
     // allows us to avoid looking up the identifier info for #define/#undef and
     // other common directives.
-    bool Invalid = false;
-    const char *RawCharData = SourceMgr.getCharacterData(Tok.getLocation(),
-                                                         &Invalid);
-    if (Invalid)
-      return;
-    
+    const char *RawCharData = SourceMgr.getCharacterData(Tok.getLocation());
     char FirstChar = RawCharData[0];
     if (FirstChar >= 'a' && FirstChar <= 'z' &&
         FirstChar != 'i' && FirstChar != 'e') {
@@ -480,7 +471,7 @@ void Preprocessor::HandleDirective(Token &Result) {
   CurPPLexer->ParsingPreprocessorDirective = true;
 
   ++NumDirectives;
-
+  
   // We are about to read a token.  For the multiple-include optimization FA to
   // work, we have to remember if we had read any tokens *before* this
   // pp-directive.
@@ -623,11 +614,8 @@ static bool GetLineValue(Token &DigitTok, unsigned &Val,
   llvm::SmallString<64> IntegerBuffer;
   IntegerBuffer.resize(DigitTok.getLength());
   const char *DigitTokBegin = &IntegerBuffer[0];
-  bool Invalid = false;
-  unsigned ActualLength = PP.getSpelling(DigitTok, DigitTokBegin, &Invalid);
-  if (Invalid)
-    return true;
-  
+  unsigned ActualLength = PP.getSpelling(DigitTok, DigitTokBegin);
+
   // Verify that we have a simple digit-sequence, and compute the value.  This
   // is always a simple digit string computed in decimal, so we do this manually
   // here.
@@ -716,8 +704,7 @@ void Preprocessor::HandleLineDirective(Token &Tok) {
   SourceMgr.AddLineNote(DigitTok.getLocation(), LineNo, FilenameID);
 
   if (Callbacks)
-    Callbacks->FileChanged(CurPPLexer->getSourceLocation(),
-                           PPCallbacks::RenameFile,
+    Callbacks->FileChanged(DigitTok.getLocation(), PPCallbacks::RenameFile,
                            SrcMgr::C_User);
 }
 
@@ -866,7 +853,7 @@ void Preprocessor::HandleDigitDirective(Token &DigitTok) {
     else if (IsSystemHeader)
       FileKind = SrcMgr::C_System;
 
-    Callbacks->FileChanged(CurPPLexer->getSourceLocation(), Reason, FileKind);
+    Callbacks->FileChanged(DigitTok.getLocation(), Reason, FileKind);
   }
 }
 
@@ -913,12 +900,8 @@ void Preprocessor::HandleIdentSCCSDirective(Token &Tok) {
   // Verify that there is nothing after the string, other than EOM.
   CheckEndOfDirective("ident");
 
-  if (Callbacks) {
-    bool Invalid = false;
-    std::string Str = getSpelling(StrTok, &Invalid);
-    if (!Invalid)
-      Callbacks->Ident(Tok.getLocation(), Str);
-  }
+  if (Callbacks)
+    Callbacks->Ident(Tok.getLocation(), getSpelling(StrTok));
 }
 
 //===----------------------------------------------------------------------===//
@@ -981,7 +964,7 @@ bool Preprocessor::GetIncludeFilenameSpelling(SourceLocation Loc,
 /// false if the > was found, otherwise it returns true if it finds and consumes
 /// the EOM marker.
 bool Preprocessor::ConcatenateIncludeName(
-  llvm::SmallString<128> &FilenameBuffer) {
+  llvm::SmallVector<char, 128> &FilenameBuffer) {
   Token CurTok;
 
   Lex(CurTok);
@@ -1059,7 +1042,7 @@ void Preprocessor::HandleIncludeDirective(Token &IncludeTok,
     return;
   }
 
-  bool isAngled =
+  bool isAngled = 
     GetIncludeFilenameSpelling(FilenameTok.getLocation(), Filename);
   // If GetIncludeFilenameSpelling set the start ptr to null, there was an
   // error.
@@ -1087,6 +1070,11 @@ void Preprocessor::HandleIncludeDirective(Token &IncludeTok,
     Diag(FilenameTok, diag::err_pp_file_not_found) << Filename;
     return;
   }
+  
+  // Ask HeaderInfo if we should enter this #include file.  If not, #including
+  // this file will have no effect.
+  if (!HeaderInfo.ShouldEnterIncludeFile(File, isImport))
+    return;
 
   // The #included file will be considered to be a system header if either it is
   // in a system include directory, or if the #includer is a system include
@@ -1094,14 +1082,6 @@ void Preprocessor::HandleIncludeDirective(Token &IncludeTok,
   SrcMgr::CharacteristicKind FileCharacter =
     std::max(HeaderInfo.getFileDirFlavor(File),
              SourceMgr.getFileCharacteristic(FilenameTok.getLocation()));
-
-  // Ask HeaderInfo if we should enter this #include file.  If not, #including
-  // this file will have no effect.
-  if (!HeaderInfo.ShouldEnterIncludeFile(File, isImport)) {
-    if (Callbacks)
-      Callbacks->FileSkipped(*File, FilenameTok, FileCharacter);
-    return;
-  }
 
   // Look up the file, create a File ID for it.
   FileID FID = SourceMgr.createFileID(File, FilenameTok.getLocation(),
@@ -1112,7 +1092,10 @@ void Preprocessor::HandleIncludeDirective(Token &IncludeTok,
   }
 
   // Finally, if all is good, enter the new file!
-  EnterSourceFile(FID, CurDir, FilenameTok.getLocation());
+  std::string ErrorStr;
+  if (EnterSourceFile(FID, CurDir, ErrorStr))
+    Diag(FilenameTok, diag::err_pp_error_opening_file)
+      << std::string(SourceMgr.getFileEntryForID(FID)->getName()) << ErrorStr;
 }
 
 /// HandleIncludeNextDirective - Implements #include_next.
@@ -1529,7 +1512,7 @@ void Preprocessor::HandleIfdefDirective(Token &Result, bool isIfndef,
 
   IdentifierInfo *MII = MacroNameTok.getIdentifierInfo();
   MacroInfo *MI = getMacroInfo(MII);
-
+  
   if (CurPPLexer->getConditionalStackDepth() == 0) {
     // If the start of a top-level #ifdef and if the macro is not defined,
     // inform MIOpt that this might be the start of a proper include guard.
@@ -1667,3 +1650,4 @@ void Preprocessor::HandleElifDirective(Token &ElifToken) {
   return SkipExcludedConditionalBlock(CI.IfLoc, /*Foundnonskip*/true,
                                       /*FoundElse*/CI.FoundElse);
 }
+

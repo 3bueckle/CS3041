@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s
+// RUN: %clang_cc1 -fsyntax-only -verify %s -faccess-control
 
 struct A { };
 
@@ -7,5 +7,5 @@ void f() {
   
   B b;
   
-  A *a = &b; // expected-error{{cannot cast 'B' to its private base class 'A'}}
+  A *a = &b; // expected-error{{cannot cast 'struct B' to its private base class 'struct A'}}
 }

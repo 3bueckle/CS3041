@@ -110,7 +110,7 @@ AttributeList *Parser::ParseGNUAttributes(SourceLocation *EndLoc) {
       IdentifierInfo *AttrName = Tok.getIdentifierInfo();
       SourceLocation AttrNameLoc = ConsumeToken();
 
-      // check if we have a "parameterized" attribute
+      // check if we have a "paramterized" attribute
       if (Tok.is(tok::l_paren)) {
         ConsumeParen(); // ignore the left paren loc for now
 
@@ -334,7 +334,7 @@ Parser::DeclGroupPtrTy Parser::ParseDeclaration(unsigned Context,
     SingleDecl = ParseStaticAssertDeclaration(DeclEnd);
     break;
   default:
-    return ParseSimpleDeclaration(Context, DeclEnd, Attr.AttrList, true);
+    return ParseSimpleDeclaration(Context, DeclEnd, Attr.AttrList);
   }
   
   // This routine returns a DeclGroup, if the thing we parsed only contains a
@@ -348,11 +348,10 @@ Parser::DeclGroupPtrTy Parser::ParseDeclaration(unsigned Context,
 /// [OMP]   threadprivate-directive                              [TODO]
 ///
 /// If RequireSemi is false, this does not check for a ';' at the end of the
-/// declaration.  If it is true, it checks for and eats it.
+/// declaration.
 Parser::DeclGroupPtrTy Parser::ParseSimpleDeclaration(unsigned Context,
                                                       SourceLocation &DeclEnd,
-                                                      AttributeList *Attr,
-                                                      bool RequireSemi) {
+                                                      AttributeList *Attr) {
   // Parse the common declaration-specifiers piece.
   ParsingDeclSpec DS(*this);
   if (Attr)
@@ -363,13 +362,15 @@ Parser::DeclGroupPtrTy Parser::ParseSimpleDeclaration(unsigned Context,
   // C99 6.7.2.3p6: Handle "struct-or-union identifier;", "enum { X };"
   // declaration-specifiers init-declarator-list[opt] ';'
   if (Tok.is(tok::semi)) {
-    if (RequireSemi) ConsumeToken();
+    ConsumeToken();
     DeclPtrTy TheDecl = Actions.ParsedFreeStandingDeclSpec(CurScope, DS);
     DS.complete(TheDecl);
     return Actions.ConvertDeclToDeclGroup(TheDecl);
   }
 
-  return ParseDeclGroup(DS, Context, /*FunctionDefs=*/ false, &DeclEnd);
+  DeclGroupPtrTy DG = ParseDeclGroup(DS, Context, /*FunctionDefs=*/ false,
+                                     &DeclEnd);
+  return DG;
 }
 
 /// ParseDeclGroup - Having concluded that this is either a function
@@ -733,7 +734,7 @@ bool Parser::ParseImplicitInt(DeclSpec &DS, CXXScopeSpec *SS,
     if (TagName) {
       Diag(Loc, diag::err_use_of_tag_name_without_tag)
         << Tok.getIdentifierInfo() << TagName << getLang().CPlusPlus
-        << FixItHint::CreateInsertion(Tok.getLocation(),TagName);
+        << CodeModificationHint::CreateInsertion(Tok.getLocation(),TagName);
 
       // Parse this as a tag as if the missing tag were present.
       if (TagKind == tok::kw_enum)
@@ -904,9 +905,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
         // reinforced by the NAD status of core issue 635. 
         TemplateIdAnnotation *TemplateId
           = static_cast<TemplateIdAnnotation *>(Next.getAnnotationValue());
-        if ((DSContext == DSC_top_level ||
-             (DSContext == DSC_class && DS.isFriendSpecified())) &&
-            TemplateId->Name &&
+        if (DSContext == DSC_top_level && TemplateId->Name &&
             Actions.isCurrentClassName(*TemplateId->Name, CurScope, &SS)) {
           if (isConstructorDeclarator()) {
             // The user meant this to be an out-of-line constructor
@@ -951,8 +950,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
 
       // If we're in a context where the identifier could be a class name,
       // check whether this is a constructor declaration.
-      if ((DSContext == DSC_top_level ||
-           (DSContext == DSC_class && DS.isFriendSpecified())) &&
+      if (DSContext == DSC_top_level &&
           Actions.isCurrentClassName(*Next.getIdentifierInfo(), CurScope, 
                                      &SS)) {
         if (isConstructorDeclarator())
@@ -1001,10 +999,6 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
                                        DiagID, Tok.getAnnotationValue());
       else
         DS.SetTypeSpecError();
-      
-      if (isInvalid)
-        break;
-
       DS.SetRangeEnd(Tok.getAnnotationEndLoc());
       ConsumeToken(); // The typename
 
@@ -1366,7 +1360,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
         DS.SetRangeEnd(EndProtoLoc);
 
         Diag(Loc, diag::warn_objc_protocol_qualifier_missing_id)
-          << FixItHint::CreateInsertion(Loc, "id")
+          << CodeModificationHint::CreateInsertion(Loc, "id")
           << SourceRange(Loc, EndProtoLoc);
         // Need to support trailing type qualifiers (e.g. "id<p> const").
         // If a type specifier follows, it will be diagnosed elsewhere.
@@ -1437,11 +1431,6 @@ bool Parser::ParseOptionalTypeSpecifier(DeclSpec &DS, bool& isInvalid,
 
   switch (Tok.getKind()) {
   case tok::identifier:   // foo::bar
-    // If we already have a type specifier, this identifier is not a type.
-    if (DS.getTypeSpecType() != DeclSpec::TST_unspecified ||
-        DS.getTypeSpecWidth() != DeclSpec::TSW_unspecified ||
-        DS.getTypeSpecSign() != DeclSpec::TSS_unspecified)
-      return false;
     // Check for need to substitute AltiVec keyword tokens.
     if (TryAltiVecToken(DS, Loc, PrevSpec, DiagID, isInvalid))
       break;
@@ -1767,7 +1756,7 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
     // Check for extraneous top-level semicolon.
     if (Tok.is(tok::semi)) {
       Diag(Tok, diag::ext_extra_struct_semi)
-        << FixItHint::CreateRemoval(Tok.getLocation());
+        << CodeModificationHint::CreateRemoval(Tok.getLocation());
       ConsumeToken();
       continue;
     }
@@ -1934,55 +1923,21 @@ void Parser::ParseEnumSpecifier(SourceLocation StartLoc, DeclSpec &DS,
     TUK = Action::TUK_Reference;
   bool Owned = false;
   bool IsDependent = false;
-  SourceLocation TSTLoc = NameLoc.isValid()? NameLoc : StartLoc;
-  const char *PrevSpec = 0;
-  unsigned DiagID;
   DeclPtrTy TagDecl = Actions.ActOnTag(CurScope, DeclSpec::TST_enum, TUK,
                                        StartLoc, SS, Name, NameLoc, Attr.get(),
                                        AS,
                                        Action::MultiTemplateParamsArg(Actions),
                                        Owned, IsDependent);
-  if (IsDependent) {
-    // This enum has a dependent nested-name-specifier. Handle it as a 
-    // dependent tag.
-    if (!Name) {
-      DS.SetTypeSpecError();
-      Diag(Tok, diag::err_expected_type_name_after_typename);
-      return;
-    }
-    
-    TypeResult Type = Actions.ActOnDependentTag(CurScope, DeclSpec::TST_enum,
-                                                TUK, SS, Name, StartLoc, 
-                                                NameLoc);
-    if (Type.isInvalid()) {
-      DS.SetTypeSpecError();
-      return;
-    }
-    
-    if (DS.SetTypeSpecType(DeclSpec::TST_typename, TSTLoc, PrevSpec, DiagID,
-                           Type.get(), false))
-      Diag(StartLoc, DiagID) << PrevSpec;
-    
-    return;
-  }
+  assert(!IsDependent && "didn't expect dependent enum");
 
-  if (!TagDecl.get()) {
-    // The action failed to produce an enumeration tag. If this is a 
-    // definition, consume the entire definition.
-    if (Tok.is(tok::l_brace)) {
-      ConsumeBrace();
-      SkipUntil(tok::r_brace);
-    }
-    
-    DS.SetTypeSpecError();
-    return;
-  }
-  
   if (Tok.is(tok::l_brace))
     ParseEnumBody(StartLoc, TagDecl);
 
   // FIXME: The DeclSpec should keep the locations of both the keyword and the
   // name (if there is one).
+  SourceLocation TSTLoc = NameLoc.isValid()? NameLoc : StartLoc;
+  const char *PrevSpec = 0;
+  unsigned DiagID;
   if (DS.SetTypeSpecType(DeclSpec::TST_enum, TSTLoc, PrevSpec, DiagID,
                          TagDecl.getAs<void>(), Owned))
     Diag(StartLoc, DiagID) << PrevSpec;
@@ -2044,7 +1999,7 @@ void Parser::ParseEnumBody(SourceLocation StartLoc, DeclPtrTy EnumDecl) {
         !(getLang().C99 || getLang().CPlusPlus0x))
       Diag(CommaLoc, diag::ext_enumerator_list_comma)
         << getLang().CPlusPlus
-        << FixItHint::CreateRemoval(CommaLoc);
+        << CodeModificationHint::CreateRemoval(CommaLoc);
   }
 
   // Eat the }.
@@ -2469,7 +2424,7 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
     CXXScopeSpec SS;
     ParseOptionalCXXScopeSpecifier(SS, /*ObjectType=*/0, true); // ignore fail
 
-    if (SS.isNotEmpty()) {
+    if (SS.isSet()) {
       if (Tok.isNot(tok::star)) {
         // The scope spec really belongs to the direct-declarator.
         D.getCXXScopeSpec() = SS;
@@ -2625,42 +2580,36 @@ void Parser::ParseDirectDeclarator(Declarator &D) {
 
   if (getLang().CPlusPlus && D.mayHaveIdentifier()) {
     // ParseDeclaratorInternal might already have parsed the scope.
-    if (D.getCXXScopeSpec().isEmpty()) {
+    bool afterCXXScope = D.getCXXScopeSpec().isSet();
+    if (!afterCXXScope) {
       ParseOptionalCXXScopeSpecifier(D.getCXXScopeSpec(), /*ObjectType=*/0,
                                      true);
+      afterCXXScope = D.getCXXScopeSpec().isSet();
     }
 
-    if (D.getCXXScopeSpec().isValid()) {
+    if (afterCXXScope) {
       if (Actions.ShouldEnterDeclaratorScope(CurScope, D.getCXXScopeSpec()))
         // Change the declaration context for name lookup, until this function
         // is exited (and the declarator has been parsed).
         DeclScopeObj.EnterDeclaratorScope();
-    }
-
+    } 
+    
     if (Tok.is(tok::identifier) || Tok.is(tok::kw_operator) ||
         Tok.is(tok::annot_template_id) || Tok.is(tok::tilde)) {
       // We found something that indicates the start of an unqualified-id.
       // Parse that unqualified-id.
-      bool AllowConstructorName;
-      if (D.getDeclSpec().hasTypeSpecifier())
-        AllowConstructorName = false;
-      else if (D.getCXXScopeSpec().isSet())
-        AllowConstructorName =
-          (D.getContext() == Declarator::FileContext ||
-           (D.getContext() == Declarator::MemberContext &&
-            D.getDeclSpec().isFriendSpecified()));
-      else
-        AllowConstructorName = (D.getContext() == Declarator::MemberContext);
-
+      bool AllowConstructorName
+        = ((D.getCXXScopeSpec().isSet() && 
+            D.getContext() == Declarator::FileContext) ||
+           (!D.getCXXScopeSpec().isSet() &&
+            D.getContext() == Declarator::MemberContext)) &&
+        !D.getDeclSpec().hasTypeSpecifier();
       if (ParseUnqualifiedId(D.getCXXScopeSpec(), 
                              /*EnteringContext=*/true, 
                              /*AllowDestructorName=*/true, 
                              AllowConstructorName,
                              /*ObjectType=*/0,
-                             D.getName()) ||
-          // Once we're past the identifier, if the scope was bad, mark the
-          // whole declarator bad.
-          D.getCXXScopeSpec().isInvalid()) {
+                             D.getName())) {
         D.SetIdentifier(0, Tok.getLocation());
         D.setInvalidType(true);
       } else {
@@ -3022,8 +2971,7 @@ void Parser::ParseFunctionDeclarator(SourceLocation LParenLoc, Declarator &D,
           DefArgToks = new CachedTokens;
 
           if (!ConsumeAndStoreUntil(tok::comma, tok::r_paren, *DefArgToks,
-                                    /*StopAtSemi=*/true,
-                                    /*ConsumeFinalToken=*/false)) {
+                                    tok::semi, false)) {
             delete DefArgToks;
             DefArgToks = 0;
             Actions.ActOnParamDefaultArgumentError(Param);
@@ -3061,7 +3009,7 @@ void Parser::ParseFunctionDeclarator(SourceLocation LParenLoc, Declarator &D,
           // We have ellipsis without a preceding ',', which is ill-formed
           // in C. Complain and provide the fix.
           Diag(EllipsisLoc, diag::err_missing_comma_before_ellipsis)
-            << FixItHint::CreateInsertion(EllipsisLoc, ", ");
+            << CodeModificationHint::CreateInsertion(EllipsisLoc, ", ");
         }
       }
       

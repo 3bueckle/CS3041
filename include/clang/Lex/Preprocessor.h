@@ -43,8 +43,7 @@ class ScratchBuffer;
 class TargetInfo;
 class PPCallbacks;
 class DirectoryLookup;
-class PreprocessingRecord;
-  
+
 /// Preprocessor - This object engages in a tight little dance with the lexer to
 /// efficiently preprocess tokens.  Lexers know only about tokens within a
 /// single source file, and don't know anything about preprocessor-level issues
@@ -210,13 +209,6 @@ class Preprocessor {
   unsigned NumCachedTokenLexers;
   TokenLexer *TokenLexerCache[TokenLexerCacheSize];
 
-  /// \brief A record of the macro definitions and instantiations that
-  /// occurred during preprocessing. 
-  ///
-  /// This is an optional side structure that can be enabled with
-  /// \c createPreprocessingRecord() prior to preprocessing.
-  PreprocessingRecord *Record;
-  
 private:  // Cached tokens state.
   typedef llvm::SmallVector<Token, 1> CachedTokensTy;
 
@@ -356,27 +348,15 @@ public:
   /// It is an error to remove a handler that has not been registered.
   void RemoveCommentHandler(CommentHandler *Handler);
 
-  /// \brief Retrieve the preprocessing record, or NULL if there is no
-  /// preprocessing record.
-  PreprocessingRecord *getPreprocessingRecord() const { return Record; }
-  
-  /// \brief Create a new preprocessing record, which will keep track of 
-  /// all macro expansions, macro definitions, etc.
-  void createPreprocessingRecord();
-  
   /// EnterMainSourceFile - Enter the specified FileID as the main source file,
   /// which implicitly adds the builtin defines etc.
   void EnterMainSourceFile();
 
-  /// EndSourceFile - Inform the preprocessor callbacks that processing is
-  /// complete.
-  void EndSourceFile();
-
   /// EnterSourceFile - Add a source file to the top of the include stack and
-  /// start lexing tokens from it instead of the current buffer.  Emit an error
-  /// and don't enter the file on error.
-  void EnterSourceFile(FileID CurFileID, const DirectoryLookup *Dir,
-                       SourceLocation Loc);
+  /// start lexing tokens from it instead of the current buffer.  Return true
+  /// and fill in ErrorStr with the error information on failure.
+  bool EnterSourceFile(FileID CurFileID, const DirectoryLookup *Dir,
+                       std::string &ErrorStr);
 
   /// EnterMacro - Add a Macro to the top of the include stack and start lexing
   /// tokens from it instead of the current buffer.  Args specifies the
@@ -567,9 +547,7 @@ public:
   /// after trigraph expansion and escaped-newline folding.  In particular, this
   /// wants to get the true, uncanonicalized, spelling of things like digraphs
   /// UCNs, etc.
-  ///
-  /// \param Invalid If non-NULL, will be set \c true if an error occurs.
-  std::string getSpelling(const Token &Tok, bool *Invalid = 0) const;
+  std::string getSpelling(const Token &Tok) const;
 
   /// getSpelling() - Return the 'spelling' of the Tok token.  The spelling of a
   /// token is the characters used to represent the token in the source file
@@ -578,8 +556,7 @@ public:
   /// UCNs, etc.
   static std::string getSpelling(const Token &Tok,
                                  const SourceManager &SourceMgr,
-                                 const LangOptions &Features, 
-                                 bool *Invalid = 0);
+                                 const LangOptions &Features);
 
   /// getSpelling - This method is used to get the spelling of a token into a
   /// preallocated buffer, instead of as an std::string.  The caller is required
@@ -591,20 +568,17 @@ public:
   /// to point to a constant buffer with the data already in it (avoiding a
   /// copy).  The caller is not allowed to modify the returned buffer pointer
   /// if an internal buffer is returned.
-  unsigned getSpelling(const Token &Tok, const char *&Buffer, 
-                       bool *Invalid = 0) const;
+  unsigned getSpelling(const Token &Tok, const char *&Buffer) const;
 
   /// getSpelling - This method is used to get the spelling of a token into a
   /// SmallVector. Note that the returned StringRef may not point to the
   /// supplied buffer if a copy can be avoided.
   llvm::StringRef getSpelling(const Token &Tok,
-                              llvm::SmallVectorImpl<char> &Buffer, 
-                              bool *Invalid = 0) const;
+                              llvm::SmallVectorImpl<char> &Buffer) const;
 
   /// getSpellingOfSingleCharacterNumericConstant - Tok is a numeric constant
   /// with length 1, return the character.
-  char getSpellingOfSingleCharacterNumericConstant(const Token &Tok, 
-                                                   bool *Invalid = 0) const {
+  char getSpellingOfSingleCharacterNumericConstant(const Token &Tok) const {
     assert(Tok.is(tok::numeric_constant) &&
            Tok.getLength() == 1 && "Called on unsupported token");
     assert(!Tok.needsCleaning() && "Token can't need cleaning with length 1");
@@ -615,7 +589,7 @@ public:
 
     // Otherwise, fall back on getCharacterData, which is slower, but always
     // works.
-    return *SourceMgr.getCharacterData(Tok.getLocation(), Invalid);
+    return *SourceMgr.getCharacterData(Tok.getLocation());
   }
 
   /// CreateString - Plop the specified string into a scratch buffer and set the
@@ -756,7 +730,7 @@ public:
   /// This code concatenates and consumes tokens up to the '>' token.  It returns
   /// false if the > was found, otherwise it returns true if it finds and consumes
   /// the EOM marker.
-  bool ConcatenateIncludeName(llvm::SmallString<128> &FilenameBuffer);
+  bool ConcatenateIncludeName(llvm::SmallVector<char, 128> &FilenameBuffer);
 
 private:
 

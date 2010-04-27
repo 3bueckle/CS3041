@@ -246,7 +246,7 @@ bool Parser::ParseOptionalCXXScopeSpecifier(CXXScopeSpec &SS,
           // recover like this.
           PP.LookAhead(1).is(tok::identifier)) {
         Diag(Next, diag::err_unexected_colon_in_nested_name_spec)
-          << FixItHint::CreateReplacement(Next.getLocation(), "::");
+          << CodeModificationHint::CreateReplacement(Next.getLocation(), "::");
         
         // Recover as if the user wrote '::'.
         Next.setKind(tok::coloncolon);
@@ -749,36 +749,6 @@ bool Parser::ParseCXXCondition(OwningExprResult &ExprResult,
   return false;
 }
 
-/// \brief Determine whether the current token starts a C++
-/// simple-type-specifier.
-bool Parser::isCXXSimpleTypeSpecifier() const {
-  switch (Tok.getKind()) {
-  case tok::annot_typename:
-  case tok::kw_short:
-  case tok::kw_long:
-  case tok::kw_signed:
-  case tok::kw_unsigned:
-  case tok::kw_void:
-  case tok::kw_char:
-  case tok::kw_int:
-  case tok::kw_float:
-  case tok::kw_double:
-  case tok::kw_wchar_t:
-  case tok::kw_char16_t:
-  case tok::kw_char32_t:
-  case tok::kw_bool:
-    // FIXME: C++0x decltype support.
-  // GNU typeof support.
-  case tok::kw_typeof:
-    return true;
-
-  default:
-    break;
-  }
-
-  return false;
-}
-
 /// ParseCXXSimpleTypeSpecifier - [C++ 7.1.5.2] Simple type specifiers.
 /// This should only be called when the current token is known to be part of
 /// simple-type-specifier.
@@ -867,7 +837,6 @@ void Parser::ParseCXXSimpleTypeSpecifier(DeclSpec &DS) {
     DS.SetTypeSpecType(DeclSpec::TST_bool, Loc, PrevSpec, DiagID);
     break;
 
-    // FIXME: C++0x decltype support.
   // GNU typeof support.
   case tok::kw_typeof:
     ParseTypeofSpecifier(DS);
@@ -1344,7 +1313,7 @@ bool Parser::ParseUnqualifiedId(CXXScopeSpec &SS, bool EnteringContext,
         Diag(TemplateId->TemplateNameLoc, 
              diag::err_out_of_line_constructor_template_id)
           << TemplateId->Name
-          << FixItHint::CreateRemoval(
+          << CodeModificationHint::CreateRemoval(
                     SourceRange(TemplateId->LAngleLoc, TemplateId->RAngleLoc));
         Result.setConstructorName(Actions.getTypeName(*TemplateId->Name,
                                                   TemplateId->TemplateNameLoc, 
@@ -1734,7 +1703,7 @@ Parser::ParseCXXAmbiguousParenExpression(ParenParseOption &ExprType,
 
   // Store the tokens of the parentheses. We will parse them after we determine
   // the context that follows them.
-  if (!ConsumeAndStoreUntil(tok::r_paren, Toks)) {
+  if (!ConsumeAndStoreUntil(tok::r_paren, tok::unknown, Toks, tok::semi)) {
     // We didn't find the ')' we expected.
     MatchRHSPunctuation(tok::r_paren, LParenLoc);
     return ExprError();

@@ -29,14 +29,12 @@ Parser::ParseCXXInlineMethodDef(AccessSpecifier AS, Declarator &D,
          "Current token not a '{', ':' or 'try'!");
 
   Action::MultiTemplateParamsArg TemplateParams(Actions,
-          TemplateInfo.TemplateParams ? TemplateInfo.TemplateParams->data() : 0,
-          TemplateInfo.TemplateParams ? TemplateInfo.TemplateParams->size() : 0);
-
+                                                TemplateInfo.TemplateParams? TemplateInfo.TemplateParams->data() : 0,
+                                                TemplateInfo.TemplateParams? TemplateInfo.TemplateParams->size() : 0);
   DeclPtrTy FnD;
   if (D.getDeclSpec().isFriendSpecified())
     // FIXME: Friend templates
-    FnD = Actions.ActOnFriendFunctionDecl(CurScope, D, true,
-                                          move(TemplateParams));
+    FnD = Actions.ActOnFriendFunctionDecl(CurScope, D, true, move(TemplateParams));
   else // FIXME: pass template information through
     FnD = Actions.ActOnCXXMemberDeclarator(CurScope, AS, D,
                                            move(TemplateParams), 0, 0,
@@ -55,7 +53,7 @@ Parser::ParseCXXInlineMethodDef(AccessSpecifier AS, Declarator &D,
   // We may have a constructor initializer or function-try-block here.
   if (kind == tok::colon || kind == tok::kw_try) {
     // Consume everything up to (and including) the left brace.
-    if (!ConsumeAndStoreUntil(tok::l_brace, Toks)) {
+    if (!ConsumeAndStoreUntil(tok::l_brace, tok::unknown, Toks, tok::semi)) {
       // We didn't find the left-brace we expected after the
       // constructor initializer.
       if (Tok.is(tok::semi)) {
@@ -74,13 +72,13 @@ Parser::ParseCXXInlineMethodDef(AccessSpecifier AS, Declarator &D,
     ConsumeBrace();
   }
   // Consume everything up to (and including) the matching right brace.
-  ConsumeAndStoreUntil(tok::r_brace, Toks, /*StopAtSemi=*/false);
+  ConsumeAndStoreUntil(tok::r_brace, tok::unknown, Toks);
 
   // If we're in a function-try-block, we need to store all the catch blocks.
   if (kind == tok::kw_try) {
     while (Tok.is(tok::kw_catch)) {
-      ConsumeAndStoreUntil(tok::l_brace, Toks, /*StopAtSemi=*/false);
-      ConsumeAndStoreUntil(tok::r_brace, Toks, /*StopAtSemi=*/false);
+      ConsumeAndStoreUntil(tok::l_brace, tok::unknown, Toks);
+      ConsumeAndStoreUntil(tok::r_brace, tok::unknown, Toks);
     }
   }
 
@@ -100,8 +98,7 @@ void Parser::ParseLexedMethodDeclarations(ParsingClass &Class) {
   // The current scope is still active if we're the top-level class.
   // Otherwise we'll need to push and enter a new scope.
   bool HasClassScope = !Class.TopLevelClass;
-  ParseScope ClassScope(this, Scope::ClassScope|Scope::DeclScope,
-                        HasClassScope);
+  ParseScope ClassScope(this, Scope::ClassScope|Scope::DeclScope, HasClassScope);
   if (HasClassScope)
     Actions.ActOnStartDelayedMemberDeclarations(CurScope, Class.TagOrTemplate);
 
@@ -125,9 +122,6 @@ void Parser::ParseLexedMethodDeclarations(ParsingClass &Class) {
       Actions.ActOnDelayedCXXMethodParameter(CurScope, LM.DefaultArgs[I].Param);
 
       if (CachedTokens *Toks = LM.DefaultArgs[I].Toks) {
-        // Save the current token position.
-        SourceLocation origLoc = Tok.getLocation();
-
         // Parse the default argument from its saved token stream.
         Toks->push_back(Tok); // So that the current token doesn't get lost
         PP.EnterTokenStream(&Toks->front(), Toks->size(), true, false);
@@ -145,15 +139,6 @@ void Parser::ParseLexedMethodDeclarations(ParsingClass &Class) {
         else
           Actions.ActOnParamDefaultArgument(LM.DefaultArgs[I].Param, EqualLoc,
                                             move(DefArgResult));
-
-        assert(!PP.getSourceManager().isBeforeInTranslationUnit(origLoc,
-                                                           Tok.getLocation()) &&
-               "ParseAssignmentExpression went over the default arg tokens!");
-        // There could be leftover tokens (e.g. because of an error).
-        // Skip through until we reach the original token position.
-        while (Tok.getLocation() != origLoc)
-          ConsumeAnyToken();
-
         delete Toks;
         LM.DefaultArgs[I].Toks = 0;
       }
@@ -192,9 +177,6 @@ void Parser::ParseLexedMethodDefs(ParsingClass &Class) {
     if (LM.TemplateScope)
       Actions.ActOnReenterTemplateScope(CurScope, LM.D);
 
-    // Save the current token position.
-    SourceLocation origLoc = Tok.getLocation();
-
     assert(!LM.Toks.empty() && "Empty body!");
     // Append the current token at the end of the new token stream so that it
     // doesn't get lost.
@@ -213,30 +195,15 @@ void Parser::ParseLexedMethodDefs(ParsingClass &Class) {
 
     if (Tok.is(tok::kw_try)) {
       ParseFunctionTryBlock(LM.D);
-      assert(!PP.getSourceManager().isBeforeInTranslationUnit(origLoc,
-                                                           Tok.getLocation()) &&
-             "ParseFunctionTryBlock went over the cached tokens!");
-      assert(Tok.getLocation() == origLoc &&
-             "ParseFunctionTryBlock left tokens in the token stream!");
       continue;
     }
-    if (Tok.is(tok::colon)) {
+    if (Tok.is(tok::colon))
       ParseConstructorInitializer(LM.D);
-
-      // Error recovery.
-      if (!Tok.is(tok::l_brace)) {
-        Actions.ActOnFinishFunctionBody(LM.D, Action::StmtArg(Actions));
-        continue;
-      }
-    } else
+    else
       Actions.ActOnDefaultCtorInitializers(LM.D);
 
+    // FIXME: What if ParseConstructorInitializer doesn't leave us with a '{'??
     ParseFunctionStatementBody(LM.D);
-    assert(!PP.getSourceManager().isBeforeInTranslationUnit(origLoc,
-                                                           Tok.getLocation()) &&
-           "We consumed more than the cached tokens!");
-    assert(Tok.getLocation() == origLoc &&
-           "Tokens were left in the token stream!");
   }
 
   for (unsigned I = 0, N = Class.NestedClasses.size(); I != N; ++I)
@@ -246,12 +213,14 @@ void Parser::ParseLexedMethodDefs(ParsingClass &Class) {
 /// ConsumeAndStoreUntil - Consume and store the token at the passed token
 /// container until the token 'T' is reached (which gets
 /// consumed/stored too, if ConsumeFinalToken).
-/// If StopAtSemi is true, then we will stop early at a ';' character.
+/// If EarlyAbortIf is specified, then we will stop early if we find that
+/// token at the top level.
 /// Returns true if token 'T1' or 'T2' was found.
 /// NOTE: This is a specialized version of Parser::SkipUntil.
 bool Parser::ConsumeAndStoreUntil(tok::TokenKind T1, tok::TokenKind T2,
                                   CachedTokens &Toks,
-                                  bool StopAtSemi, bool ConsumeFinalToken) {
+                                  tok::TokenKind EarlyAbortIf,
+                                  bool ConsumeFinalToken) {
   // We always want this function to consume at least one token if the first
   // token isn't T and if not at EOF.
   bool isFirstTokenConsumed = true;
@@ -265,6 +234,10 @@ bool Parser::ConsumeAndStoreUntil(tok::TokenKind T1, tok::TokenKind T2,
       return true;
     }
 
+    // If we found the early-abort token, return.
+    if (Tok.is(EarlyAbortIf))
+      return false;
+
     switch (Tok.getKind()) {
     case tok::eof:
       // Ran out of tokens.
@@ -274,19 +247,19 @@ bool Parser::ConsumeAndStoreUntil(tok::TokenKind T1, tok::TokenKind T2,
       // Recursively consume properly-nested parens.
       Toks.push_back(Tok);
       ConsumeParen();
-      ConsumeAndStoreUntil(tok::r_paren, Toks, /*StopAtSemi=*/false);
+      ConsumeAndStoreUntil(tok::r_paren, tok::unknown, Toks);
       break;
     case tok::l_square:
       // Recursively consume properly-nested square brackets.
       Toks.push_back(Tok);
       ConsumeBracket();
-      ConsumeAndStoreUntil(tok::r_square, Toks, /*StopAtSemi=*/false);
+      ConsumeAndStoreUntil(tok::r_square, tok::unknown, Toks);
       break;
     case tok::l_brace:
       // Recursively consume properly-nested braces.
       Toks.push_back(Tok);
       ConsumeBrace();
-      ConsumeAndStoreUntil(tok::r_brace, Toks, /*StopAtSemi=*/false);
+      ConsumeAndStoreUntil(tok::r_brace, tok::unknown, Toks);
       break;
 
     // Okay, we found a ']' or '}' or ')', which we think should be balanced.
@@ -318,10 +291,6 @@ bool Parser::ConsumeAndStoreUntil(tok::TokenKind T1, tok::TokenKind T2,
       Toks.push_back(Tok);
       ConsumeStringToken();
       break;
-    case tok::semi:
-      if (StopAtSemi)
-        return false;
-      // FALL THROUGH.
     default:
       // consume this token.
       Toks.push_back(Tok);

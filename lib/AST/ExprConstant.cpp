@@ -203,13 +203,6 @@ public:
     return Visit(E->getSubExpr());
   }
   bool VisitUnaryOperator(UnaryOperator *E) { return Visit(E->getSubExpr()); }
-    
-  // Has side effects if any element does.
-  bool VisitInitListExpr(InitListExpr *E) {
-    for (unsigned i = 0, e = E->getNumInits(); i != e; ++i)
-      if (Visit(E->getInit(i))) return true;
-    return false;
-  }
 };
 
 } // end anonymous namespace
@@ -413,34 +406,27 @@ APValue PointerExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
   if (!EvaluatePointer(PExp, ResultLValue, Info))
     return APValue();
 
-  llvm::APSInt AdditionalOffset;
+  llvm::APSInt AdditionalOffset(32);
   if (!EvaluateInteger(IExp, AdditionalOffset, Info))
     return APValue();
 
-  // Compute the new offset in the appropriate width.
-
-  QualType PointeeType =
-    PExp->getType()->getAs<PointerType>()->getPointeeType();
-  llvm::APSInt SizeOfPointee(AdditionalOffset);
+  QualType PointeeType = PExp->getType()->getAs<PointerType>()->getPointeeType();
+  CharUnits SizeOfPointee;
 
   // Explicitly handle GNU void* and function pointer arithmetic extensions.
   if (PointeeType->isVoidType() || PointeeType->isFunctionType())
-    SizeOfPointee = 1;
+    SizeOfPointee = CharUnits::One();
   else
-    SizeOfPointee = Info.Ctx.getTypeSizeInChars(PointeeType).getQuantity();
+    SizeOfPointee = Info.Ctx.getTypeSizeInChars(PointeeType);
 
-  llvm::APSInt Offset(AdditionalOffset);
-  Offset = ResultLValue.getLValueOffset().getQuantity();
+  CharUnits Offset = ResultLValue.getLValueOffset();
+
   if (E->getOpcode() == BinaryOperator::Add)
-    Offset += AdditionalOffset * SizeOfPointee;
+    Offset += AdditionalOffset.getLimitedValue() * SizeOfPointee;
   else
-    Offset -= AdditionalOffset * SizeOfPointee;
+    Offset -= AdditionalOffset.getLimitedValue() * SizeOfPointee;
 
-  // Sign extend prior to converting back to a char unit.
-  if (Offset.getBitWidth() < 64)
-    Offset.extend(64);
-  return APValue(ResultLValue.getLValueBase(),
-                 CharUnits::fromQuantity(Offset.getLimitedValue()));
+  return APValue(ResultLValue.getLValueBase(), Offset);
 }
 
 APValue PointerExprEvaluator::VisitUnaryAddrOf(const UnaryOperator *E) {
@@ -968,7 +954,7 @@ static int EvaluateBuiltinClassifyType(const CallExpr *E) {
     return complex_type_class;
   else if (ArgTy->isFunctionType())
     return function_type_class;
-  else if (ArgTy->isStructureOrClassType())
+  else if (ArgTy->isStructureType())
     return record_type_class;
   else if (ArgTy->isUnionType())
     return union_type_class;
@@ -1198,8 +1184,8 @@ bool IntExprEvaluator::VisitBinaryOperator(const BinaryOperator *E) {
       }
 
       if (E->getOpcode() == BinaryOperator::Sub) {
-        QualType Type = E->getLHS()->getType();
-        QualType ElementType = Type->getAs<PointerType>()->getPointeeType();
+        const QualType Type = E->getLHS()->getType();
+        const QualType ElementType = Type->getAs<PointerType>()->getPointeeType();
 
         CharUnits ElementSize = CharUnits::One();
         if (!ElementType->isVoidType() && !ElementType->isFunctionType())

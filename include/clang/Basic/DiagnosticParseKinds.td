@@ -50,26 +50,22 @@ def ext_enumerator_list_comma : Extension<
   "feature">;
 
 def ext_gnu_indirect_goto : Extension<
-  "use of GNU indirect-goto extension">, InGroup<GNU>;
+  "use of GNU indirect-goto extension">;
 def ext_gnu_address_of_label : Extension<
-  "use of GNU address-of-label extension">, InGroup<GNU>;
+  "use of GNU address-of-label extension">;
 def ext_gnu_statement_expr : Extension<
-  "use of GNU statement expression extension">, InGroup<GNU>;
+  "use of GNU statement expression extension">;
 def ext_gnu_conditional_expr : Extension<
-  "use of GNU ?: expression extension, eliding middle term">, InGroup<GNU>;
+  "use of GNU ?: expression extension, eliding middle term">;
 def ext_gnu_empty_initializer : Extension<
-  "use of GNU empty initializer extension">, InGroup<GNU>;
-def ext_gnu_array_range : Extension<"use of GNU array range extension">, 
-  InGroup<GNUDesignator>;
+  "use of GNU empty initializer extension">;
+def ext_gnu_array_range : Extension<"use of GNU array range extension">;
 def ext_gnu_missing_equal_designator : ExtWarn<
-  "use of GNU 'missing =' extension in designator">, 
-  InGroup<GNUDesignator>;
+  "use of GNU 'missing =' extension in designator">;
 def err_expected_equal_designator : Error<"expected '=' or another designator">;
 def ext_gnu_old_style_field_designator : ExtWarn<
-  "use of GNU old-style field designator extension">, 
-  InGroup<GNUDesignator>;
-def ext_gnu_case_range : Extension<"use of GNU case range extension">,
-  InGroup<GNU>;
+  "use of GNU old-style field designator extension">;
+def ext_gnu_case_range : Extension<"use of GNU case range extension">;
 
 // Generic errors.
 def err_parse_error : Error<"parse error">;
@@ -182,17 +178,12 @@ def err_unexected_colon_in_nested_name_spec : Error<
   "unexpected ':' in nested name specifier">;
 
 /// Objective-C parser diagnostics
-def err_expected_minus_or_plus : Error<
-  "method type specifier must start with '-' or '+'">;
 def err_objc_no_attributes_on_category : Error<
   "attributes may not be specified on a category">;
 def err_objc_missing_end : Error<"missing @end">;
 def warn_objc_protocol_qualifier_missing_id : Warning<
   "protocol qualifiers without 'id' is archaic">;
-def err_objc_unknown_at : Error<"expected an Objective-C directive after '@'">;
-def err_illegal_super_cast : Error<
-  "cannot cast 'super' (it isn't an expression)">;
-  
+
 def err_objc_illegal_visibility_spec : Error<
   "illegal visibility specification">;
 def err_objc_illegal_interface_qual : Error<"illegal interface qualifier">;

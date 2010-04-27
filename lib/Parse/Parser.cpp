@@ -21,6 +21,20 @@
 #include "ParsePragma.h"
 using namespace clang;
 
+/// \brief A comment handler that passes comments found by the preprocessor
+/// to the parser action.
+class ActionCommentHandler : public CommentHandler {
+  Action &Actions;
+
+public:
+  explicit ActionCommentHandler(Action &Actions) : Actions(Actions) { }
+
+  virtual bool HandleComment(Preprocessor &PP, SourceRange Comment) {
+    Actions.ActOnComment(Comment);
+    return false;
+  }
+};
+
 Parser::Parser(Preprocessor &pp, Action &actions)
   : CrashInfo(*this), PP(pp), Actions(actions), Diags(PP.getDiagnostics()),
     GreaterThanIsOperator(true), ColonIsSacred(false),
@@ -45,6 +59,9 @@ Parser::Parser(Preprocessor &pp, Action &actions)
   WeakHandler.reset(new
           PragmaWeakHandler(&PP.getIdentifierTable().get("weak"), actions));
   PP.AddPragmaHandler(0, WeakHandler.get());
+
+  CommentHandler.reset(new ActionCommentHandler(actions));
+  PP.AddCommentHandler(CommentHandler.get());
 }
 
 /// If a crash happens while the parser is active, print out a line indicating
@@ -95,8 +112,8 @@ void Parser::SuggestParentheses(SourceLocation Loc, unsigned DK,
   }
 
   Diag(Loc, DK)
-    << FixItHint::CreateInsertion(ParenRange.getBegin(), "(")
-    << FixItHint::CreateInsertion(EndLoc, ")");
+    << CodeModificationHint::CreateInsertion(ParenRange.getBegin(), "(")
+    << CodeModificationHint::CreateInsertion(EndLoc, ")");
 }
 
 /// MatchRHSPunctuation - For punctuation with a LHS and RHS (e.g. '['/']'),
@@ -146,7 +163,7 @@ bool Parser::ExpectAndConsume(tok::TokenKind ExpectedTok, unsigned DiagID,
     // Show what code to insert to fix this problem.
     Diag(EndLoc, DiagID)
       << Msg
-      << FixItHint::CreateInsertion(EndLoc, Spelling);
+      << CodeModificationHint::CreateInsertion(EndLoc, Spelling);
   } else
     Diag(Tok, DiagID) << Msg;
 
@@ -300,6 +317,7 @@ Parser::~Parser() {
   UnusedHandler.reset();
   PP.RemovePragmaHandler(0, WeakHandler.get());
   WeakHandler.reset();
+  PP.RemoveCommentHandler(CommentHandler.get());
 }
 
 /// Initialize - Warm up the parser.
@@ -395,7 +413,7 @@ Parser::DeclGroupPtrTy Parser::ParseExternalDeclaration(CXX0XAttributeList Attr)
   case tok::semi:
     if (!getLang().CPlusPlus0x)
       Diag(Tok, diag::ext_top_level_semi)
-        << FixItHint::CreateRemoval(Tok.getLocation());
+        << CodeModificationHint::CreateRemoval(Tok.getLocation());
 
     ConsumeToken();
     // TODO: Invoke action for top-level semicolon.
@@ -668,15 +686,9 @@ Parser::DeclPtrTy Parser::ParseFunctionDefinition(ParsingDeclarator &D,
 
   // If we have a colon, then we're probably parsing a C++
   // ctor-initializer.
-  if (Tok.is(tok::colon)) {
+  if (Tok.is(tok::colon))
     ParseConstructorInitializer(Res);
-
-    // Recover from error.
-    if (!Tok.is(tok::l_brace)) {
-      Actions.ActOnFinishFunctionBody(Res, Action::StmtArg(Actions));
-      return Res;
-    }
-  } else
+  else
     Actions.ActOnDefaultCtorInitializers(Res);
 
   return ParseFunctionStatementBody(Res);
@@ -835,7 +847,7 @@ Parser::OwningExprResult Parser::ParseSimpleAsm(SourceLocation *EndLoc) {
                              PP.getLocForEndOfToken(Tok.getLocation()));
 
     Diag(Tok, diag::warn_file_asm_volatile)
-      << FixItHint::CreateRemoval(RemovalRange);
+      << CodeModificationHint::CreateRemoval(RemovalRange);
     ConsumeToken();
   }
 
@@ -1052,7 +1064,7 @@ bool Parser::TryAnnotateCXXScopeToken(bool EnteringContext) {
   CXXScopeSpec SS;
   if (ParseOptionalCXXScopeSpecifier(SS, /*ObjectType=*/0, EnteringContext))
     return true;
-  if (SS.isEmpty())
+  if (!SS.isSet())
     return false;
 
   // Push the current token back into the token stream (or revert it if it is

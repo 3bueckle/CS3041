@@ -48,7 +48,7 @@ namespace C
         a.A::sub::x();
         a.A::B::base::x();
 
-        a.bad::x(); // expected-error{{'bad::x' is not a member of class 'A::sub'}}
+        a.bad::x(); // expected-error{{type 'struct bad' is not a direct or virtual base of ''A::sub''}}
 
         a->foo();
         a->member::foo();
@@ -69,7 +69,7 @@ namespace C
         a->A::sub::x();
         a->A::B::base::x();
 
-        a->bad::x(); // expected-error{{'bad::x' is not a member of class 'A::sub'}}
+        a->bad::x(); // expected-error{{type 'struct bad' is not a direct or virtual base of ''A::sub''}}
 
         (*a)->foo();
         (*a)->member::foo();
@@ -107,7 +107,7 @@ namespace C
         a.A::B::base::x();
         a->A::member::foo();
 
-        a.bad::x(); // expected-error{{'bad::x' is not a member of class 'A::sub'}}
+        a.bad::x(); // expected-error{{direct or virtual}}
     }
 
   void test_fun5() {
@@ -138,12 +138,3 @@ struct a {
 a a;
 
 int a::sa = a.a; // expected-error {{invalid use of nonstatic data member 'a'}}
-
-
-namespace PR6645 {
-  typedef int foo;
-  namespace Inner {
-    typedef int PR6645::foo; // expected-error{{typedef declarator cannot be qualified}} \
-    // expected-error{{definition or redeclaration of 'foo' not in a namespace enclosing 'PR6645'}}
-  }
-}

@@ -21,7 +21,6 @@
 
 namespace clang {
 
-class FileEntry;
 class Preprocessor;
 
 class PreprocessorLexer {

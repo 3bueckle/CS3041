@@ -7,16 +7,11 @@ static CGColorRef tmp = 0;
 typedef struct S1  __attribute__ ((NSObject)) CGColorRef1; // expected-error {{__attribute ((NSObject)) is for pointer types only}}
 typedef void *  __attribute__ ((NSObject)) CGColorRef2; // expected-error {{__attribute ((NSObject)) is for pointer types only}}
 
-
 @interface HandTested {
 @public
     CGColorRef x;
 }
-
 @property(copy) CGColorRef x;
-// rdar: // 7809460
-typedef struct CGColor *CGColorRefNoNSObject;
-@property (nonatomic, retain) __attribute__((NSObject)) CGColorRefNoNSObject color;
 @end
 
 void setProperty(id self, id value)  {
@@ -29,7 +24,6 @@ id getProperty(id self) {
 
 @implementation HandTested
 @synthesize x=x;
-@dynamic color;
 @end
 
 int main(int argc, char *argv[]) {

@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify %s
+// RUN: %clang_cc1 -fsyntax-only -faccess-control -verify %s
 
 class M {
   int iM;
@@ -11,5 +11,5 @@ class P {
 
 class N : M,P {
   N() {}
-  int PR() { return iP + PPR(); } // expected-error 2 {{private member of 'P'}}
+  int PR() { return iP + PPR(); } // expected-error 2 {{private member of 'class P'}}
 };

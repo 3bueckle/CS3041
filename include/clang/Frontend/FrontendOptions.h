@@ -24,6 +24,7 @@ namespace frontend {
     ASTPrintXML,            ///< Parse ASTs and print them in XML.
     ASTView,                ///< Parse ASTs and view them in Graphviz.
     DumpRawTokens,          ///< Dump out raw tokens.
+    DumpRecordLayouts,      ///< Dump record layout information.
     DumpTokens,             ///< Dump out preprocessed tokens.
     EmitAssembly,           ///< Emit a .s file.
     EmitBC,                 ///< Emit a .bc file.
@@ -35,7 +36,6 @@ namespace frontend {
     GeneratePCH,            ///< Generate pre-compiled header.
     GeneratePTH,            ///< Generate pre-tokenized header.
     InheritanceView,        ///< View C++ inheritance for a specified class.
-    InitOnly,               ///< Only execute frontend initialization.
     ParseNoop,              ///< Parse with noop callbacks.
     ParsePrintCallbacks,    ///< Parse and print each callback.
     ParseSyntaxOnly,        ///< Parse and perform semantic analysis.
@@ -71,6 +71,9 @@ public:
   unsigned DebugCodeCompletionPrinter : 1; ///< Use the debug printer for code
                                            /// completion results.
   unsigned DisableFree : 1;                ///< Disable memory freeing on exit.
+  unsigned EmptyInputOnly : 1;             ///< Force input files to be treated
+                                           /// as if they were empty, for timing
+                                           /// the frontend startup.
   unsigned RelocatablePCH : 1;             ///< When generating PCH files,
                                            /// instruct the PCH writer to create
                                            /// relocatable PCH files.
@@ -92,8 +95,8 @@ public:
   /// If given, the name for a C++ class to view the inheritance of.
   std::string ViewClassInheritance;
 
-  /// If given, the new suffix for fix-it rewritten files.
-  std::string FixItSuffix;
+  /// A list of locations to apply fix-its at.
+  std::vector<ParsedSourceLocation> FixItLocations;
 
   /// If given, enable code completion at the provided location.
   ParsedSourceLocation CodeCompletionAt;
@@ -110,14 +113,11 @@ public:
   /// \brief The list of AST files to merge.
   std::vector<std::string> ASTMergeFiles;
 
-  /// \brief A list of arguments to forward to LLVM's option processing; this
-  /// should only be used for debugging and experimental features.
-  std::vector<std::string> LLVMArgs;
-
 public:
   FrontendOptions() {
     DebugCodeCompletionPrinter = 1;
     DisableFree = 0;
+    EmptyInputOnly = 0;
     ProgramAction = frontend::ParseSyntaxOnly;
     ActionName = "";
     RelocatablePCH = 0;

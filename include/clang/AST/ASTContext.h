@@ -17,7 +17,6 @@
 #include "clang/Basic/IdentifierTable.h"
 #include "clang/Basic/LangOptions.h"
 #include "clang/Basic/OperatorKinds.h"
-#include "clang/Basic/PartialDiagnostic.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/NestedNameSpecifier.h"
@@ -25,7 +24,6 @@
 #include "clang/AST/TemplateName.h"
 #include "clang/AST/Type.h"
 #include "clang/AST/CanonicalType.h"
-#include "clang/AST/UsuallyTinyPtrVector.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/FoldingSet.h"
 #include "llvm/ADT/OwningPtr.h"
@@ -35,7 +33,6 @@
 
 namespace llvm {
   struct fltSemantics;
-  class raw_ostream;
 }
 
 namespace clang {
@@ -43,7 +40,6 @@ namespace clang {
   class ASTRecordLayout;
   class BlockExpr;
   class CharUnits;
-  class Diagnostic;
   class Expr;
   class ExternalASTSource;
   class IdentifierTable;
@@ -60,7 +56,6 @@ namespace clang {
   class ObjCIvarRefExpr;
   class ObjCPropertyDecl;
   class RecordDecl;
-  class StoredDeclsMap;
   class TagDecl;
   class TemplateTypeParmDecl;
   class TranslationUnitDecl;
@@ -71,6 +66,28 @@ namespace clang {
   class UnresolvedSetIterator;
 
   namespace Builtin { class Context; }
+
+/// \brief A vector of C++ member functions that is optimized for
+/// storing a single method.
+class CXXMethodVector {
+  /// \brief Storage for the vector.
+  ///
+  /// When the low bit is zero, this is a const CXXMethodDecl *. When the
+  /// low bit is one, this is a std::vector<const CXXMethodDecl *> *.
+  mutable uintptr_t Storage;
+
+  typedef std::vector<const CXXMethodDecl *> vector_type;
+
+public:
+  CXXMethodVector() : Storage(0) { }
+
+  typedef const CXXMethodDecl **iterator;
+  iterator begin() const;
+  iterator end() const;
+
+  void push_back(const CXXMethodDecl *Method);
+  void Destroy();
+};
 
 /// ASTContext - This class holds long-lived AST nodes (such as types and
 /// decls) that can be referred to throughout the semantic analysis of a file.
@@ -97,7 +114,7 @@ class ASTContext {
   llvm::FoldingSet<SubstTemplateTypeParmType> SubstTemplateTypeParmTypes;
   llvm::FoldingSet<TemplateSpecializationType> TemplateSpecializationTypes;
   llvm::FoldingSet<QualifiedNameType> QualifiedNameTypes;
-  llvm::FoldingSet<DependentNameType> DependentNameTypes;
+  llvm::FoldingSet<TypenameType> TypenameTypes;
   llvm::FoldingSet<ObjCInterfaceType> ObjCInterfaceTypes;
   llvm::FoldingSet<ObjCObjectPointerType> ObjCObjectPointerTypes;
   llvm::FoldingSet<ElaboratedType> ElaboratedTypes;
@@ -143,8 +160,6 @@ class ASTContext {
 
   QualType ObjCConstantStringType;
   RecordDecl *CFConstantStringTypeDecl;
-
-  RecordDecl *NSConstantStringTypeDecl;
 
   RecordDecl *ObjCFastEnumerationStateTypeDecl;
 
@@ -232,7 +247,6 @@ class ASTContext {
   /// Since most C++ member functions aren't virtual and therefore
   /// don't override anything, we store the overridden functions in
   /// this map on the side rather than within the CXXMethodDecl structure.
-  typedef UsuallyTinyPtrVector<const CXXMethodDecl> CXXMethodVector;
   llvm::DenseMap<const CXXMethodDecl *, CXXMethodVector> OverriddenMethods;
 
   TranslationUnitDecl *TUDecl;
@@ -244,14 +258,19 @@ class ASTContext {
   ///  this ASTContext object.
   LangOptions LangOpts;
 
+  /// \brief Whether we have already loaded comment source ranges from an
+  /// external source.
+  bool LoadedExternalComments;
+
   /// MallocAlloc/BumpAlloc - The allocator objects used to create AST objects.
   bool FreeMemory;
   llvm::MallocAllocator MallocAlloc;
   llvm::BumpPtrAllocator BumpAlloc;
 
-  /// \brief Allocator for partial diagnostics.
-  PartialDiagnostic::StorageAllocator DiagAllocator;
-  
+  /// \brief Mapping from declarations to their comments, once we have
+  /// already looked up the comment associated with a given declaration.
+  llvm::DenseMap<const Decl *, std::string> DeclComments;
+
 public:
   const TargetInfo &Target;
   IdentifierTable &Idents;
@@ -267,6 +286,10 @@ public:
   QualType ObjCClassRedefinitionType;
   QualType ObjCSelRedefinitionType;
 
+  /// \brief Source ranges for all of the comments in the source file,
+  /// sorted in order of appearance in the translation unit.
+  std::vector<SourceRange> Comments;
+
   SourceManager& getSourceManager() { return SourceMgr; }
   const SourceManager& getSourceManager() const { return SourceMgr; }
   void *Allocate(unsigned Size, unsigned Align = 8) {
@@ -277,11 +300,6 @@ public:
     if (FreeMemory)
       MallocAlloc.Deallocate(Ptr);
   }
-  
-  PartialDiagnostic::StorageAllocator &getDiagAllocator() {
-    return DiagAllocator;
-  }
-
   const LangOptions& getLangOptions() const { return LangOpts; }
 
   FullSourceLoc getFullLoc(SourceLocation Loc) const {
@@ -338,6 +356,8 @@ public:
   TranslationUnitDecl *getTranslationUnitDecl() const { return TUDecl; }
 
 
+  const char *getCommentForDecl(const Decl *D);
+
   // Builtin Types.
   CanQualType VoidTy;
   CanQualType BoolTy;
@@ -385,8 +405,6 @@ private:
   /// getExtQualType - Return a type with extended qualifiers.
   QualType getExtQualType(const Type *Base, Qualifiers Quals);
 
-  QualType getTypeDeclTypeSlow(const TypeDecl *Decl);
-
 public:
   /// getAddSpaceQualType - Return the uniqued reference to the type for an
   /// address space qualified type with the specified type and address space.
@@ -429,11 +447,6 @@ public:
   /// the given type, which must be a FunctionType or a pointer to an
   /// allowable type.
   QualType getCallConvType(QualType T, CallingConv CallConv);
-
-  /// getRegParmType - Sets the specified regparm attribute to
-  /// the given type, which must be a FunctionType or a pointer to an
-  /// allowable type.
-  QualType getRegParmType(QualType T, unsigned RegParm);
 
   /// getComplexType - Return the uniqued reference to the type for a complex
   /// number with the specified element type.
@@ -552,12 +565,8 @@ public:
 
   /// getFunctionNoProtoType - Return a K&R style C function type like 'int()'.
   ///
-  QualType getFunctionNoProtoType(QualType ResultTy,
-                                  const FunctionType::ExtInfo &Info);
-
-  QualType getFunctionNoProtoType(QualType ResultTy) {
-    return getFunctionNoProtoType(ResultTy, FunctionType::ExtInfo());
-  }
+  QualType getFunctionNoProtoType(QualType ResultTy, bool NoReturn = false,
+                                  CallingConv CallConv = CC_Default);
 
   /// getFunctionType - Return a normal function type with a typed argument
   /// list.  isVariadic indicates whether the argument list includes '...'.
@@ -566,29 +575,16 @@ public:
                            unsigned TypeQuals, bool hasExceptionSpec,
                            bool hasAnyExceptionSpec,
                            unsigned NumExs, const QualType *ExArray,
-                           const FunctionType::ExtInfo &Info);
+                           bool NoReturn,
+                           CallingConv CallConv);
 
   /// getTypeDeclType - Return the unique reference to the type for
   /// the specified type declaration.
-  QualType getTypeDeclType(const TypeDecl *Decl,
-                           const TypeDecl *PrevDecl = 0) {
-    assert(Decl && "Passed null for Decl param");
-    if (Decl->TypeForDecl) return QualType(Decl->TypeForDecl, 0);
-
-    if (PrevDecl) {
-      assert(PrevDecl->TypeForDecl && "previous decl has no TypeForDecl");
-      Decl->TypeForDecl = PrevDecl->TypeForDecl;
-      return QualType(PrevDecl->TypeForDecl, 0);
-    }
-
-    return getTypeDeclTypeSlow(Decl);
-  }
+  QualType getTypeDeclType(const TypeDecl *Decl, const TypeDecl* PrevDecl=0);
 
   /// getTypedefType - Return the unique reference to the type for the
   /// specified typename decl.
   QualType getTypedefType(const TypedefDecl *Decl);
-
-  QualType getInjectedClassNameType(CXXRecordDecl *Decl, QualType TST);
 
   QualType getSubstTemplateTypeParmType(const TemplateTypeParmType *Replaced,
                                         QualType Replacement);
@@ -600,29 +596,20 @@ public:
   QualType getTemplateSpecializationType(TemplateName T,
                                          const TemplateArgument *Args,
                                          unsigned NumArgs,
-                                         QualType Canon = QualType(),
-                                         bool IsCurrentInstantiation = false);
+                                         QualType Canon = QualType());
 
   QualType getTemplateSpecializationType(TemplateName T,
                                          const TemplateArgumentListInfo &Args,
-                                         QualType Canon = QualType(),
-                                         bool IsCurrentInstantiation = false);
-
-  TypeSourceInfo *
-  getTemplateSpecializationTypeInfo(TemplateName T, SourceLocation TLoc,
-                                    const TemplateArgumentListInfo &Args,
-                                    QualType Canon = QualType());
+                                         QualType Canon = QualType());
 
   QualType getQualifiedNameType(NestedNameSpecifier *NNS,
                                 QualType NamedType);
-  QualType getDependentNameType(ElaboratedTypeKeyword Keyword,
-                                NestedNameSpecifier *NNS,
-                                const IdentifierInfo *Name,
-                                QualType Canon = QualType());
-  QualType getDependentNameType(ElaboratedTypeKeyword Keyword,
-                                NestedNameSpecifier *NNS,
-                                const TemplateSpecializationType *TemplateId,
-                                QualType Canon = QualType());
+  QualType getTypenameType(NestedNameSpecifier *NNS,
+                           const IdentifierInfo *Name,
+                           QualType Canon = QualType());
+  QualType getTypenameType(NestedNameSpecifier *NNS,
+                           const TemplateSpecializationType *TemplateId,
+                           QualType Canon = QualType());
   QualType getElaboratedType(QualType UnderlyingType,
                              ElaboratedType::TagKind Tag);
 
@@ -672,19 +659,6 @@ public:
   // getCFConstantStringType - Return the C structure type used to represent
   // constant CFStrings.
   QualType getCFConstantStringType();
-
-  // getNSConstantStringType - Return the C structure type used to represent
-  // constant NSStrings.
-  QualType getNSConstantStringType();
-  /// Get the structure type used to representation NSStrings, or NULL
-  /// if it hasn't yet been built.
-  QualType getRawNSConstantStringType() {
-    if (NSConstantStringTypeDecl)
-      return getTagDeclType(NSConstantStringTypeDecl);
-    return QualType();
-  }
-  void setNSConstantStringType(QualType T);
-
 
   /// Get the structure type used to representation CFStrings, or NULL
   /// if it hasn't yet been built.
@@ -935,8 +909,6 @@ public:
   /// layout of the specified Objective-C interface.
   const ASTRecordLayout &getASTObjCInterfaceLayout(const ObjCInterfaceDecl *D);
 
-  void DumpRecordLayout(const RecordDecl *RD, llvm::raw_ostream &OS);
-
   /// getASTObjCImplementationLayout - Get or compute information about
   /// the layout of the specified Objective-C implementation. This may
   /// differ from the interface if synthesized ivars are present.
@@ -957,10 +929,10 @@ public:
                                llvm::SmallVectorImpl<ObjCIvarDecl*> &Ivars);
   void CollectNonClassIvars(const ObjCInterfaceDecl *OI,
                                llvm::SmallVectorImpl<ObjCIvarDecl*> &Ivars);
-  void CollectIvarsToConstructOrDestruct(const ObjCInterfaceDecl *OI,
-                                    llvm::SmallVectorImpl<ObjCIvarDecl*> &Ivars,
-                                    bool construct=true);
-  unsigned CountNonClassIvars(const ObjCInterfaceDecl *OI);
+  void CollectProtocolSynthesizedIvars(const ObjCProtocolDecl *PD,
+                               llvm::SmallVectorImpl<ObjCIvarDecl*> &Ivars);
+  unsigned CountSynthesizedIvars(const ObjCInterfaceDecl *OI);
+  unsigned CountProtocolSynthesizedIvars(const ObjCProtocolDecl *PD);
   void CollectInheritedProtocols(const Decl *CDecl,
                           llvm::SmallPtrSet<ObjCProtocolDecl*, 8> &Protocols);
 
@@ -1169,8 +1141,6 @@ public:
   /// Compatibility predicates used to check assignment expressions.
   bool typesAreCompatible(QualType, QualType); // C99 6.2.7p1
 
-  bool typesAreBlockPointerCompatible(QualType, QualType); 
-
   bool isObjCIdType(QualType T) const {
     return T == ObjCIdTypedefType;
   }
@@ -1189,16 +1159,13 @@ public:
                                const ObjCObjectPointerType *RHSOPT);
   bool canAssignObjCInterfaces(const ObjCInterfaceType *LHS,
                                const ObjCInterfaceType *RHS);
-  bool canAssignObjCInterfacesInBlockPointer(
-                                          const ObjCObjectPointerType *LHSOPT,
-                                          const ObjCObjectPointerType *RHSOPT);
   bool areComparableObjCPointerTypes(QualType LHS, QualType RHS);
   QualType areCommonBaseCompatible(const ObjCObjectPointerType *LHSOPT,
                                    const ObjCObjectPointerType *RHSOPT);
   
   // Functions for calculating composite types
-  QualType mergeTypes(QualType, QualType, bool OfBlockPointer=false);
-  QualType mergeFunctionTypes(QualType, QualType, bool OfBlockPointer=false);
+  QualType mergeTypes(QualType, QualType);
+  QualType mergeFunctionTypes(QualType, QualType);
 
   /// UsualArithmeticConversionsType - handles the various conversions
   /// that are common to binary operators (C99 6.3.1.8, C++ [expr]p9)
@@ -1295,8 +1262,9 @@ private:
   // FIXME: This currently contains the set of StoredDeclMaps used
   // by DeclContext objects.  This probably should not be in ASTContext,
   // but we include it here so that ASTContext can quickly deallocate them.
-  llvm::PointerIntPair<StoredDeclsMap*,1> LastSDM;
+  std::vector<void*> SDMs; 
   friend class DeclContext;
+  void *CreateStoredDeclsMap();
   void ReleaseDeclContextMaps();
 };
   
@@ -1324,10 +1292,10 @@ static inline Selector GetUnarySelector(const char* name, ASTContext& Ctx) {
 /// this ever changes, this operator will have to be changed, too.)
 /// Usage looks like this (assuming there's an ASTContext 'Context' in scope):
 /// @code
-/// // Default alignment (8)
+/// // Default alignment (16)
 /// IntegerLiteral *Ex = new (Context) IntegerLiteral(arguments);
 /// // Specific alignment
-/// IntegerLiteral *Ex2 = new (Context, 4) IntegerLiteral(arguments);
+/// IntegerLiteral *Ex2 = new (Context, 8) IntegerLiteral(arguments);
 /// @endcode
 /// Please note that you cannot use delete on the pointer; it must be
 /// deallocated using an explicit destructor call followed by
@@ -1358,10 +1326,10 @@ inline void operator delete(void *Ptr, clang::ASTContext &C, size_t)
 /// null on error.
 /// Usage looks like this (assuming there's an ASTContext 'Context' in scope):
 /// @code
-/// // Default alignment (8)
+/// // Default alignment (16)
 /// char *data = new (Context) char[10];
 /// // Specific alignment
-/// char *data = new (Context, 4) char[10];
+/// char *data = new (Context, 8) char[10];
 /// @endcode
 /// Please note that you cannot use delete on the pointer; it must be
 /// deallocated using an explicit destructor call followed by
@@ -1373,7 +1341,7 @@ inline void operator delete(void *Ptr, clang::ASTContext &C, size_t)
 ///                  allocator supports it).
 /// @return The allocated memory. Could be NULL.
 inline void *operator new[](size_t Bytes, clang::ASTContext& C,
-                            size_t Alignment = 8) throw () {
+                            size_t Alignment = 16) throw () {
   return C.Allocate(Bytes, Alignment);
 }
 

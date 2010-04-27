@@ -155,8 +155,8 @@ void JumpScopeChecker::BuildScopeInformation(Stmt *S, unsigned ParentScope) {
         BuildScopeInformation(TryPart, Scopes.size()-1);
 
       // Jump from the catch to the finally or try is not valid.
-      for (unsigned I = 0, N = AT->getNumCatchStmts(); I != N; ++I) {
-        ObjCAtCatchStmt *AC = AT->getCatchStmt(I);
+      for (ObjCAtCatchStmt *AC = AT->getCatchStmts(); AC;
+           AC = AC->getNextCatchStmt()) {
         Scopes.push_back(GotoScope(ParentScope,
                                    diag::note_protected_by_objc_catch,
                                    AC->getAtCatchLoc()));

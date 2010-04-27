@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify -fexceptions -fms-extensions %s
+// RUN: %clang_cc1 -fsyntax-only -verify -fms-extensions %s
 
 // Straight from the standard:
 // Plain function with spec
@@ -29,10 +29,10 @@ struct Incomplete; // expected-note 3 {{forward declaration}}
 // Exception spec must not have incomplete types, or pointers to them, except
 // void.
 void ic1() throw(void); // expected-error {{incomplete type 'void' is not allowed in exception specification}}
-void ic2() throw(Incomplete); // expected-error {{incomplete type 'Incomplete' is not allowed in exception specification}}
+void ic2() throw(Incomplete); // expected-error {{incomplete type 'struct Incomplete' is not allowed in exception specification}}
 void ic3() throw(void*);
-void ic4() throw(Incomplete*); // expected-error {{pointer to incomplete type 'Incomplete' is not allowed in exception specification}}
-void ic5() throw(Incomplete&); // expected-error {{reference to incomplete type 'Incomplete' is not allowed in exception specification}}
+void ic4() throw(Incomplete*); // expected-error {{pointer to incomplete type 'struct Incomplete' is not allowed in exception specification}}
+void ic5() throw(Incomplete&); // expected-error {{reference to incomplete type 'struct Incomplete' is not allowed in exception specification}}
 
 // Redeclarations
 typedef int INT;
@@ -50,7 +50,7 @@ void r4() throw(int, float);
 void r4() throw(float, int);
 
 void r5() throw(int); // expected-note {{previous declaration}}
-void r5(); // expected-warning {{missing exception specification}}
+void r5(); // expected-error {{exception specification in declaration does not match}}
 
 void r6() throw(...); // expected-note {{previous declaration}}
 void r6() throw(int); // expected-error {{exception specification in declaration does not match}}
@@ -170,7 +170,7 @@ void fnptrs()
 // Member function stuff
 
 struct Str1 { void f() throw(int); }; // expected-note {{previous declaration}}
-void Str1::f() // expected-warning {{missing exception specification}}
+void Str1::f() // expected-error {{does not match previous declaration}}
 {
 }
 

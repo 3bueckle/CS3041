@@ -31,7 +31,6 @@
 #include "clang/Lex/HeaderSearch.h"
 #include "clang/Lex/MacroInfo.h"
 #include "clang/Lex/Pragma.h"
-#include "clang/Lex/PreprocessingRecord.h"
 #include "clang/Lex/ScratchBuffer.h"
 #include "clang/Lex/LexDiagnostic.h"
 #include "clang/Basic/SourceManager.h"
@@ -53,8 +52,8 @@ Preprocessor::Preprocessor(Diagnostic &diags, const LangOptions &opts,
                            bool OwnsHeaders)
   : Diags(&diags), Features(opts), Target(target),FileMgr(Headers.getFileMgr()),
     SourceMgr(SM), HeaderInfo(Headers), ExternalSource(0),
-    Identifiers(opts, IILookup), BuiltinInfo(Target), CodeCompletionFile(0),
-    CurPPLexer(0), CurDirLookup(0), Callbacks(0), MacroArgCache(0), Record(0) {
+    Identifiers(opts, IILookup), BuiltinInfo(Target), CodeCompletionFile(0), 
+    CurPPLexer(0), CurDirLookup(0), Callbacks(0), MacroArgCache(0) {
   ScratchBuf = new ScratchBuffer(SourceMgr);
   CounterValue = 0; // __COUNTER__ starts at 0.
   OwnsHeaderSearch = OwnsHeaders;
@@ -81,7 +80,7 @@ Preprocessor::Preprocessor(Diagnostic &diags, const LangOptions &opts,
 
   // We haven't read anything from the external source.
   ReadMacrosFromExternalSource = false;
-
+      
   // "Poison" __VA_ARGS__, which can only appear in the expansion of a macro.
   // This gets unpoisoned where it is allowed.
   (Ident__VA_ARGS__ = getIdentifierInfo("__VA_ARGS__"))->setIsPoisoned();
@@ -117,7 +116,7 @@ Preprocessor::~Preprocessor() {
   // Free any cached macro expanders.
   for (unsigned i = 0, e = NumCachedTokenLexers; i != e; ++i)
     delete TokenLexerCache[i];
-
+  
   // Free any cached MacroArgs.
   for (MacroArgs *ArgList = MacroArgCache; ArgList; )
     ArgList = ArgList->deallocate();
@@ -199,30 +198,30 @@ void Preprocessor::PrintStats() {
              << NumFastTokenPaste << " on the fast path.\n";
 }
 
-Preprocessor::macro_iterator
-Preprocessor::macro_begin(bool IncludeExternalMacros) const {
-  if (IncludeExternalMacros && ExternalSource &&
+Preprocessor::macro_iterator 
+Preprocessor::macro_begin(bool IncludeExternalMacros) const { 
+  if (IncludeExternalMacros && ExternalSource && 
       !ReadMacrosFromExternalSource) {
     ReadMacrosFromExternalSource = true;
     ExternalSource->ReadDefinedMacros();
   }
-
-  return Macros.begin();
+  
+  return Macros.begin(); 
 }
 
-Preprocessor::macro_iterator
-Preprocessor::macro_end(bool IncludeExternalMacros) const {
-  if (IncludeExternalMacros && ExternalSource &&
+Preprocessor::macro_iterator 
+Preprocessor::macro_end(bool IncludeExternalMacros) const { 
+  if (IncludeExternalMacros && ExternalSource && 
       !ReadMacrosFromExternalSource) {
     ReadMacrosFromExternalSource = true;
     ExternalSource->ReadDefinedMacros();
   }
-
-  return Macros.end();
+  
+  return Macros.end(); 
 }
 
-bool Preprocessor::SetCodeCompletionPoint(const FileEntry *File,
-                                          unsigned TruncateAtLine,
+bool Preprocessor::SetCodeCompletionPoint(const FileEntry *File, 
+                                          unsigned TruncateAtLine, 
                                           unsigned TruncateAtColumn) {
   using llvm::MemoryBuffer;
 
@@ -233,9 +232,8 @@ bool Preprocessor::SetCodeCompletionPoint(const FileEntry *File,
     return false;
 
   // Load the actual file's contents.
-  bool Invalid = false;
-  const MemoryBuffer *Buffer = SourceMgr.getMemoryBufferForFile(File, &Invalid);
-  if (Invalid)
+  const MemoryBuffer *Buffer = SourceMgr.getMemoryBufferForFile(File);
+  if (!Buffer)
     return true;
 
   // Find the byte position of the truncation point.
@@ -244,7 +242,7 @@ bool Preprocessor::SetCodeCompletionPoint(const FileEntry *File,
     for (; *Position; ++Position) {
       if (*Position != '\r' && *Position != '\n')
         continue;
-
+      
       // Eat \r\n or \n\r as a single line.
       if ((Position[1] == '\r' || Position[1] == '\n') &&
           Position[0] != Position[1])
@@ -253,15 +251,14 @@ bool Preprocessor::SetCodeCompletionPoint(const FileEntry *File,
       break;
     }
   }
-
+  
   Position += TruncateAtColumn - 1;
-
+  
   // Truncate the buffer.
   if (Position < Buffer->getBufferEnd()) {
-    llvm::StringRef Data(Buffer->getBufferStart(),
-                         Position-Buffer->getBufferStart());
-    MemoryBuffer *TruncatedBuffer
-      = MemoryBuffer::getMemBufferCopy(Data, Buffer->getBufferIdentifier());
+    MemoryBuffer *TruncatedBuffer 
+      = MemoryBuffer::getMemBufferCopy(Buffer->getBufferStart(), Position, 
+                                       Buffer->getBufferIdentifier());
     SourceMgr.overrideFileContents(File, TruncatedBuffer);
   }
 
@@ -285,19 +282,11 @@ bool Preprocessor::isCodeCompletionFile(SourceLocation FileLoc) const {
 /// UCNs, etc.
 std::string Preprocessor::getSpelling(const Token &Tok,
                                       const SourceManager &SourceMgr,
-                                      const LangOptions &Features, 
-                                      bool *Invalid) {
+                                      const LangOptions &Features) {
   assert((int)Tok.getLength() >= 0 && "Token character range is bogus!");
 
   // If this token contains nothing interesting, return it directly.
-  bool CharDataInvalid = false;
-  const char* TokStart = SourceMgr.getCharacterData(Tok.getLocation(), 
-                                                    &CharDataInvalid);
-  if (Invalid)
-    *Invalid = CharDataInvalid;
-  if (CharDataInvalid)
-    return std::string();
-
+  const char* TokStart = SourceMgr.getCharacterData(Tok.getLocation());
   if (!Tok.needsCleaning())
     return std::string(TokStart, TokStart+Tok.getLength());
 
@@ -321,8 +310,8 @@ std::string Preprocessor::getSpelling(const Token &Tok,
 /// after trigraph expansion and escaped-newline folding.  In particular, this
 /// wants to get the true, uncanonicalized, spelling of things like digraphs
 /// UCNs, etc.
-std::string Preprocessor::getSpelling(const Token &Tok, bool *Invalid) const {
-  return getSpelling(Tok, SourceMgr, Features, Invalid);
+std::string Preprocessor::getSpelling(const Token &Tok) const {
+  return getSpelling(Tok, SourceMgr, Features);
 }
 
 /// getSpelling - This method is used to get the spelling of a token into a
@@ -336,7 +325,7 @@ std::string Preprocessor::getSpelling(const Token &Tok, bool *Invalid) const {
 /// copy).  The caller is not allowed to modify the returned buffer pointer
 /// if an internal buffer is returned.
 unsigned Preprocessor::getSpelling(const Token &Tok,
-                                   const char *&Buffer, bool *Invalid) const {
+                                   const char *&Buffer) const {
   assert((int)Tok.getLength() >= 0 && "Token character range is bogus!");
 
   // If this token is an identifier, just return the string from the identifier
@@ -352,16 +341,8 @@ unsigned Preprocessor::getSpelling(const Token &Tok,
   if (Tok.isLiteral())
     TokStart = Tok.getLiteralData();
 
-  if (TokStart == 0) {
-    bool CharDataInvalid = false;
-    TokStart = SourceMgr.getCharacterData(Tok.getLocation(), &CharDataInvalid);
-    if (Invalid)
-      *Invalid = CharDataInvalid;
-    if (CharDataInvalid) {
-      Buffer = "";
-      return 0;
-    }
-  }
+  if (TokStart == 0)
+    TokStart = SourceMgr.getCharacterData(Tok.getLocation());
 
   // If this token contains nothing interesting, return it directly.
   if (!Tok.needsCleaning()) {
@@ -387,8 +368,7 @@ unsigned Preprocessor::getSpelling(const Token &Tok,
 /// SmallVector. Note that the returned StringRef may not point to the
 /// supplied buffer if a copy can be avoided.
 llvm::StringRef Preprocessor::getSpelling(const Token &Tok,
-                                          llvm::SmallVectorImpl<char> &Buffer,
-                                          bool *Invalid) const {
+                                    llvm::SmallVectorImpl<char> &Buffer) const {
   // Try the fast path.
   if (const IdentifierInfo *II = Tok.getIdentifierInfo())
     return II->getName();
@@ -398,7 +378,7 @@ llvm::StringRef Preprocessor::getSpelling(const Token &Tok,
     Buffer.resize(Tok.getLength());
 
   const char *Ptr = Buffer.data();
-  unsigned Len = getSpelling(Tok, Ptr, Invalid);
+  unsigned Len = getSpelling(Tok, Ptr);
   return llvm::StringRef(Ptr, Len);
 }
 
@@ -430,11 +410,10 @@ SourceLocation Preprocessor::AdvanceToTokenCharacter(SourceLocation TokStart,
   // Figure out how many physical characters away the specified instantiation
   // character is.  This needs to take into consideration newlines and
   // trigraphs.
-  bool Invalid = false;
-  const char *TokPtr = SourceMgr.getCharacterData(TokStart, &Invalid);
+  const char *TokPtr = SourceMgr.getCharacterData(TokStart);
 
   // If they request the first char of the token, we're trivially done.
-  if (Invalid || (CharNo == 0 && Lexer::isObviouslySimpleCharacter(*TokPtr)))
+  if (CharNo == 0 && Lexer::isObviouslySimpleCharacter(*TokPtr))
     return TokStart;
 
   unsigned PhysOffset = 0;
@@ -467,7 +446,7 @@ SourceLocation Preprocessor::AdvanceToTokenCharacter(SourceLocation TokStart,
   return TokStart.getFileLocWithOffset(PhysOffset);
 }
 
-SourceLocation Preprocessor::getLocForEndOfToken(SourceLocation Loc,
+SourceLocation Preprocessor::getLocForEndOfToken(SourceLocation Loc, 
                                                  unsigned Offset) {
   if (Loc.isInvalid() || !Loc.isFileID())
     return SourceLocation();
@@ -477,7 +456,7 @@ SourceLocation Preprocessor::getLocForEndOfToken(SourceLocation Loc,
     Len = Len - Offset;
   else
     return Loc;
-
+  
   return AdvanceToTokenCharacter(Loc, Len);
 }
 
@@ -498,7 +477,9 @@ void Preprocessor::EnterMainSourceFile() {
   FileID MainFileID = SourceMgr.getMainFileID();
 
   // Enter the main file source buffer.
-  EnterSourceFile(MainFileID, 0, SourceLocation());
+  std::string ErrorStr;
+  bool Res = EnterSourceFile(MainFileID, 0, ErrorStr);
+  assert(!Res && "Entering main file should not fail!");
 
   // Tell the header info that the main file was entered.  If the file is later
   // #imported, it won't be re-entered.
@@ -507,20 +488,18 @@ void Preprocessor::EnterMainSourceFile() {
 
   // Preprocess Predefines to populate the initial preprocessor state.
   llvm::MemoryBuffer *SB =
-    llvm::MemoryBuffer::getMemBufferCopy(Predefines, "<built-in>");
+    llvm::MemoryBuffer::getMemBufferCopy(Predefines.data(),
+                                         Predefines.data() + Predefines.size(),
+                                         "<built-in>");
   assert(SB && "Cannot fail to create predefined source buffer");
   FileID FID = SourceMgr.createFileIDForMemBuffer(SB);
   assert(!FID.isInvalid() && "Could not create FileID for predefines?");
 
   // Start parsing the predefines.
-  EnterSourceFile(FID, 0, SourceLocation());
+  Res = EnterSourceFile(FID, 0, ErrorStr);
+  assert(!Res && "Entering predefines should not fail!");
 }
 
-void Preprocessor::EndSourceFile() {
-  // Notify the client that we reached the end of the source file.
-  if (Callbacks)
-    Callbacks->EndOfMainFile();
-}
 
 //===----------------------------------------------------------------------===//
 // Lexer Event Handling.
@@ -540,7 +519,7 @@ IdentifierInfo *Preprocessor::LookUpIdentifierInfo(Token &Identifier,
     II = getIdentifierInfo(llvm::StringRef(BufPtr, Identifier.getLength()));
   } else {
     // Cleaning needed, alloca a buffer, clean into it, then use the buffer.
-    llvm::SmallString<64> IdentifierBuffer;
+    llvm::SmallVector<char, 64> IdentifierBuffer;
     llvm::StringRef CleanedStr = getSpelling(Identifier, IdentifierBuffer);
     II = getIdentifierInfo(CleanedStr);
   }
@@ -630,11 +609,3 @@ bool Preprocessor::HandleComment(Token &result, SourceRange Comment) {
 }
 
 CommentHandler::~CommentHandler() { }
-
-void Preprocessor::createPreprocessingRecord() {
-  if (Record)
-    return;
-  
-  Record = new PreprocessingRecord;
-  addPPCallbacks(Record);
-}

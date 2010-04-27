@@ -48,15 +48,14 @@ public:
       IncludeSystemHeaders(Opts.IncludeSystemHeaders),
       PhonyTarget(Opts.UsePhonyTargets) {}
 
-  virtual void FileChanged(SourceLocation Loc, FileChangeReason Reason,
-                           SrcMgr::CharacteristicKind FileType);
-
-  virtual void EndOfMainFile() {
+  ~DependencyFileCallback() {
     OutputDependencyFile();
     OS->flush();
     delete OS;
-    OS = 0;
   }
+
+  virtual void FileChanged(SourceLocation Loc, FileChangeReason Reason,
+                           SrcMgr::CharacteristicKind FileType);
 };
 }
 

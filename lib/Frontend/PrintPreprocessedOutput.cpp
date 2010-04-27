@@ -61,7 +61,7 @@ static void PrintMacroDefinition(const IdentifierInfo &II, const MacroInfo &MI,
   if (MI.tokens_empty() || !MI.tokens_begin()->hasLeadingSpace())
     OS << ' ';
 
-  llvm::SmallString<128> SpellingBuffer;
+  llvm::SmallVector<char, 128> SpellingBuffer;
   for (MacroInfo::tokens_iterator I = MI.tokens_begin(), E = MI.tokens_end();
        I != E; ++I) {
     if (I->hasLeadingSpace())
@@ -78,7 +78,6 @@ static void PrintMacroDefinition(const IdentifierInfo &II, const MacroInfo &MI,
 namespace {
 class PrintPPOutputPPCallbacks : public PPCallbacks {
   Preprocessor &PP;
-  SourceManager &SM;
   TokenConcatenation ConcatInfo;
 public:
   llvm::raw_ostream &OS;
@@ -95,8 +94,7 @@ private:
 public:
   PrintPPOutputPPCallbacks(Preprocessor &pp, llvm::raw_ostream &os,
                            bool lineMarkers, bool defines)
-     : PP(pp), SM(PP.getSourceManager()),
-       ConcatInfo(PP), OS(os), DisableLineMarkers(lineMarkers),
+     : PP(pp), ConcatInfo(PP), OS(os), DisableLineMarkers(lineMarkers),
        DumpDefines(defines) {
     CurLine = 0;
     CurFilename += "<uninit>";
@@ -120,14 +118,9 @@ public:
 
 
   bool HandleFirstTokOnLine(Token &Tok);
-  bool MoveToLine(SourceLocation Loc) {
-    return MoveToLine(SM.getPresumedLoc(Loc).getLine());
-  }
-  bool MoveToLine(unsigned LineNo);
-
-  bool AvoidConcat(const Token &PrevPrevTok, const Token &PrevTok, 
-                   const Token &Tok) {
-    return ConcatInfo.AvoidConcat(PrevPrevTok, PrevTok, Tok);
+  bool MoveToLine(SourceLocation Loc);
+  bool AvoidConcat(const Token &PrevTok, const Token &Tok) {
+    return ConcatInfo.AvoidConcat(PrevTok, Tok);
   }
   void WriteLineInfo(unsigned LineNo, const char *Extra=0, unsigned ExtraLen=0);
 
@@ -173,7 +166,9 @@ void PrintPPOutputPPCallbacks::WriteLineInfo(unsigned LineNo,
 /// object.  We can do this by emitting some number of \n's, or be emitting a
 /// #line directive.  This returns false if already at the specified line, true
 /// if some newlines were emitted.
-bool PrintPPOutputPPCallbacks::MoveToLine(unsigned LineNo) {
+bool PrintPPOutputPPCallbacks::MoveToLine(SourceLocation Loc) {
+  unsigned LineNo = PP.getSourceManager().getInstantiationLineNumber(Loc);
+
   if (DisableLineMarkers) {
     if (LineNo == CurLine) return false;
 
@@ -216,29 +211,27 @@ void PrintPPOutputPPCallbacks::FileChanged(SourceLocation Loc,
                                        SrcMgr::CharacteristicKind NewFileType) {
   // Unless we are exiting a #include, make sure to skip ahead to the line the
   // #include directive was at.
-  SourceManager &SourceMgr = SM;
-  
-  PresumedLoc UserLoc = SourceMgr.getPresumedLoc(Loc);
-  unsigned NewLine = UserLoc.getLine();
-  
+  SourceManager &SourceMgr = PP.getSourceManager();
   if (Reason == PPCallbacks::EnterFile) {
     SourceLocation IncludeLoc = SourceMgr.getPresumedLoc(Loc).getIncludeLoc();
     if (IncludeLoc.isValid())
       MoveToLine(IncludeLoc);
   } else if (Reason == PPCallbacks::SystemHeaderPragma) {
-    MoveToLine(NewLine);
+    MoveToLine(Loc);
 
     // TODO GCC emits the # directive for this directive on the line AFTER the
     // directive and emits a bunch of spaces that aren't needed.  Emulate this
     // strange behavior.
   }
-  
-  CurLine = NewLine;
+
+  Loc = SourceMgr.getInstantiationLoc(Loc);
+  // FIXME: Should use presumed line #!
+  CurLine = SourceMgr.getInstantiationLineNumber(Loc);
 
   if (DisableLineMarkers) return;
 
   CurFilename.clear();
-  CurFilename += UserLoc.getFilename();
+  CurFilename += SourceMgr.getPresumedLoc(Loc).getFilename();
   Lexer::Stringify(CurFilename);
   FileType = NewFileType;
 
@@ -325,7 +318,8 @@ bool PrintPPOutputPPCallbacks::HandleFirstTokOnLine(Token &Tok) {
 
   // Print out space characters so that the first token on a line is
   // indented for easy reading.
-  unsigned ColNo = SM.getInstantiationColumnNumber(Tok.getLocation());
+  const SourceManager &SourceMgr = PP.getSourceManager();
+  unsigned ColNo = SourceMgr.getInstantiationColumnNumber(Tok.getLocation());
 
   // This hack prevents stuff like:
   // #define HASH #
@@ -397,7 +391,6 @@ static void PrintPreprocessedTokens(Preprocessor &PP, Token &Tok,
                                     PrintPPOutputPPCallbacks *Callbacks,
                                     llvm::raw_ostream &OS) {
   char Buffer[256];
-  Token PrevPrevTok;
   Token PrevTok;
   while (1) {
 
@@ -409,7 +402,7 @@ static void PrintPreprocessedTokens(Preprocessor &PP, Token &Tok,
                // useful to look at and no concatenation could happen anyway.
                (Callbacks->hasEmittedTokensOnThisLine() &&
                 // Don't print "-" next to "-", it would form "--".
-                Callbacks->AvoidConcat(PrevPrevTok, PrevTok, Tok))) {
+                Callbacks->AvoidConcat(PrevTok, Tok))) {
       OS << ' ';
     }
 
@@ -440,7 +433,6 @@ static void PrintPreprocessedTokens(Preprocessor &PP, Token &Tok,
 
     if (Tok.is(tok::eof)) break;
 
-    PrevPrevTok = PrevTok;
     PrevTok = Tok;
     PP.Lex(Tok);
   }
@@ -490,6 +482,8 @@ void clang::DoPrintPreprocessedInput(Preprocessor &PP, llvm::raw_ostream *OS,
   // Inform the preprocessor whether we want it to retain comments or not, due
   // to -C or -CC.
   PP.SetCommentRetentionState(Opts.ShowComments, Opts.ShowMacroComments);
+
+  OS->SetBufferSize(64*1024);
 
   PrintPPOutputPPCallbacks *Callbacks =
       new PrintPPOutputPPCallbacks(PP, *OS, !Opts.ShowLineMarkers,

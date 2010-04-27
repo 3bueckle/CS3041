@@ -16,23 +16,6 @@
 
 namespace clang {
 class FixItRewriter;
-class FixItPathRewriter;
-
-//===----------------------------------------------------------------------===//
-// Custom Consumer Actions
-//===----------------------------------------------------------------------===//
-
-class InitOnlyAction : public FrontendAction {
-  virtual void ExecuteAction();
-
-  virtual ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
-                                         llvm::StringRef InFile);
-
-public:
-  // Don't claim to only use the preprocessor, we want to follow the AST path,
-  // but do nothing.
-  virtual bool usesPreprocessorOnly() const { return false; }
-};
 
 //===----------------------------------------------------------------------===//
 // AST Consumer Actions
@@ -74,10 +57,15 @@ protected:
                                          llvm::StringRef InFile);
 };
 
+class DumpRecordAction : public ASTFrontendAction {
+protected:
+  virtual ASTConsumer *CreateASTConsumer(CompilerInstance &CI,
+                                         llvm::StringRef InFile);
+};
+
 class FixItAction : public ASTFrontendAction {
 private:
   llvm::OwningPtr<FixItRewriter> Rewriter;
-  llvm::OwningPtr<FixItPathRewriter> PathRewriter;
 
 protected:
 

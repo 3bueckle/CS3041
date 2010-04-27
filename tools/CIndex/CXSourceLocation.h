@@ -16,12 +16,13 @@
 
 #include "clang-c/Index.h"
 #include "clang/Basic/SourceLocation.h"
+#include "clang/Basic/SourceManager.h"
 #include "clang/Basic/LangOptions.h"
 #include "clang/AST/ASTContext.h"
 
 namespace clang {
-
-class SourceManager;
+      
+class ASTContext;
 
 namespace cxloc {
 

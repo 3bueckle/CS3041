@@ -18,7 +18,7 @@
 #include "clang/Basic/IdentifierTable.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/FoldingSet.h"
-#include "llvm/Support/raw_ostream.h"
+#include <cstdio>
 using namespace clang;
 
 namespace clang {
@@ -202,42 +202,32 @@ bool DeclarationName::isDependentName() const {
 }
 
 std::string DeclarationName::getAsString() const {
-  std::string Result;
-  llvm::raw_string_ostream OS(Result);
-  printName(OS);
-  return OS.str();
-}
-
-void DeclarationName::printName(llvm::raw_ostream &OS) const {
   switch (getNameKind()) {
   case Identifier:
     if (const IdentifierInfo *II = getAsIdentifierInfo())
-      OS << II->getName();
-    return;
+      return II->getName();
+    return "";
 
   case ObjCZeroArgSelector:
   case ObjCOneArgSelector:
   case ObjCMultiArgSelector:
-    OS << getObjCSelector().getAsString();
-    return;
+    return getObjCSelector().getAsString();
 
   case CXXConstructorName: {
     QualType ClassType = getCXXNameType();
     if (const RecordType *ClassRec = ClassType->getAs<RecordType>())
-      OS << ClassRec->getDecl();
-    else
-      OS << ClassType.getAsString();
-    return;
+      return ClassRec->getDecl()->getNameAsString();
+    return ClassType.getAsString();
   }
 
   case CXXDestructorName: {
-    OS << '~';
+    std::string Result = "~";
     QualType Type = getCXXNameType();
     if (const RecordType *Rec = Type->getAs<RecordType>())
-      OS << Rec->getDecl();
+      Result += Rec->getDecl()->getNameAsString();
     else
-      OS << Type.getAsString();
-    return;
+      Result += Type.getAsString();
+    return Result;
   }
 
   case CXXOperatorName: {
@@ -250,32 +240,32 @@ void DeclarationName::printName(llvm::raw_ostream &OS) const {
     const char *OpName = OperatorNames[getCXXOverloadedOperator()];
     assert(OpName && "not an overloaded operator");
 
-    OS << "operator";
+    std::string Result = "operator";
     if (OpName[0] >= 'a' && OpName[0] <= 'z')
-      OS << ' ';
-    OS << OpName;
-    return;
+      Result += ' ';
+    Result += OpName;
+    return Result;
   }
 
-  case CXXLiteralOperatorName:
-    OS << "operator \"\" " << getCXXLiteralIdentifier()->getName();
-    return;
+  case CXXLiteralOperatorName: {
+    return "operator \"\" " + std::string(getCXXLiteralIdentifier()->getName());
+  }
 
   case CXXConversionFunctionName: {
-    OS << "operator ";
+    std::string Result = "operator ";
     QualType Type = getCXXNameType();
     if (const RecordType *Rec = Type->getAs<RecordType>())
-      OS << Rec->getDecl();
+      Result += Rec->getDecl()->getNameAsString();
     else
-      OS << Type.getAsString();
-    return;
+      Result += Type.getAsString();
+    return Result;
   }
   case CXXUsingDirective:
-    OS << "<using-directive>";
-    return;
+    return "<using-directive>";
   }
 
   assert(false && "Unexpected declaration name kind");
+  return "";
 }
 
 QualType DeclarationName::getCXXNameType() const {
@@ -379,8 +369,7 @@ DeclarationName DeclarationName::getUsingDirectiveName() {
 }
 
 void DeclarationName::dump() const {
-  printName(llvm::errs());
-  llvm::errs() << '\n';
+  fprintf(stderr, "%s\n", getAsString().c_str());
 }
 
 DeclarationNameTable::DeclarationNameTable() {

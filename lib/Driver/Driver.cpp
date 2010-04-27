@@ -45,17 +45,16 @@ using namespace clang;
 Driver::Driver(llvm::StringRef _Name, llvm::StringRef _Dir,
                llvm::StringRef _DefaultHostTriple,
                llvm::StringRef _DefaultImageName,
-               bool IsProduction, bool CXXIsProduction,
-               Diagnostic &_Diags)
+               bool IsProduction, Diagnostic &_Diags)
   : Opts(createDriverOptTable()), Diags(_Diags),
     Name(_Name), Dir(_Dir), DefaultHostTriple(_DefaultHostTriple),
     DefaultImageName(_DefaultImageName),
     DriverTitle("clang \"gcc-compatible\" driver"),
     Host(0),
-    CCCGenericGCCName("gcc"), CCPrintOptionsFilename(0), CCCIsCXX(false),
-    CCCEcho(false), CCCPrintBindings(false), CCPrintOptions(false),
-    CheckInputsExist(true), CCCUseClang(true), CCCUseClangCXX(true),
-    CCCUseClangCPP(true), CCCUsePCH(true), SuppressMissingInputWarning(false) {
+    CCCGenericGCCName("gcc"), CCCIsCXX(false), CCCEcho(false),
+    CCCPrintBindings(false), CheckInputsExist(true), CCCUseClang(true),
+    CCCUseClangCXX(true), CCCUseClangCPP(true), CCCUsePCH(true),
+    SuppressMissingInputWarning(false) {
   if (IsProduction) {
     // In a "production" build, only use clang on architectures we expect to
     // work, and don't use clang C++.
@@ -67,8 +66,7 @@ Driver::Driver(llvm::StringRef _Name, llvm::StringRef _Dir,
     CCCClangArchs.insert(llvm::Triple::x86_64);
     CCCClangArchs.insert(llvm::Triple::arm);
 
-    if (!CXXIsProduction)
-      CCCUseClangCXX = false;
+    CCCUseClangCXX = false;
   }
 
   // Compute the path to the resource directory.
@@ -174,8 +172,6 @@ Compilation *Driver::BuildCompilation(int argc, const char **argv) {
     HostTriple = A->getValue(*Args);
   if (const Arg *A = Args->getLastArg(options::OPT_ccc_install_dir))
     Dir = A->getValue(*Args);
-  if (const Arg *A = Args->getLastArg(options::OPT_B))
-    PrefixDir = A->getValue(*Args);
 
   Host = GetHostInfo(HostTriple);
 
@@ -239,8 +235,12 @@ int Driver::ExecuteCompilation(const Compilation &C) const {
     // other tools are less common, and they generally have worse diagnostics,
     // so always print the diagnostic there.
     const Action &Source = FailingCommand->getSource();
+    bool IsFriendlyTool = (isa<PreprocessJobAction>(Source) ||
+                           isa<PrecompileJobAction>(Source) ||
+                           isa<AnalyzeJobAction>(Source) ||
+                           isa<CompileJobAction>(Source));
 
-    if (!FailingCommand->getCreator().hasGoodDiagnostics() || Res != 1) {
+    if (!IsFriendlyTool || Res != 1) {
       // FIXME: See FIXME above regarding result code interpretation.
       if (Res < 0)
         Diag(clang::diag::err_drv_command_signalled)
@@ -503,11 +503,8 @@ void Driver::BuildUniversalActions(const ArgList &Args,
         << types::getTypeName(Act->getType());
 
     ActionList Inputs;
-    for (unsigned i = 0, e = Archs.size(); i != e; ++i) {
+    for (unsigned i = 0, e = Archs.size(); i != e; ++i)
       Inputs.push_back(new BindArchAction(Act, Archs[i]));
-      if (i != 0)
-        Inputs.back()->setOwnsInputs(false);
-    }
 
     // Lipo if necessary, we do it this way because we need to set the arch flag
     // so that -Xarch_ gets overwritten.
@@ -1088,15 +1085,6 @@ const char *Driver::GetNamedOutputPath(Compilation &C,
 }
 
 std::string Driver::GetFilePath(const char *Name, const ToolChain &TC) const {
-  // Respect a limited subset of the '-Bprefix' functionality in GCC by
-  // attempting to use this prefix when lokup up program paths.
-  if (!PrefixDir.empty()) {
-    llvm::sys::Path P(PrefixDir);
-    P.appendComponent(Name);
-    if (P.exists())
-      return P.str();
-  }
-
   const ToolChain::path_list &List = TC.getFilePaths();
   for (ToolChain::path_list::const_iterator
          it = List.begin(), ie = List.end(); it != ie; ++it) {
@@ -1111,15 +1099,6 @@ std::string Driver::GetFilePath(const char *Name, const ToolChain &TC) const {
 
 std::string Driver::GetProgramPath(const char *Name, const ToolChain &TC,
                                    bool WantFile) const {
-  // Respect a limited subset of the '-Bprefix' functionality in GCC by
-  // attempting to use this prefix when lokup up program paths.
-  if (!PrefixDir.empty()) {
-    llvm::sys::Path P(PrefixDir);
-    P.appendComponent(Name);
-    if (WantFile ? P.exists() : P.canExecute())
-      return P.str();
-  }
-
   const ToolChain::path_list &List = TC.getProgramPaths();
   for (ToolChain::path_list::const_iterator
          it = List.begin(), ie = List.end(); it != ie; ++it) {

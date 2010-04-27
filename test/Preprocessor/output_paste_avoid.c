@@ -4,11 +4,8 @@
 #define y(a) ..a
 A: y(.)
 // This should print as ".. ." to avoid turning into ...
-// CHECK: A: .. .
+// CHECK: A: . . .
 
-#define X 0 .. 1
-B: X
-// CHECK: B: 0 .. 1
 
 #define DOT .
 C: ..DOT
@@ -27,7 +24,3 @@ E: test(str)
 // Should expand to L "str" not L"str"
 // CHECK: E: L "str"
 
-// Should avoid producing >>=.
-#define equal =
-F: >>equal
-// CHECK: F: >> =

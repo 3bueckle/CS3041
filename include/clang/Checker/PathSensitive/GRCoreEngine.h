@@ -82,7 +82,7 @@ class GRCoreEngine {
 
   void ProcessStmt(CFGElement E, GRStmtNodeBuilder& Builder);
 
-  bool ProcessBlockEntrance(CFGBlock* Blk, const ExplodedNode *Pred,
+  bool ProcessBlockEntrance(CFGBlock* Blk, const GRState* State,
                             GRBlockCounter BC);
 
 
@@ -174,9 +174,7 @@ public:
   GRBlockCounter getBlockCounter() const { return Eng.WList->getBlockCounter();}
 
   unsigned getCurrentBlockCount() const {
-    return getBlockCounter().getNumVisited(
-                            Pred->getLocationContext()->getCurrentStackFrame(),
-                                           B.getBlockID());
+    return getBlockCounter().getNumVisited(B.getBlockID());
   }
 
   ExplodedNode* generateNode(PostStmt PP,const GRState* St,ExplodedNode* Pred) {
@@ -239,7 +237,31 @@ public:
   }
 
   ExplodedNode* MakeNode(ExplodedNodeSet& Dst, Stmt* S, ExplodedNode* Pred,
-                         const GRState* St, ProgramPoint::Kind K);
+                         const GRState* St, ProgramPoint::Kind K) {
+
+    const GRState* PredState = GetState(Pred);
+
+    // If the state hasn't changed, don't generate a new node.
+    if (!BuildSinks && St == PredState && Auditor == 0) {
+      Dst.Add(Pred);
+      return NULL;
+    }
+
+    ExplodedNode* N = generateNode(S, St, Pred, K);
+
+    if (N) {
+      if (BuildSinks)
+        N->markAsSink();
+      else {
+        if (Auditor && Auditor->Audit(N, Mgr))
+          N->markAsSink();
+
+        Dst.Add(N);
+      }
+    }
+
+    return N;
+  }
 
   ExplodedNode* MakeSinkNode(ExplodedNodeSet& Dst, Stmt* S,
                        ExplodedNode* Pred, const GRState* St) {
@@ -249,6 +271,7 @@ public:
     BuildSinks = Tmp;
     return N;
   }
+
 };
 
 class GRBranchNodeBuilder {
@@ -411,9 +434,7 @@ public:
   }
 
   unsigned getCurrentBlockCount() const {
-    return getBlockCounter().getNumVisited(
-                            Pred->getLocationContext()->getCurrentStackFrame(),
-                                           B.getBlockID());
+    return getBlockCounter().getNumVisited(B.getBlockID());
   }
 
   ExplodedNode* generateNode(const GRState* State, const void *tag = 0,

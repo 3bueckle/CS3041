@@ -125,12 +125,10 @@ Parser::ParseStatementOrDeclaration(bool OnlyStatement) {
     // expression[opt] ';'
     OwningExprResult Expr(ParseExpression());
     if (Expr.isInvalid()) {
-      // If the expression is invalid, skip ahead to the next semicolon or '}'.
-      // Not doing this opens us up to the possibility of infinite loops if
+      // If the expression is invalid, skip ahead to the next semicolon.  Not
+      // doing this opens us up to the possibility of infinite loops if
       // ParseExpression does not consume any tokens.
-      SkipUntil(tok::r_brace, /*StopAtSemi=*/true, /*DontConsume=*/true);
-      if (Tok.is(tok::semi))
-        ConsumeToken();
+      SkipUntil(tok::semi);
       return StmtError();
     }
     // Otherwise, eat the semicolon.
@@ -643,7 +641,6 @@ Parser::OwningStmtResult Parser::ParseIfStatement(AttributeList *Attr) {
 
   if (Tok.is(tok::kw_else)) {
     ElseLoc = ConsumeToken();
-    ElseStmtLoc = Tok.getLocation();
 
     // C99 6.8.4p3 - In C99, the body of the if statement is a scope, even if
     // there is no compound stmt.  C90 does not have this clause.  We only do
@@ -657,14 +654,12 @@ Parser::OwningStmtResult Parser::ParseIfStatement(AttributeList *Attr) {
     ParseScope InnerScope(this, Scope::DeclScope,
                           C99orCXX && Tok.isNot(tok::l_brace));
 
-    // Regardless of whether or not InnerScope actually pushed a scope, set the
-    // ElseScope flag for the innermost scope so we can diagnose use of the if
-    // condition variable in C++.
-    unsigned OldFlags = CurScope->getFlags();
-    CurScope->setFlags(OldFlags | Scope::ElseScope);
+    bool WithinElse = CurScope->isWithinElse();
+    CurScope->setWithinElse(true);
+    ElseStmtLoc = Tok.getLocation();
     ElseStmt = ParseStatement();
-    CurScope->setFlags(OldFlags);
-    
+    CurScope->setWithinElse(WithinElse);
+
     // Pop the 'else' scope if needed.
     InnerScope.Exit();
   }
@@ -1000,7 +995,7 @@ Parser::OwningStmtResult Parser::ParseForStatement(AttributeList *Attr) {
 
     SourceLocation DeclStart = Tok.getLocation(), DeclEnd;
     DeclGroupPtrTy DG = ParseSimpleDeclaration(Declarator::ForContext, DeclEnd,
-                                               AttrList, false);
+                                               AttrList);
     FirstPart = Actions.ActOnDeclStmt(DG, DeclStart, Tok.getLocation());
 
     if (Tok.is(tok::semi)) {  // for (int x = 4;

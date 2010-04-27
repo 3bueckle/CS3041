@@ -16,8 +16,3 @@ int main() {
 	&object.index; // expected-error {{address of property expression requested}}
 	return 0;
 }
-
-typedef int Foo;
-void test() {
-  Foo.x;	// expected-error {{expected identifier or '('}}
-}

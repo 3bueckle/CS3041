@@ -13,6 +13,9 @@
 //===----------------------------------------------------------------------===//
 
 #include "Sema.h"
+#include "clang/Analysis/AnalysisContext.h"
+#include "clang/Analysis/CFG.h"
+#include "clang/Analysis/Analyses/ReachableCode.h"
 #include "clang/Analysis/Analyses/PrintfFormatString.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/CharUnits.h"
@@ -26,8 +29,8 @@
 #include "clang/Lex/Preprocessor.h"
 #include "llvm/ADT/BitVector.h"
 #include "llvm/ADT/STLExtras.h"
-#include "clang/Basic/TargetBuiltins.h"
 #include <limits>
+#include <queue>
 using namespace clang;
 
 /// getLocationOfStringLiteralByte - Return a source location that points to the
@@ -56,12 +59,9 @@ SourceLocation Sema::getLocationOfStringLiteralByte(const StringLiteral *SL,
     // Re-lex the token to get its length and original spelling.
     std::pair<FileID, unsigned> LocInfo =
       SourceMgr.getDecomposedLoc(StrTokSpellingLoc);
-    bool Invalid = false;
-    llvm::StringRef Buffer = SourceMgr.getBufferData(LocInfo.first, &Invalid);
-    if (Invalid)
-      return StrTokSpellingLoc;
-      
-    const char *StrData = Buffer.data()+LocInfo.second;
+    std::pair<const char *,const char *> Buffer =
+      SourceMgr.getBufferData(LocInfo.first);
+    const char *StrData = Buffer.first+LocInfo.second;
 
     // Create a langops struct and enable trigraphs.  This is sufficient for
     // relexing tokens.
@@ -69,8 +69,8 @@ SourceLocation Sema::getLocationOfStringLiteralByte(const StringLiteral *SL,
     LangOpts.Trigraphs = true;
 
     // Create a lexer starting at the beginning of this token.
-    Lexer TheLexer(StrTokSpellingLoc, LangOpts, Buffer.begin(), StrData,
-                   Buffer.end());
+    Lexer TheLexer(StrTokSpellingLoc, LangOpts, Buffer.first, StrData,
+                   Buffer.second);
     Token TheTok;
     TheLexer.LexFromRawLexer(TheTok);
 
@@ -156,18 +156,14 @@ Sema::CheckBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
       return ExprError();
     break;
   case Builtin::BI__builtin_return_address:
-  case Builtin::BI__builtin_frame_address: {
-    llvm::APSInt Result;
-    if (SemaBuiltinConstantArg(TheCall, 0, Result))
+  case Builtin::BI__builtin_frame_address:
+    if (SemaBuiltinStackAddress(TheCall))
       return ExprError();
     break;
-  }
-  case Builtin::BI__builtin_eh_return_data_regno: {
-    llvm::APSInt Result;
-    if (SemaBuiltinConstantArg(TheCall, 0, Result))
+  case Builtin::BI__builtin_eh_return_data_regno:
+    if (SemaBuiltinEHReturnDataRegNo(TheCall))
       return ExprError();
     break;
-  }
   case Builtin::BI__builtin_shufflevector:
     return SemaBuiltinShuffleVector(TheCall);
     // TheCall will be freed by the smart pointer here, but that's fine, since
@@ -189,11 +185,13 @@ Sema::CheckBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
   case Builtin::BI__sync_fetch_and_or:
   case Builtin::BI__sync_fetch_and_and:
   case Builtin::BI__sync_fetch_and_xor:
+  case Builtin::BI__sync_fetch_and_nand:
   case Builtin::BI__sync_add_and_fetch:
   case Builtin::BI__sync_sub_and_fetch:
   case Builtin::BI__sync_and_and_fetch:
   case Builtin::BI__sync_or_and_fetch:
   case Builtin::BI__sync_xor_and_fetch:
+  case Builtin::BI__sync_nand_and_fetch:
   case Builtin::BI__sync_val_compare_and_swap:
   case Builtin::BI__sync_bool_compare_and_swap:
   case Builtin::BI__sync_lock_test_and_set:
@@ -201,15 +199,6 @@ Sema::CheckBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
     if (SemaBuiltinAtomicOverloaded(TheCall))
       return ExprError();
     break;
-    
-  // Target specific builtins start here.
-  case X86::BI__builtin_ia32_palignr128:
-  case X86::BI__builtin_ia32_palignr: {
-    llvm::APSInt Result;
-    if (SemaBuiltinConstantArg(TheCall, 2, Result))
-      return ExprError();
-    break;
-  }
   }
 
   return move(TheCallResult);
@@ -234,6 +223,11 @@ bool Sema::CheckFunctionCall(FunctionDecl *FDecl, CallExpr *TheCall) {
   if (const FormatAttr *Format = FDecl->getAttr<FormatAttr>()) {
     if (CheckablePrintfAttr(Format, TheCall)) {
       bool HasVAListArg = Format->getFirstArg() == 0;
+      if (!HasVAListArg) {
+        if (const FunctionProtoType *Proto
+            = FDecl->getType()->getAs<FunctionProtoType>())
+          HasVAListArg = !Proto->isVariadic();
+      }
       CheckPrintfArguments(TheCall, HasVAListArg, Format->getFormatIdx() - 1,
                            HasVAListArg ? 0 : Format->getFirstArg() - 1);
     }
@@ -264,6 +258,12 @@ bool Sema::CheckBlockCall(NamedDecl *NDecl, CallExpr *TheCall) {
     return false;
 
   bool HasVAListArg = Format->getFirstArg() == 0;
+  if (!HasVAListArg) {
+    const FunctionType *FT =
+      Ty->getAs<BlockPointerType>()->getPointeeType()->getAs<FunctionType>();
+    if (const FunctionProtoType *Proto = dyn_cast<FunctionProtoType>(FT))
+      HasVAListArg = !Proto->isVariadic();
+  }
   CheckPrintfArguments(TheCall, HasVAListArg, Format->getFormatIdx() - 1,
                        HasVAListArg ? 0 : Format->getFirstArg() - 1);
 
@@ -284,10 +284,8 @@ bool Sema::SemaBuiltinAtomicOverloaded(CallExpr *TheCall) {
 
   // Ensure that we have at least one argument to do type inference from.
   if (TheCall->getNumArgs() < 1)
-    return Diag(TheCall->getLocEnd(),
-              diag::err_typecheck_call_too_few_args_at_least)
-              << 0 << 1 << TheCall->getNumArgs()
-              << TheCall->getCallee()->getSourceRange();
+    return Diag(TheCall->getLocEnd(), diag::err_typecheck_call_too_few_args)
+              << 0 << TheCall->getCallee()->getSourceRange();
 
   // Inspect the first argument of the atomic builtin.  This should always be
   // a pointer type, whose element is an integral scalar or pointer type.
@@ -318,12 +316,14 @@ bool Sema::SemaBuiltinAtomicOverloaded(CallExpr *TheCall) {
     BUILTIN_ROW(__sync_fetch_and_or),
     BUILTIN_ROW(__sync_fetch_and_and),
     BUILTIN_ROW(__sync_fetch_and_xor),
+    BUILTIN_ROW(__sync_fetch_and_nand),
 
     BUILTIN_ROW(__sync_add_and_fetch),
     BUILTIN_ROW(__sync_sub_and_fetch),
     BUILTIN_ROW(__sync_and_and_fetch),
     BUILTIN_ROW(__sync_or_and_fetch),
     BUILTIN_ROW(__sync_xor_and_fetch),
+    BUILTIN_ROW(__sync_nand_and_fetch),
 
     BUILTIN_ROW(__sync_val_compare_and_swap),
     BUILTIN_ROW(__sync_bool_compare_and_swap),
@@ -358,24 +358,26 @@ bool Sema::SemaBuiltinAtomicOverloaded(CallExpr *TheCall) {
   case Builtin::BI__sync_fetch_and_or:  BuiltinIndex = 2; break;
   case Builtin::BI__sync_fetch_and_and: BuiltinIndex = 3; break;
   case Builtin::BI__sync_fetch_and_xor: BuiltinIndex = 4; break;
+  case Builtin::BI__sync_fetch_and_nand:BuiltinIndex = 5; break;
 
-  case Builtin::BI__sync_add_and_fetch: BuiltinIndex = 5; break;
-  case Builtin::BI__sync_sub_and_fetch: BuiltinIndex = 6; break;
-  case Builtin::BI__sync_and_and_fetch: BuiltinIndex = 7; break;
-  case Builtin::BI__sync_or_and_fetch:  BuiltinIndex = 8; break;
-  case Builtin::BI__sync_xor_and_fetch: BuiltinIndex = 9; break;
+  case Builtin::BI__sync_add_and_fetch: BuiltinIndex = 6; break;
+  case Builtin::BI__sync_sub_and_fetch: BuiltinIndex = 7; break;
+  case Builtin::BI__sync_and_and_fetch: BuiltinIndex = 8; break;
+  case Builtin::BI__sync_or_and_fetch:  BuiltinIndex = 9; break;
+  case Builtin::BI__sync_xor_and_fetch: BuiltinIndex =10; break;
+  case Builtin::BI__sync_nand_and_fetch:BuiltinIndex =11; break;
 
   case Builtin::BI__sync_val_compare_and_swap:
-    BuiltinIndex = 10;
+    BuiltinIndex = 12;
     NumFixed = 2;
     break;
   case Builtin::BI__sync_bool_compare_and_swap:
-    BuiltinIndex = 11;
+    BuiltinIndex = 13;
     NumFixed = 2;
     break;
-  case Builtin::BI__sync_lock_test_and_set: BuiltinIndex = 12; break;
+  case Builtin::BI__sync_lock_test_and_set: BuiltinIndex = 14; break;
   case Builtin::BI__sync_lock_release:
-    BuiltinIndex = 13;
+    BuiltinIndex = 15;
     NumFixed = 0;
     break;
   }
@@ -383,10 +385,8 @@ bool Sema::SemaBuiltinAtomicOverloaded(CallExpr *TheCall) {
   // Now that we know how many fixed arguments we expect, first check that we
   // have at least that many.
   if (TheCall->getNumArgs() < 1+NumFixed)
-    return Diag(TheCall->getLocEnd(),
-            diag::err_typecheck_call_too_few_args_at_least)
-            << 0 << 1+NumFixed << TheCall->getNumArgs()
-            << TheCall->getCallee()->getSourceRange();
+    return Diag(TheCall->getLocEnd(), diag::err_typecheck_call_too_few_args)
+            << 0 << TheCall->getCallee()->getSourceRange();
 
 
   // Get the decl for the concrete builtin from this, we can tell what the
@@ -423,8 +423,9 @@ bool Sema::SemaBuiltinAtomicOverloaded(CallExpr *TheCall) {
     // GCC does an implicit conversion to the pointer or integer ValType.  This
     // can fail in some cases (1i -> int**), check for this error case now.
     CastExpr::CastKind Kind = CastExpr::CK_Unknown;
-    CXXBaseSpecifierArray BasePath;
-    if (CheckCastTypes(Arg->getSourceRange(), ValType, Arg, Kind, BasePath))
+    CXXMethodDecl *ConversionDecl = 0;
+    if (CheckCastTypes(Arg->getSourceRange(), ValType, Arg, Kind,
+                       ConversionDecl))
       return true;
 
     // Okay, we have something that *can* be converted to the right type.  Check
@@ -433,7 +434,7 @@ bool Sema::SemaBuiltinAtomicOverloaded(CallExpr *TheCall) {
     // pass in 42.  The 42 gets converted to char.  This is even more strange
     // for things like 45.123 -> char, etc.
     // FIXME: Do this check.
-    ImpCastExprToType(Arg, ValType, Kind);
+    ImpCastExprToType(Arg, ValType, Kind, /*isLvalue=*/false);
     TheCall->setArg(i+1, Arg);
   }
 
@@ -493,17 +494,15 @@ bool Sema::SemaBuiltinVAStart(CallExpr *TheCall) {
   if (TheCall->getNumArgs() > 2) {
     Diag(TheCall->getArg(2)->getLocStart(),
          diag::err_typecheck_call_too_many_args)
-      << 0 /*function call*/ << 2 << TheCall->getNumArgs()
-      << Fn->getSourceRange()
+      << 0 /*function call*/ << Fn->getSourceRange()
       << SourceRange(TheCall->getArg(2)->getLocStart(),
                      (*(TheCall->arg_end()-1))->getLocEnd());
     return true;
   }
 
   if (TheCall->getNumArgs() < 2) {
-    return Diag(TheCall->getLocEnd(),
-      diag::err_typecheck_call_too_few_args_at_least)
-      << 0 /*function call*/ << 2 << TheCall->getNumArgs();
+    return Diag(TheCall->getLocEnd(), diag::err_typecheck_call_too_few_args)
+      << 0 /*function call*/;
   }
 
   // Determine whether the current function is variadic or not.
@@ -557,11 +556,11 @@ bool Sema::SemaBuiltinVAStart(CallExpr *TheCall) {
 bool Sema::SemaBuiltinUnorderedCompare(CallExpr *TheCall) {
   if (TheCall->getNumArgs() < 2)
     return Diag(TheCall->getLocEnd(), diag::err_typecheck_call_too_few_args)
-      << 0 << 2 << TheCall->getNumArgs()/*function call*/;
+      << 0 /*function call*/;
   if (TheCall->getNumArgs() > 2)
     return Diag(TheCall->getArg(2)->getLocStart(),
                 diag::err_typecheck_call_too_many_args)
-      << 0 /*function call*/ << 2 << TheCall->getNumArgs()
+      << 0 /*function call*/
       << SourceRange(TheCall->getArg(2)->getLocStart(),
                      (*(TheCall->arg_end()-1))->getLocEnd());
 
@@ -599,11 +598,11 @@ bool Sema::SemaBuiltinUnorderedCompare(CallExpr *TheCall) {
 bool Sema::SemaBuiltinFPClassification(CallExpr *TheCall, unsigned NumArgs) {
   if (TheCall->getNumArgs() < NumArgs)
     return Diag(TheCall->getLocEnd(), diag::err_typecheck_call_too_few_args)
-      << 0 << NumArgs << TheCall->getNumArgs()/*function call*/;
+      << 0 /*function call*/;
   if (TheCall->getNumArgs() > NumArgs)
     return Diag(TheCall->getArg(NumArgs)->getLocStart(),
                 diag::err_typecheck_call_too_many_args)
-      << 0 /*function call*/ << NumArgs << TheCall->getNumArgs()
+      << 0 /*function call*/
       << SourceRange(TheCall->getArg(NumArgs)->getLocStart(),
                      (*(TheCall->arg_end()-1))->getLocEnd());
 
@@ -621,14 +620,25 @@ bool Sema::SemaBuiltinFPClassification(CallExpr *TheCall, unsigned NumArgs) {
   return false;
 }
 
+bool Sema::SemaBuiltinStackAddress(CallExpr *TheCall) {
+  // The signature for these builtins is exact; the only thing we need
+  // to check is that the argument is a constant.
+  SourceLocation Loc;
+  if (!TheCall->getArg(0)->isTypeDependent() &&
+      !TheCall->getArg(0)->isValueDependent() &&
+      !TheCall->getArg(0)->isIntegerConstantExpr(Context, &Loc))
+    return Diag(Loc, diag::err_stack_const_level) << TheCall->getSourceRange();
+
+  return false;
+}
+
 /// SemaBuiltinShuffleVector - Handle __builtin_shufflevector.
 // This is declared to take (...), so we have to check everything.
 Action::OwningExprResult Sema::SemaBuiltinShuffleVector(CallExpr *TheCall) {
   if (TheCall->getNumArgs() < 3)
     return ExprError(Diag(TheCall->getLocEnd(),
-                          diag::err_typecheck_call_too_few_args_at_least)
-      << 0 /*function call*/ << 3 << TheCall->getNumArgs()
-      << TheCall->getSourceRange());
+                          diag::err_typecheck_call_too_few_args)
+      << 0 /*function call*/ << TheCall->getSourceRange());
 
   unsigned numElements = std::numeric_limits<unsigned>::max();
   if (!TheCall->getArg(0)->isTypeDependent() &&
@@ -655,14 +665,10 @@ Action::OwningExprResult Sema::SemaBuiltinShuffleVector(CallExpr *TheCall) {
       if (TheCall->getNumArgs() < numElements+2)
         return ExprError(Diag(TheCall->getLocEnd(),
                               diag::err_typecheck_call_too_few_args)
-                 << 0 /*function call*/ 
-                 << numElements+2 << TheCall->getNumArgs()
-                 << TheCall->getSourceRange());
+                 << 0 /*function call*/ << TheCall->getSourceRange());
       return ExprError(Diag(TheCall->getLocEnd(),
                             diag::err_typecheck_call_too_many_args)
-                 << 0 /*function call*/ 
-                 << numElements+2 << TheCall->getNumArgs()
-                 << TheCall->getSourceRange());
+                 << 0 /*function call*/ << TheCall->getSourceRange());
     }
   }
 
@@ -671,9 +677,11 @@ Action::OwningExprResult Sema::SemaBuiltinShuffleVector(CallExpr *TheCall) {
         TheCall->getArg(i)->isValueDependent())
       continue;
 
-    llvm::APSInt Result;
-    if (SemaBuiltinConstantArg(TheCall, i, Result))
-      return ExprError();
+    llvm::APSInt Result(32);
+    if (!TheCall->getArg(i)->isIntegerConstantExpr(Result, Context))
+      return ExprError(Diag(TheCall->getLocStart(),
+                  diag::err_shufflevector_nonconstant_argument)
+                << TheCall->getArg(i)->getSourceRange());
 
     if (Result.getActiveBits() > 64 || Result.getZExtValue() >= numElements*2)
       return ExprError(Diag(TheCall->getLocStart(),
@@ -701,19 +709,30 @@ bool Sema::SemaBuiltinPrefetch(CallExpr *TheCall) {
   unsigned NumArgs = TheCall->getNumArgs();
 
   if (NumArgs > 3)
-    return Diag(TheCall->getLocEnd(),
-             diag::err_typecheck_call_too_many_args_at_most)
-             << 0 /*function call*/ << 3 << NumArgs
-             << TheCall->getSourceRange();
+    return Diag(TheCall->getLocEnd(), diag::err_typecheck_call_too_many_args)
+             << 0 /*function call*/ << TheCall->getSourceRange();
 
   // Argument 0 is checked for us and the remaining arguments must be
   // constant integers.
   for (unsigned i = 1; i != NumArgs; ++i) {
     Expr *Arg = TheCall->getArg(i);
-    
+    if (Arg->isTypeDependent())
+      continue;
+
+    if (!Arg->getType()->isIntegralType())
+      return Diag(TheCall->getLocStart(), diag::err_prefetch_invalid_arg_type)
+              << Arg->getSourceRange();
+
+    ImpCastExprToType(Arg, Context.IntTy, CastExpr::CK_IntegralCast);
+    TheCall->setArg(i, Arg);
+
+    if (Arg->isValueDependent())
+      continue;
+
     llvm::APSInt Result;
-    if (SemaBuiltinConstantArg(TheCall, i, Result))
-      return true;
+    if (!Arg->isIntegerConstantExpr(Result, Context))
+      return Diag(TheCall->getLocStart(), diag::err_prefetch_invalid_arg_ice)
+        << SourceRange(Arg->getLocStart(), Arg->getLocEnd());
 
     // FIXME: gcc issues a warning and rewrites these to 0. These
     // seems especially odd for the third argument since the default
@@ -732,35 +751,42 @@ bool Sema::SemaBuiltinPrefetch(CallExpr *TheCall) {
   return false;
 }
 
-/// SemaBuiltinConstantArg - Handle a check if argument ArgNum of CallExpr
-/// TheCall is a constant expression.
-bool Sema::SemaBuiltinConstantArg(CallExpr *TheCall, int ArgNum,
-                                  llvm::APSInt &Result) {
-  Expr *Arg = TheCall->getArg(ArgNum);
-  DeclRefExpr *DRE =cast<DeclRefExpr>(TheCall->getCallee()->IgnoreParenCasts());
-  FunctionDecl *FDecl = cast<FunctionDecl>(DRE->getDecl());
-  
-  if (Arg->isTypeDependent() || Arg->isValueDependent()) return false;
-  
-  if (!Arg->isIntegerConstantExpr(Result, Context))
-    return Diag(TheCall->getLocStart(), diag::err_constant_integer_arg_type)
-                << FDecl->getDeclName() <<  Arg->getSourceRange();
-  
+/// SemaBuiltinEHReturnDataRegNo - Handle __builtin_eh_return_data_regno, the
+/// operand must be an integer constant.
+bool Sema::SemaBuiltinEHReturnDataRegNo(CallExpr *TheCall) {
+  llvm::APSInt Result;
+  if (!TheCall->getArg(0)->isIntegerConstantExpr(Result, Context))
+    return Diag(TheCall->getLocStart(), diag::err_expr_not_ice)
+      << TheCall->getArg(0)->getSourceRange();
+
   return false;
 }
+
 
 /// SemaBuiltinObjectSize - Handle __builtin_object_size(void *ptr,
 /// int type). This simply type checks that type is one of the defined
 /// constants (0-3).
 // For compatability check 0-3, llvm only handles 0 and 2.
 bool Sema::SemaBuiltinObjectSize(CallExpr *TheCall) {
-  llvm::APSInt Result;
-  
-  // Check constant-ness first.
-  if (SemaBuiltinConstantArg(TheCall, 1, Result))
-    return true;
-
   Expr *Arg = TheCall->getArg(1);
+  if (Arg->isTypeDependent())
+    return false;
+
+  QualType ArgType = Arg->getType();
+  const BuiltinType *BT = ArgType->getAs<BuiltinType>();
+  llvm::APSInt Result(32);
+  if (!BT || BT->getKind() != BuiltinType::Int)
+    return Diag(TheCall->getLocStart(), diag::err_object_size_invalid_argument)
+             << SourceRange(Arg->getLocStart(), Arg->getLocEnd());
+
+  if (Arg->isValueDependent())
+    return false;
+
+  if (!Arg->isIntegerConstantExpr(Result, Context)) {
+    return Diag(TheCall->getLocStart(), diag::err_object_size_invalid_argument)
+             << SourceRange(Arg->getLocStart(), Arg->getLocEnd());
+  }
+
   if (Result.getSExtValue() < 0 || Result.getSExtValue() > 3) {
     return Diag(TheCall->getLocStart(), diag::err_argument_invalid_range)
              << "0" << "3" << SourceRange(Arg->getLocStart(), Arg->getLocEnd());
@@ -773,13 +799,11 @@ bool Sema::SemaBuiltinObjectSize(CallExpr *TheCall) {
 /// This checks that val is a constant 1.
 bool Sema::SemaBuiltinLongjmp(CallExpr *TheCall) {
   Expr *Arg = TheCall->getArg(1);
-  llvm::APSInt Result;
+  if (Arg->isTypeDependent() || Arg->isValueDependent())
+    return false;
 
-  // TODO: This is less than ideal. Overload this to take a value.
-  if (SemaBuiltinConstantArg(TheCall, 1, Result))
-    return true;
-  
-  if (Result != 1)
+  llvm::APSInt Result(32);
+  if (!Arg->isIntegerConstantExpr(Result, Context) || Result != 1)
     return Diag(TheCall->getLocStart(), diag::err_builtin_longjmp_invalid_val)
              << SourceRange(Arg->getLocStart(), Arg->getLocEnd());
 
@@ -1022,7 +1046,6 @@ class CheckPrintfHandler : public analyze_printf::FormatStringHandler {
   Sema &S;
   const StringLiteral *FExpr;
   const Expr *OrigFormatExpr;
-  const unsigned FirstDataArg;
   const unsigned NumDataArgs;
   const bool IsObjCLiteral;
   const char *Beg; // Start of format string.
@@ -1034,12 +1057,11 @@ class CheckPrintfHandler : public analyze_printf::FormatStringHandler {
   bool atFirstArg;
 public:
   CheckPrintfHandler(Sema &s, const StringLiteral *fexpr,
-                     const Expr *origFormatExpr, unsigned firstDataArg,
+                     const Expr *origFormatExpr,
                      unsigned numDataArgs, bool isObjCLiteral,
                      const char *beg, bool hasVAListArg,
                      const CallExpr *theCall, unsigned formatIdx)
     : S(s), FExpr(fexpr), OrigFormatExpr(origFormatExpr),
-      FirstDataArg(firstDataArg),
       NumDataArgs(numDataArgs),
       IsObjCLiteral(isObjCLiteral), Beg(beg),
       HasVAListArg(hasVAListArg),
@@ -1162,8 +1184,10 @@ void CheckPrintfHandler::HandleNullChar(const char *nullCharacter) {
 }
 
 const Expr *CheckPrintfHandler::getDataArg(unsigned i) const {
-  return TheCall->getArg(FirstDataArg + i);
+  return TheCall->getArg(FormatIdx + i + 1);
 }
+
+
 
 void CheckPrintfHandler::HandleFlags(const analyze_printf::FormatSpecifier &FS,
                                      llvm::StringRef flag,
@@ -1306,18 +1330,9 @@ CheckPrintfHandler::HandleFormatSpecifier(const analyze_printf::FormatSpecifier
     return true;
 
   if (argIndex >= NumDataArgs) {
-    if (FS.usesPositionalArg())  {
-      S.Diag(getLocationOfByte(CS.getStart()),
-             diag::warn_printf_positional_arg_exceeds_data_args)
-        << (argIndex+1) << NumDataArgs
-        << getFormatSpecifierRange(startSpecifier, specifierLen);
-    }
-    else {
-      S.Diag(getLocationOfByte(CS.getStart()),
-             diag::warn_printf_insufficient_data_args)
-        << getFormatSpecifierRange(startSpecifier, specifierLen);
-    }
-
+    S.Diag(getLocationOfByte(CS.getStart()),
+           diag::warn_printf_insufficient_data_args)
+      << getFormatSpecifierRange(startSpecifier, specifierLen);
     // Don't do any more checking.
     return false;
   }
@@ -1386,7 +1401,7 @@ void Sema::CheckPrintfString(const StringLiteral *FExpr,
     return;
   }
 
-  CheckPrintfHandler H(*this, FExpr, OrigFormatExpr, firstDataArg,
+  CheckPrintfHandler H(*this, FExpr, OrigFormatExpr,
                        TheCall->getNumArgs() - firstDataArg,
                        isa<ObjCStringLiteral>(OrigFormatExpr), Str,
                        HasVAListArg, TheCall, format_idx);
@@ -1879,17 +1894,6 @@ IntRange GetExprRange(ASTContext &C, Expr *E, unsigned MaxWidth) {
 
     // Left shift gets black-listed based on a judgement call.
     case BinaryOperator::Shl:
-      // ...except that we want to treat '1 << (blah)' as logically
-      // positive.  It's an important idiom.
-      if (IntegerLiteral *I
-            = dyn_cast<IntegerLiteral>(BO->getLHS()->IgnoreParenCasts())) {
-        if (I->getValue() == 1) {
-          IntRange R = IntRange::forType(C, E->getType());
-          return IntRange(R.Width, /*NonNegative*/ true);
-        }
-      }
-      // fallthrough
-
     case BinaryOperator::ShlAssign:
       return IntRange::forType(C, E->getType());
 
@@ -2007,9 +2011,10 @@ bool IsSameFloatAfterCast(const APValue &value,
 /// \param lex the left-hand expression
 /// \param rex the right-hand expression
 /// \param OpLoc the location of the joining operator
-/// \param BinOpc binary opcode or 0
+/// \param Equality whether this is an "equality-like" join, which
+///   suppresses the warning in some cases
 void Sema::CheckSignCompare(Expr *lex, Expr *rex, SourceLocation OpLoc,
-                            const BinaryOperator::Opcode* BinOpc) {
+                            const PartialDiagnostic &PD, bool Equality) {
   // Don't warn if we're in an unevaluated context.
   if (ExprEvalContexts.back().Context == Unevaluated)
     return;
@@ -2037,11 +2042,6 @@ void Sema::CheckSignCompare(Expr *lex, Expr *rex, SourceLocation OpLoc,
     tmp = Context.isPromotableBitField(rex);
     if (!tmp.isNull()) rt = tmp;
   }
-
-  if (const EnumType *E = lt->getAs<EnumType>())
-    lt = E->getDecl()->getPromotionType();
-  if (const EnumType *E = rt->getAs<EnumType>())
-    rt = E->getDecl()->getPromotionType();
 
   // The rule is that the signed operand becomes unsigned, so isolate the
   // signed operand.
@@ -2075,51 +2075,17 @@ void Sema::CheckSignCompare(Expr *lex, Expr *rex, SourceLocation OpLoc,
 
   // If the signed operand is non-negative, then the signed->unsigned
   // conversion won't change it.
-  if (signedRange.NonNegative) {
-    // Emit warnings for comparisons of unsigned to integer constant 0.
-    //   always false: x < 0  (or 0 > x)
-    //   always true:  x >= 0 (or 0 <= x)
-    llvm::APSInt X;
-    if (BinOpc && signedOperand->isIntegerConstantExpr(X, Context) && X == 0) {
-      if (signedOperand != lex) {
-        if (*BinOpc == BinaryOperator::LT) {
-          Diag(OpLoc, diag::warn_lunsigned_always_true_comparison)
-            << "< 0" << "false"
-            << lex->getSourceRange() << rex->getSourceRange();
-        }
-        else if (*BinOpc == BinaryOperator::GE) {
-          Diag(OpLoc, diag::warn_lunsigned_always_true_comparison)
-            << ">= 0" << "true"
-            << lex->getSourceRange() << rex->getSourceRange();
-        }
-      }
-      else {
-        if (*BinOpc == BinaryOperator::GT) {
-          Diag(OpLoc, diag::warn_runsigned_always_true_comparison)
-            << "0 >" << "false" 
-            << lex->getSourceRange() << rex->getSourceRange();
-        } 
-        else if (*BinOpc == BinaryOperator::LE) {
-          Diag(OpLoc, diag::warn_runsigned_always_true_comparison)
-            << "0 <=" << "true" 
-            << lex->getSourceRange() << rex->getSourceRange();
-        }
-      }
-    }
+  if (signedRange.NonNegative)
     return;
-  }
 
   // For (in)equality comparisons, if the unsigned operand is a
   // constant which cannot collide with a overflowed signed operand,
   // then reinterpreting the signed operand as unsigned will not
   // change the result of the comparison.
-  if (BinOpc &&
-      (*BinOpc == BinaryOperator::EQ || *BinOpc == BinaryOperator::NE) &&
-      unsignedRange.Width < unsignedWidth)
+  if (Equality && unsignedRange.Width < unsignedWidth)
     return;
 
-  Diag(OpLoc, BinOpc ? diag::warn_mixed_sign_comparison
-                     : diag::warn_mixed_sign_conditional)
+  Diag(OpLoc, PD)
     << lt << rt << lex->getSourceRange() << rex->getSourceRange();
 }
 
@@ -2217,6 +2183,276 @@ void Sema::CheckImplicitConversion(Expr *E, QualType T) {
   return;
 }
 
+
+
+namespace {
+class UnreachableCodeHandler : public reachable_code::Callback {
+  Sema &S;
+public:
+  UnreachableCodeHandler(Sema *s) : S(*s) {}
+  
+  void HandleUnreachable(SourceLocation L, SourceRange R1, SourceRange R2) {
+    S.Diag(L, diag::warn_unreachable) << R1 << R2;
+  }
+};  
+}
+
+/// CheckUnreachable - Check for unreachable code.
+void Sema::CheckUnreachable(AnalysisContext &AC) {
+  // We avoid checking when there are errors, as the CFG won't faithfully match
+  // the user's code.
+  if (getDiagnostics().hasErrorOccurred() ||
+      Diags.getDiagnosticLevel(diag::warn_unreachable) == Diagnostic::Ignored)
+    return;
+
+  UnreachableCodeHandler UC(this);
+  reachable_code::FindUnreachableCode(AC, UC);
+}
+
+/// CheckFallThrough - Check that we don't fall off the end of a
+/// Statement that should return a value.
+///
+/// \returns AlwaysFallThrough iff we always fall off the end of the statement,
+/// MaybeFallThrough iff we might or might not fall off the end,
+/// NeverFallThroughOrReturn iff we never fall off the end of the statement or
+/// return.  We assume NeverFallThrough iff we never fall off the end of the
+/// statement but we may return.  We assume that functions not marked noreturn
+/// will return.
+Sema::ControlFlowKind Sema::CheckFallThrough(AnalysisContext &AC) {
+  CFG *cfg = AC.getCFG();
+  if (cfg == 0)
+    // FIXME: This should be NeverFallThrough
+    return NeverFallThroughOrReturn;
+
+  // The CFG leaves in dead things, and we don't want the dead code paths to
+  // confuse us, so we mark all live things first.
+  std::queue<CFGBlock*> workq;
+  llvm::BitVector live(cfg->getNumBlockIDs());
+  unsigned count = reachable_code::ScanReachableFromBlock(cfg->getEntry(),
+                                                          live);
+
+  bool AddEHEdges = AC.getAddEHEdges();
+  if (!AddEHEdges && count != cfg->getNumBlockIDs())
+    // When there are things remaining dead, and we didn't add EH edges
+    // from CallExprs to the catch clauses, we have to go back and
+    // mark them as live.
+    for (CFG::iterator I = cfg->begin(), E = cfg->end(); I != E; ++I) {
+      CFGBlock &b = **I;
+      if (!live[b.getBlockID()]) {
+        if (b.pred_begin() == b.pred_end()) {
+          if (b.getTerminator() && isa<CXXTryStmt>(b.getTerminator()))
+            // When not adding EH edges from calls, catch clauses
+            // can otherwise seem dead.  Avoid noting them as dead.
+            count += reachable_code::ScanReachableFromBlock(b, live);
+          continue;
+        }
+      }
+    }
+
+  // Now we know what is live, we check the live precessors of the exit block
+  // and look for fall through paths, being careful to ignore normal returns,
+  // and exceptional paths.
+  bool HasLiveReturn = false;
+  bool HasFakeEdge = false;
+  bool HasPlainEdge = false;
+  bool HasAbnormalEdge = false;
+  for (CFGBlock::pred_iterator I=cfg->getExit().pred_begin(),
+         E = cfg->getExit().pred_end();
+       I != E;
+       ++I) {
+    CFGBlock& B = **I;
+    if (!live[B.getBlockID()])
+      continue;
+    if (B.size() == 0) {
+      if (B.getTerminator() && isa<CXXTryStmt>(B.getTerminator())) {
+        HasAbnormalEdge = true;
+        continue;
+      }
+
+      // A labeled empty statement, or the entry block...
+      HasPlainEdge = true;
+      continue;
+    }
+    Stmt *S = B[B.size()-1];
+    if (isa<ReturnStmt>(S)) {
+      HasLiveReturn = true;
+      continue;
+    }
+    if (isa<ObjCAtThrowStmt>(S)) {
+      HasFakeEdge = true;
+      continue;
+    }
+    if (isa<CXXThrowExpr>(S)) {
+      HasFakeEdge = true;
+      continue;
+    }
+    if (const AsmStmt *AS = dyn_cast<AsmStmt>(S)) {
+      if (AS->isMSAsm()) {
+        HasFakeEdge = true;
+        HasLiveReturn = true;
+        continue;
+      }
+    }
+    if (isa<CXXTryStmt>(S)) {
+      HasAbnormalEdge = true;
+      continue;
+    }
+
+    bool NoReturnEdge = false;
+    if (CallExpr *C = dyn_cast<CallExpr>(S)) {
+      if (B.succ_begin()[0] != &cfg->getExit()) {
+        HasAbnormalEdge = true;
+        continue;
+      }
+      Expr *CEE = C->getCallee()->IgnoreParenCasts();
+      if (CEE->getType().getNoReturnAttr()) {
+        NoReturnEdge = true;
+        HasFakeEdge = true;
+      } else if (DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(CEE)) {
+        ValueDecl *VD = DRE->getDecl();
+        if (VD->hasAttr<NoReturnAttr>()) {
+          NoReturnEdge = true;
+          HasFakeEdge = true;
+        }
+      }
+    }
+    // FIXME: Add noreturn message sends.
+    if (NoReturnEdge == false)
+      HasPlainEdge = true;
+  }
+  if (!HasPlainEdge) {
+    if (HasLiveReturn)
+      return NeverFallThrough;
+    return NeverFallThroughOrReturn;
+  }
+  if (HasAbnormalEdge || HasFakeEdge || HasLiveReturn)
+    return MaybeFallThrough;
+  // This says AlwaysFallThrough for calls to functions that are not marked
+  // noreturn, that don't return.  If people would like this warning to be more
+  // accurate, such functions should be marked as noreturn.
+  return AlwaysFallThrough;
+}
+
+/// CheckFallThroughForFunctionDef - Check that we don't fall off the end of a
+/// function that should return a value.  Check that we don't fall off the end
+/// of a noreturn function.  We assume that functions and blocks not marked
+/// noreturn will return.
+void Sema::CheckFallThroughForFunctionDef(Decl *D, Stmt *Body,
+                                          AnalysisContext &AC) {
+  // FIXME: Would be nice if we had a better way to control cascading errors,
+  // but for now, avoid them.  The problem is that when Parse sees:
+  //   int foo() { return a; }
+  // The return is eaten and the Sema code sees just:
+  //   int foo() { }
+  // which this code would then warn about.
+  if (getDiagnostics().hasErrorOccurred())
+    return;
+
+  bool ReturnsVoid = false;
+  bool HasNoReturn = false;
+
+  if (FunctionDecl *FD = dyn_cast<FunctionDecl>(D)) {
+    // For function templates, class templates and member function templates
+    // we'll do the analysis at instantiation time.
+    if (FD->isDependentContext())
+      return;
+
+    ReturnsVoid = FD->getResultType()->isVoidType();
+    HasNoReturn = FD->hasAttr<NoReturnAttr>() ||
+                  FD->getType()->getAs<FunctionType>()->getNoReturnAttr();
+
+  } else if (ObjCMethodDecl *MD = dyn_cast<ObjCMethodDecl>(D)) {
+    ReturnsVoid = MD->getResultType()->isVoidType();
+    HasNoReturn = MD->hasAttr<NoReturnAttr>();
+  }
+
+  // Short circuit for compilation speed.
+  if ((Diags.getDiagnosticLevel(diag::warn_maybe_falloff_nonvoid_function)
+       == Diagnostic::Ignored || ReturnsVoid)
+      && (Diags.getDiagnosticLevel(diag::warn_noreturn_function_has_return_expr)
+          == Diagnostic::Ignored || !HasNoReturn)
+      && (Diags.getDiagnosticLevel(diag::warn_suggest_noreturn_block)
+          == Diagnostic::Ignored || !ReturnsVoid))
+    return;
+  // FIXME: Function try block
+  if (CompoundStmt *Compound = dyn_cast<CompoundStmt>(Body)) {
+    switch (CheckFallThrough(AC)) {
+    case MaybeFallThrough:
+      if (HasNoReturn)
+        Diag(Compound->getRBracLoc(), diag::warn_falloff_noreturn_function);
+      else if (!ReturnsVoid)
+        Diag(Compound->getRBracLoc(),diag::warn_maybe_falloff_nonvoid_function);
+      break;
+    case AlwaysFallThrough:
+      if (HasNoReturn)
+        Diag(Compound->getRBracLoc(), diag::warn_falloff_noreturn_function);
+      else if (!ReturnsVoid)
+        Diag(Compound->getRBracLoc(), diag::warn_falloff_nonvoid_function);
+      break;
+    case NeverFallThroughOrReturn:
+      if (ReturnsVoid && !HasNoReturn)
+        Diag(Compound->getLBracLoc(), diag::warn_suggest_noreturn_function);
+      break;
+    case NeverFallThrough:
+      break;
+    }
+  }
+}
+
+/// CheckFallThroughForBlock - Check that we don't fall off the end of a block
+/// that should return a value.  Check that we don't fall off the end of a
+/// noreturn block.  We assume that functions and blocks not marked noreturn
+/// will return.
+void Sema::CheckFallThroughForBlock(QualType BlockTy, Stmt *Body,
+                                    AnalysisContext &AC) {
+  // FIXME: Would be nice if we had a better way to control cascading errors,
+  // but for now, avoid them.  The problem is that when Parse sees:
+  //   int foo() { return a; }
+  // The return is eaten and the Sema code sees just:
+  //   int foo() { }
+  // which this code would then warn about.
+  if (getDiagnostics().hasErrorOccurred())
+    return;
+  bool ReturnsVoid = false;
+  bool HasNoReturn = false;
+  if (const FunctionType *FT =BlockTy->getPointeeType()->getAs<FunctionType>()){
+    if (FT->getResultType()->isVoidType())
+      ReturnsVoid = true;
+    if (FT->getNoReturnAttr())
+      HasNoReturn = true;
+  }
+
+  // Short circuit for compilation speed.
+  if (ReturnsVoid
+      && !HasNoReturn
+      && (Diags.getDiagnosticLevel(diag::warn_suggest_noreturn_block)
+          == Diagnostic::Ignored || !ReturnsVoid))
+    return;
+  // FIXME: Funtion try block
+  if (CompoundStmt *Compound = dyn_cast<CompoundStmt>(Body)) {
+    switch (CheckFallThrough(AC)) {
+    case MaybeFallThrough:
+      if (HasNoReturn)
+        Diag(Compound->getRBracLoc(), diag::err_noreturn_block_has_return_expr);
+      else if (!ReturnsVoid)
+        Diag(Compound->getRBracLoc(), diag::err_maybe_falloff_nonvoid_block);
+      break;
+    case AlwaysFallThrough:
+      if (HasNoReturn)
+        Diag(Compound->getRBracLoc(), diag::err_noreturn_block_has_return_expr);
+      else if (!ReturnsVoid)
+        Diag(Compound->getRBracLoc(), diag::err_falloff_nonvoid_block);
+      break;
+    case NeverFallThroughOrReturn:
+      if (ReturnsVoid)
+        Diag(Compound->getLBracLoc(), diag::warn_suggest_noreturn_block);
+      break;
+    case NeverFallThrough:
+      break;
+    }
+  }
+}
+
 /// CheckParmsForFunctionDef - Check that the parameters of the given
 /// function are appropriate for the definition of a function. This
 /// takes care of any checks that cannot be performed on the
@@ -2259,6 +2495,10 @@ bool Sema::CheckParmsForFunctionDef(FunctionDecl *FD) {
         Diag(Param->getLocation(), diag::err_array_star_in_function_definition);
       }
     }
+
+    if (getLangOptions().CPlusPlus)
+      if (const RecordType *RT = Param->getType()->getAs<RecordType>())
+        FinalizeVarWithDestructor(Param, RT);
   }
 
   return HasInvalidParm;

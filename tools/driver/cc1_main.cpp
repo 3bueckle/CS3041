@@ -29,10 +29,8 @@
 #include "clang/Frontend/TextDiagnosticPrinter.h"
 #include "llvm/LLVMContext.h"
 #include "llvm/ADT/OwningPtr.h"
-#include "llvm/ADT/Statistic.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/ManagedStatic.h"
-#include "llvm/Support/Timer.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/System/DynamicLibrary.h"
 #include "llvm/Target/TargetSelect.h"
@@ -64,6 +62,7 @@ static FrontendAction *CreateFrontendBaseAction(CompilerInstance &CI) {
   case ASTPrintXML:            return new ASTPrintXMLAction();
   case ASTView:                return new ASTViewAction();
   case DumpRawTokens:          return new DumpRawTokensAction();
+  case DumpRecordLayouts:      return new DumpRecordAction();
   case DumpTokens:             return new DumpTokensAction();
   case EmitAssembly:           return new EmitAssemblyAction();
   case EmitBC:                 return new EmitBCAction();
@@ -75,7 +74,6 @@ static FrontendAction *CreateFrontendBaseAction(CompilerInstance &CI) {
   case GeneratePCH:            return new GeneratePCHAction();
   case GeneratePTH:            return new GeneratePTHAction();
   case InheritanceView:        return new InheritanceViewAction();
-  case InitOnly:               return new InitOnlyAction();
   case ParseNoop:              return new ParseOnlyAction();
   case ParsePrintCallbacks:    return new PrintParseAction();
   case ParseSyntaxOnly:        return new SyntaxOnlyAction();
@@ -196,9 +194,9 @@ static int cc1_test(Diagnostic &Diags,
 
 int cc1_main(const char **ArgBegin, const char **ArgEnd,
              const char *Argv0, void *MainAddr) {
-  llvm::OwningPtr<CompilerInstance> Clang(new CompilerInstance());
+  CompilerInstance Clang;
 
-  Clang->setLLVMContext(new llvm::LLVMContext());
+  Clang.setLLVMContext(new llvm::LLVMContext);
 
   // Run clang -cc1 test.
   if (ArgBegin != ArgEnd && llvm::StringRef(ArgBegin[0]) == "-cc1test") {
@@ -210,23 +208,22 @@ int cc1_main(const char **ArgBegin, const char **ArgEnd,
   // Initialize targets first, so that --version shows registered targets.
   llvm::InitializeAllTargets();
   llvm::InitializeAllAsmPrinters();
-  llvm::InitializeAllAsmParsers();
 
   // Buffer diagnostics from argument parsing so that we can output them using a
   // well formed diagnostic object.
   TextDiagnosticBuffer DiagsBuffer;
   Diagnostic Diags(&DiagsBuffer);
-  CompilerInvocation::CreateFromArgs(Clang->getInvocation(), ArgBegin, ArgEnd,
+  CompilerInvocation::CreateFromArgs(Clang.getInvocation(), ArgBegin, ArgEnd,
                                      Diags);
 
   // Infer the builtin include path if unspecified.
-  if (Clang->getHeaderSearchOpts().UseBuiltinIncludes &&
-      Clang->getHeaderSearchOpts().ResourceDir.empty())
-    Clang->getHeaderSearchOpts().ResourceDir =
+  if (Clang.getHeaderSearchOpts().UseBuiltinIncludes &&
+      Clang.getHeaderSearchOpts().ResourceDir.empty())
+    Clang.getHeaderSearchOpts().ResourceDir =
       CompilerInvocation::GetResourcesPath(Argv0, MainAddr);
 
   // Honor -help.
-  if (Clang->getFrontendOpts().ShowHelp) {
+  if (Clang.getFrontendOpts().ShowHelp) {
     llvm::OwningPtr<driver::OptTable> Opts(driver::createCC1OptTable());
     Opts->PrintHelp(llvm::outs(), "clang -cc1",
                     "LLVM 'Clang' Compiler: http://clang.llvm.org");
@@ -236,40 +233,27 @@ int cc1_main(const char **ArgBegin, const char **ArgEnd,
   // Honor -version.
   //
   // FIXME: Use a better -version message?
-  if (Clang->getFrontendOpts().ShowVersion) {
+  if (Clang.getFrontendOpts().ShowVersion) {
     llvm::cl::PrintVersionMessage();
     return 0;
   }
 
-  // Honor -mllvm.
-  //
-  // FIXME: Remove this, one day.
-  if (!Clang->getFrontendOpts().LLVMArgs.empty()) {
-    unsigned NumArgs = Clang->getFrontendOpts().LLVMArgs.size();
-    const char **Args = new const char*[NumArgs + 2];
-    Args[0] = "clang (LLVM option parsing)";
-    for (unsigned i = 0; i != NumArgs; ++i)
-      Args[i + 1] = Clang->getFrontendOpts().LLVMArgs[i].c_str();
-    Args[NumArgs + 1] = 0;
-    llvm::cl::ParseCommandLineOptions(NumArgs + 1, const_cast<char **>(Args));
-  }
-
   // Create the actual diagnostics engine.
-  Clang->createDiagnostics(ArgEnd - ArgBegin, const_cast<char**>(ArgBegin));
-  if (!Clang->hasDiagnostics())
+  Clang.createDiagnostics(ArgEnd - ArgBegin, const_cast<char**>(ArgBegin));
+  if (!Clang.hasDiagnostics())
     return 1;
 
   // Set an error handler, so that any LLVM backend diagnostics go through our
   // error handler.
-  llvm::install_fatal_error_handler(LLVMErrorHandler,
-                                  static_cast<void*>(&Clang->getDiagnostics()));
+  llvm::llvm_install_error_handler(LLVMErrorHandler,
+                                   static_cast<void*>(&Clang.getDiagnostics()));
 
-  DiagsBuffer.FlushDiagnostics(Clang->getDiagnostics());
+  DiagsBuffer.FlushDiagnostics(Clang.getDiagnostics());
 
   // Load any requested plugins.
   for (unsigned i = 0,
-         e = Clang->getFrontendOpts().Plugins.size(); i != e; ++i) {
-    const std::string &Path = Clang->getFrontendOpts().Plugins[i];
+         e = Clang.getFrontendOpts().Plugins.size(); i != e; ++i) {
+    const std::string &Path = Clang.getFrontendOpts().Plugins[i];
     std::string Error;
     if (llvm::sys::DynamicLibrary::LoadLibraryPermanently(Path.c_str(), &Error))
       Diags.Report(diag::err_fe_unable_to_load_plugin) << Path << Error;
@@ -277,26 +261,11 @@ int cc1_main(const char **ArgBegin, const char **ArgEnd,
 
   // If there were errors in processing arguments, don't do anything else.
   bool Success = false;
-  if (!Clang->getDiagnostics().getNumErrors()) {
+  if (!Clang.getDiagnostics().getNumErrors()) {
     // Create and execute the frontend action.
-    llvm::OwningPtr<FrontendAction> Act(CreateFrontendAction(*Clang));
-    if (Act) {
-      Success = Clang->ExecuteAction(*Act);
-      if (Clang->getFrontendOpts().DisableFree)
-        Act.take();
-    }
-  }
-
-  // If any timers were active but haven't been destroyed yet, print their
-  // results now.  This happens in -disable-free mode.
-  llvm::TimerGroup::printAll(llvm::errs());
-  
-  // When running with -disable-free, don't do any destruction or shutdown.
-  if (Clang->getFrontendOpts().DisableFree) {
-    if (Clang->getFrontendOpts().ShowStats)
-      llvm::PrintStatistics();
-    Clang.take();
-    return !Success;
+    llvm::OwningPtr<FrontendAction> Act(CreateFrontendAction(Clang));
+    if (Act)
+      Success = Clang.ExecuteAction(*Act);
   }
 
   // Managed static deconstruction. Useful for making things like

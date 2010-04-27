@@ -18,15 +18,17 @@
 
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclObjC.h"
+#include "clang/Checker/PathSensitive/SymbolManager.h"
 #include "clang/Checker/PathSensitive/SVals.h"
+#include "clang/AST/ASTContext.h"
 #include "llvm/Support/Casting.h"
 #include "llvm/ADT/FoldingSet.h"
+#include "llvm/ADT/ImmutableList.h"
+#include "llvm/ADT/ImmutableMap.h"
+#include "llvm/Support/Allocator.h"
 #include <string>
 
-namespace llvm {
-class BumpPtrAllocator;
-class raw_ostream;
-}
+namespace llvm { class raw_ostream; }
 
 namespace clang {
 
@@ -869,11 +871,11 @@ public:
   /// getElementRegion - Retrieve the memory region associated with the
   ///  associated element type, index, and super region.
   const ElementRegion *getElementRegion(QualType elementType, SVal Idx,
-                                        const MemRegion *superRegion,
-                                        ASTContext &Ctx);
+                                  const MemRegion *superRegion,
+                                  ASTContext &Ctx);
 
   const ElementRegion *getElementRegionWithSuper(const ElementRegion *ER,
-                                                 const MemRegion *superRegion) {
+                                           const MemRegion *superRegion) {
     return getElementRegion(ER->getElementType(), ER->getIndex(),
                             superRegion, ER->getContext());
   }

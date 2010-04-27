@@ -29,6 +29,30 @@
 #include "llvm/ADT/SmallString.h"
 using namespace clang;
 
+/// PrecedenceLevels - These are precedences for the binary/ternary operators in
+/// the C99 grammar.  These have been named to relate with the C99 grammar
+/// productions.  Low precedences numbers bind more weakly than high numbers.
+namespace prec {
+  enum Level {
+    Unknown         = 0,    // Not binary operator.
+    Comma           = 1,    // ,
+    Assignment      = 2,    // =, *=, /=, %=, +=, -=, <<=, >>=, &=, ^=, |=
+    Conditional     = 3,    // ?
+    LogicalOr       = 4,    // ||
+    LogicalAnd      = 5,    // &&
+    InclusiveOr     = 6,    // |
+    ExclusiveOr     = 7,    // ^
+    And             = 8,    // &
+    Equality        = 9,    // ==, !=
+    Relational      = 10,   //  >=, <=, >, <
+    Shift           = 11,   // <<, >>
+    Additive        = 12,   // -, +
+    Multiplicative  = 13,   // *, /, %
+    PointerToMember = 14    // .*, ->*
+  };
+}
+
+
 /// getBinOpPrecedence - Return the precedence of the specified binary operator
 /// token.  This returns:
 ///
@@ -244,11 +268,11 @@ Parser::OwningExprResult Parser::ParseAssignmentExpression() {
 /// expressions and other binary operators for these expressions as well.
 Parser::OwningExprResult
 Parser::ParseAssignmentExprWithObjCMessageExprStart(SourceLocation LBracLoc,
-                                                    SourceLocation SuperLoc,
-                                                    TypeTy *ReceiverType,
+                                                    SourceLocation NameLoc,
+                                                   IdentifierInfo *ReceiverName,
                                                     ExprArg ReceiverExpr) {
-  OwningExprResult R(ParseObjCMessageExpressionBody(LBracLoc, SuperLoc,
-                                                    ReceiverType,
+  OwningExprResult R(ParseObjCMessageExpressionBody(LBracLoc, NameLoc,
+                                                    ReceiverName,
                                                     move(ReceiverExpr)));
   if (R.isInvalid()) return move(R);
   R = ParsePostfixExpressionSuffix(move(R));
@@ -273,10 +297,10 @@ Parser::OwningExprResult Parser::ParseConstantExpression() {
 /// ParseRHSOfBinaryExpression - Parse a binary expression that starts with
 /// LHS and has a precedence of at least MinPrec.
 Parser::OwningExprResult
-Parser::ParseRHSOfBinaryExpression(OwningExprResult LHS, prec::Level MinPrec) {
-  prec::Level NextTokPrec = getBinOpPrecedence(Tok.getKind(),
-                                               GreaterThanIsOperator,
-                                               getLang().CPlusPlus0x);
+Parser::ParseRHSOfBinaryExpression(OwningExprResult LHS, unsigned MinPrec) {
+  unsigned NextTokPrec = getBinOpPrecedence(Tok.getKind(),
+                                            GreaterThanIsOperator,
+                                            getLang().CPlusPlus0x);
   SourceLocation ColonLoc;
 
   while (1) {
@@ -311,15 +335,14 @@ Parser::ParseRHSOfBinaryExpression(OwningExprResult LHS, prec::Level MinPrec) {
         Diag(Tok, diag::ext_gnu_conditional_expr);
       }
 
-      if (Tok.is(tok::colon)) {
-        // Eat the colon.
-        ColonLoc = ConsumeToken();
-      } else {
-        Diag(Tok, diag::err_expected_colon)
-          << FixItHint::CreateInsertion(Tok.getLocation(), ": ");
+      if (Tok.isNot(tok::colon)) {
+        Diag(Tok, diag::err_expected_colon);
         Diag(OpToken, diag::note_matching) << "?";
-        ColonLoc = Tok.getLocation();
+        return ExprError();
       }
+
+      // Eat the colon.
+      ColonLoc = ConsumeToken();
     }
     
     // Parse another leaf here for the RHS of the operator.
@@ -339,7 +362,7 @@ Parser::ParseRHSOfBinaryExpression(OwningExprResult LHS, prec::Level MinPrec) {
 
     // Remember the precedence of this operator and get the precedence of the
     // operator immediately to the right of the RHS.
-    prec::Level ThisPrec = NextTokPrec;
+    unsigned ThisPrec = NextTokPrec;
     NextTokPrec = getBinOpPrecedence(Tok.getKind(), GreaterThanIsOperator,
                                      getLang().CPlusPlus0x);
 
@@ -356,8 +379,7 @@ Parser::ParseRHSOfBinaryExpression(OwningExprResult LHS, prec::Level MinPrec) {
       // is okay, to bind exactly as tightly.  For example, compile A=B=C=D as
       // A=(B=(C=D)), where each paren is a level of recursion here.
       // The function takes ownership of the RHS.
-      RHS = ParseRHSOfBinaryExpression(move(RHS), 
-                            static_cast<prec::Level>(ThisPrec + !isRightAssoc));
+      RHS = ParseRHSOfBinaryExpression(move(RHS), ThisPrec + !isRightAssoc);
       if (RHS.isInvalid())
         return move(RHS);
 
@@ -458,7 +480,7 @@ Parser::OwningExprResult Parser::ParseCastExpression(bool isUnaryExpression,
 /// [OBJC]  '@encode' '(' type-name ')'
 /// [OBJC]  objc-string-literal
 /// [C++]   simple-type-specifier '(' expression-list[opt] ')'      [C++ 5.2.3]
-/// [C++]   typename-specifier '(' expression-list[opt] ')'         [C++ 5.2.3]
+/// [C++]   typename-specifier '(' expression-list[opt] ')'         [TODO]
 /// [C++]   'const_cast' '<' type-name '>' '(' expression ')'       [C++ 5.2p1]
 /// [C++]   'dynamic_cast' '<' type-name '>' '(' expression ')'     [C++ 5.2p1]
 /// [C++]   'reinterpret_cast' '<' type-name '>' '(' expression ')' [C++ 5.2p1]
@@ -478,14 +500,14 @@ Parser::OwningExprResult Parser::ParseCastExpression(bool isUnaryExpression,
 ///
 ///       id-expression: [C++ 5.1]
 ///                   unqualified-id
-///                   qualified-id          
+///                   qualified-id           [TODO]
 ///
 ///       unqualified-id: [C++ 5.1]
 ///                   identifier
 ///                   operator-function-id
-///                   conversion-function-id
-///                   '~' class-name        
-///                   template-id           
+///                   conversion-function-id [TODO]
+///                   '~' class-name         [TODO]
+///                   template-id            [TODO]
 ///
 ///       new-expression: [C++ 5.3.4]
 ///                   '::'[opt] 'new' new-placement[opt] new-type-id
@@ -615,11 +637,11 @@ Parser::OwningExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     IdentifierInfo &II = *Tok.getIdentifierInfo();
     SourceLocation ILoc = ConsumeToken();
     
-    // Support 'Class.property' and 'super.property' notation.
+    // Support 'Class.property' notation.  We don't use
+    // isTokObjCMessageIdentifierReceiver(), since it allows 'super' (which is
+    // inappropriate here).
     if (getLang().ObjC1 && Tok.is(tok::period) &&
-        (Actions.getTypeName(II, ILoc, CurScope) ||
-         // Allow the base to be 'super' if in an objc-method.
-         (&II == Ident_super && CurScope->isInObjcMethodScope()))) {
+        Actions.getTypeName(II, ILoc, CurScope)) {
       SourceLocation DotLoc = ConsumeToken();
       
       if (Tok.isNot(tok::identifier)) {
@@ -788,14 +810,6 @@ Parser::OwningExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   }
 
   case tok::annot_cxxscope: { // [C++] id-expression: qualified-id
-    // If TryAnnotateTypeOrScopeToken annotates the token, tail recurse.
-    // (We can end up in this situation after tentative parsing.)
-    if (TryAnnotateTypeOrScopeToken())
-      return ExprError();
-    if (!Tok.is(tok::annot_cxxscope))
-      return ParseCastExpression(isUnaryExpression, isAddressOfOperand,
-                                 NotCastExpr, TypeOfCast);
-
     Token Next = NextToken();
     if (Next.is(tok::annot_template_id)) {
       TemplateIdAnnotation *TemplateId
@@ -883,16 +897,11 @@ Parser::OwningExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   }
   case tok::caret:
     return ParsePostfixExpressionSuffix(ParseBlockLiteralExpression());
-  case tok::code_completion:
-    Actions.CodeCompleteOrdinaryName(CurScope, Action::CCC_Expression);
-    ConsumeToken();
-    return ParseCastExpression(isUnaryExpression, isAddressOfOperand, 
-                               NotCastExpr, TypeOfCast);
   case tok::l_square:
     // These can be followed by postfix-expr pieces.
     if (getLang().ObjC1)
       return ParsePostfixExpressionSuffix(ParseObjCMessageExpression());
-    // FALL THROUGH.      
+    // FALL THROUGH.
   default:
     NotCastExpr = true;
     return ExprError();
@@ -1422,19 +1431,10 @@ Parser::ParseParenExpression(ParenParseOption &ExprType, bool stopIfCastExpr,
 
       CastTy = Ty.get();
 
-      // Note that this doesn't parse the subsequent cast-expression, it just
-      // returns the parsed type to the callee.
-      if (stopIfCastExpr)
+      if (stopIfCastExpr) {
+        // Note that this doesn't parse the subsequent cast-expression, it just
+        // returns the parsed type to the callee.
         return OwningExprResult(Actions);
-      
-      // Reject the cast of super idiom in ObjC.
-      if (Tok.is(tok::identifier) && getLang().ObjC1 &&
-          Tok.getIdentifierInfo() == Ident_super && 
-          CurScope->isInObjcMethodScope() &&
-          GetLookAheadToken(1).isNot(tok::period)) {
-        Diag(Tok.getLocation(), diag::err_illegal_super_cast)
-          << SourceRange(OpenLoc, RParenLoc);
-        return ExprError();
       }
 
       // Parse the cast-expression that follows it next.

@@ -53,34 +53,31 @@ RValue CodeGenFunction::EmitObjCMessageExpr(const ObjCMessageExpr *E) {
   // arguments in generic code.
 
   CGObjCRuntime &Runtime = CGM.getObjCRuntime();
+  const Expr *ReceiverExpr = E->getReceiver();
   bool isSuperMessage = false;
   bool isClassMessage = false;
   // Find the receiver
-  llvm::Value *Receiver = 0;
-  switch (E->getReceiverKind()) {
-  case ObjCMessageExpr::Instance:
-    Receiver = EmitScalarExpr(E->getInstanceReceiver());
-    break;
+  llvm::Value *Receiver;
+  if (!ReceiverExpr) {
+    const ObjCInterfaceDecl *OID = E->getClassInfo().first;
 
-  case ObjCMessageExpr::Class: {
-    const ObjCInterfaceType *IFace
-      = E->getClassReceiver()->getAs<ObjCInterfaceType>();
-    assert(IFace && "Invalid Objective-C class message send");
-    Receiver = Runtime.GetClass(Builder, IFace->getDecl());
+    // Very special case, super send in class method. The receiver is
+    // self (the class object) and the send uses super semantics.
+    if (!OID) {
+      assert(E->getClassName()->isStr("super") &&
+             "Unexpected missing class interface in message send.");
+      isSuperMessage = true;
+      Receiver = LoadObjCSelf();
+    } else {
+      Receiver = Runtime.GetClass(Builder, OID);
+    }
+
     isClassMessage = true;
-    break;
-  }
-
-  case ObjCMessageExpr::SuperInstance:
-    Receiver = LoadObjCSelf();
+  } else if (isa<ObjCSuperExpr>(E->getReceiver())) {
     isSuperMessage = true;
-    break;
-
-  case ObjCMessageExpr::SuperClass:
     Receiver = LoadObjCSelf();
-    isSuperMessage = true;
-    isClassMessage = true;
-    break;
+  } else {
+    Receiver = EmitScalarExpr(E->getReceiver());
   }
 
   CallArgList Args;
@@ -111,10 +108,6 @@ RValue CodeGenFunction::EmitObjCMessageExpr(const ObjCMessageExpr *E) {
 void CodeGenFunction::StartObjCMethod(const ObjCMethodDecl *OMD,
                                       const ObjCContainerDecl *CD) {
   FunctionArgList Args;
-  // Check if we should generate debug info for this method.
-  if (CGM.getDebugInfo() && !OMD->hasAttr<NoDebugAttr>())
-    DebugInfo = CGM.getDebugInfo();
-
   llvm::Function *Fn = CGM.getObjCRuntime().GenerateMethod(OMD, CD);
 
   const CGFunctionInfo &FI = CGM.getTypes().getFunctionInfo(OMD);
@@ -135,6 +128,9 @@ void CodeGenFunction::StartObjCMethod(const ObjCMethodDecl *OMD,
 /// Generate an Objective-C method.  An Objective-C method is a C function with
 /// its pointer, name, and types registered in the class struture.
 void CodeGenFunction::GenerateObjCMethod(const ObjCMethodDecl *OMD) {
+  // Check if we should generate debug info for this method.
+  if (CGM.getDebugInfo() && !OMD->hasAttr<NoDebugAttr>())
+    DebugInfo = CGM.getDebugInfo();
   StartObjCMethod(OMD, OMD->getClassInterface());
   EmitStmt(OMD->getBody());
   FinishFunction(OMD->getBodyRBrace());
@@ -151,21 +147,19 @@ void CodeGenFunction::GenerateObjCGetter(ObjCImplementationDecl *IMP,
                                          const ObjCPropertyImplDecl *PID) {
   ObjCIvarDecl *Ivar = PID->getPropertyIvarDecl();
   const ObjCPropertyDecl *PD = PID->getPropertyDecl();
-  bool IsAtomic =
-    !(PD->getPropertyAttributes() & ObjCPropertyDecl::OBJC_PR_nonatomic);
   ObjCMethodDecl *OMD = PD->getGetterMethodDecl();
   assert(OMD && "Invalid call to generate getter (empty method)");
   // FIXME: This is rather murky, we create this here since they will not have
   // been created by Sema for us.
   OMD->createImplicitParams(getContext(), IMP->getClassInterface());
   StartObjCMethod(OMD, IMP->getClassInterface());
-  
+
   // Determine if we should use an objc_getProperty call for
   // this. Non-atomic properties are directly evaluated.
   // atomic 'copy' and 'retain' properties are also directly
   // evaluated in gc-only mode.
   if (CGM.getLangOptions().getGCMode() != LangOptions::GCOnly &&
-      IsAtomic &&
+      !(PD->getPropertyAttributes() & ObjCPropertyDecl::OBJC_PR_nonatomic) &&
       (PD->getSetterKind() == ObjCPropertyDecl::Copy ||
        PD->getSetterKind() == ObjCPropertyDecl::Retain)) {
     llvm::Value *GetPropertyFn =
@@ -197,7 +191,7 @@ void CodeGenFunction::GenerateObjCGetter(ObjCImplementationDecl *IMP,
     // FIXME: We shouldn't need to get the function info here, the
     // runtime already should have computed it to build the function.
     RValue RV = EmitCall(Types.getFunctionInfo(PD->getType(), Args,
-                                               FunctionType::ExtInfo()),
+                                               CC_Default, false),
                          GetPropertyFn, ReturnValueSlot(), Args);
     // We need to fix the type here. Ivars with copy & retain are
     // always objects so we don't need to worry about complex or
@@ -207,50 +201,8 @@ void CodeGenFunction::GenerateObjCGetter(ObjCImplementationDecl *IMP,
     EmitReturnOfRValue(RV, PD->getType());
   } else {
     LValue LV = EmitLValueForIvar(TypeOfSelfObject(), LoadObjCSelf(), Ivar, 0);
-    if (Ivar->getType()->isAnyComplexType()) {
-      ComplexPairTy Pair = LoadComplexFromAddr(LV.getAddress(),
-                                               LV.isVolatileQualified());
-      StoreComplexToAddr(Pair, ReturnValue, LV.isVolatileQualified());
-    }
-    else if (hasAggregateLLVMType(Ivar->getType())) {
-      bool IsStrong = false;
-      if ((IsAtomic || (IsStrong = IvarTypeWithAggrGCObjects(Ivar->getType())))
-          && CurFnInfo->getReturnInfo().getKind() == ABIArgInfo::Indirect
-          && CGM.getObjCRuntime().GetCopyStructFunction()) {
-        llvm::Value *GetCopyStructFn =
-          CGM.getObjCRuntime().GetCopyStructFunction();
-        CodeGenTypes &Types = CGM.getTypes();
-        // objc_copyStruct (ReturnValue, &structIvar, 
-        //                  sizeof (Type of Ivar), isAtomic, false);
-        CallArgList Args;
-        RValue RV = RValue::get(Builder.CreateBitCast(ReturnValue,
-                                    Types.ConvertType(getContext().VoidPtrTy)));
-        Args.push_back(std::make_pair(RV, getContext().VoidPtrTy));
-        RV = RValue::get(Builder.CreateBitCast(LV.getAddress(),
-                                    Types.ConvertType(getContext().VoidPtrTy)));
-        Args.push_back(std::make_pair(RV, getContext().VoidPtrTy));
-        // sizeof (Type of Ivar)
-        uint64_t Size =  getContext().getTypeSize(Ivar->getType()) / 8;
-        llvm::Value *SizeVal =
-          llvm::ConstantInt::get(Types.ConvertType(getContext().LongTy), Size);
-        Args.push_back(std::make_pair(RValue::get(SizeVal),
-                                      getContext().LongTy));
-        llvm::Value *isAtomic =
-          llvm::ConstantInt::get(Types.ConvertType(getContext().BoolTy), 
-                                 IsAtomic ? 1 : 0);
-        Args.push_back(std::make_pair(RValue::get(isAtomic), 
-                                      getContext().BoolTy));
-        llvm::Value *hasStrong =
-          llvm::ConstantInt::get(Types.ConvertType(getContext().BoolTy), 
-                                 IsStrong ? 1 : 0);
-        Args.push_back(std::make_pair(RValue::get(hasStrong), 
-                                      getContext().BoolTy));
-        EmitCall(Types.getFunctionInfo(getContext().VoidTy, Args,
-                                       FunctionType::ExtInfo()),
-                 GetCopyStructFn, ReturnValueSlot(), Args);
-      }
-      else
-        EmitAggregateCopy(ReturnValue, LV.getAddress(), Ivar->getType());
+    if (hasAggregateLLVMType(Ivar->getType())) {
+      EmitAggregateCopy(ReturnValue, LV.getAddress(), Ivar->getType());
     } else {
       CodeGenTypes &Types = CGM.getTypes();
       RValue RV = EmitLoadOfLValue(LV, Ivar->getType());
@@ -328,44 +280,8 @@ void CodeGenFunction::GenerateObjCSetter(ObjCImplementationDecl *IMP,
     // FIXME: We shouldn't need to get the function info here, the runtime
     // already should have computed it to build the function.
     EmitCall(Types.getFunctionInfo(getContext().VoidTy, Args,
-                                   FunctionType::ExtInfo()),
-             SetPropertyFn,
+                                   CC_Default, false), SetPropertyFn,
              ReturnValueSlot(), Args);
-  } else if (IsAtomic && hasAggregateLLVMType(Ivar->getType()) &&
-             !Ivar->getType()->isAnyComplexType() &&
-             IndirectObjCSetterArg(*CurFnInfo)
-             && CGM.getObjCRuntime().GetCopyStructFunction()) {
-    // objc_copyStruct (&structIvar, &Arg, 
-    //                  sizeof (struct something), true, false);
-    llvm::Value *GetCopyStructFn =
-      CGM.getObjCRuntime().GetCopyStructFunction();
-    CodeGenTypes &Types = CGM.getTypes();
-    CallArgList Args;
-    LValue LV = EmitLValueForIvar(TypeOfSelfObject(), LoadObjCSelf(), Ivar, 0);
-    RValue RV = RValue::get(Builder.CreateBitCast(LV.getAddress(),
-                                    Types.ConvertType(getContext().VoidPtrTy)));
-    Args.push_back(std::make_pair(RV, getContext().VoidPtrTy));
-    llvm::Value *Arg = LocalDeclMap[*OMD->param_begin()];
-    llvm::Value *ArgAsPtrTy =
-      Builder.CreateBitCast(Arg,
-                            Types.ConvertType(getContext().VoidPtrTy));
-    RV = RValue::get(ArgAsPtrTy);
-    Args.push_back(std::make_pair(RV, getContext().VoidPtrTy));
-    // sizeof (Type of Ivar)
-    uint64_t Size =  getContext().getTypeSize(Ivar->getType()) / 8;
-    llvm::Value *SizeVal =
-      llvm::ConstantInt::get(Types.ConvertType(getContext().LongTy), Size);
-    Args.push_back(std::make_pair(RValue::get(SizeVal),
-                                  getContext().LongTy));
-    llvm::Value *True =
-      llvm::ConstantInt::get(Types.ConvertType(getContext().BoolTy), 1);
-    Args.push_back(std::make_pair(RValue::get(True), getContext().BoolTy));
-    llvm::Value *False =
-      llvm::ConstantInt::get(Types.ConvertType(getContext().BoolTy), 0);
-    Args.push_back(std::make_pair(RValue::get(False), getContext().BoolTy));
-    EmitCall(Types.getFunctionInfo(getContext().VoidTy, Args,
-                                   FunctionType::ExtInfo()),
-             GetCopyStructFn, ReturnValueSlot(), Args);
   } else {
     // FIXME: Find a clean way to avoid AST node creation.
     SourceLocation Loc = PD->getLocation();
@@ -381,7 +297,7 @@ void CodeGenFunction::GenerateObjCSetter(ObjCImplementationDecl *IMP,
     if (getContext().getCanonicalType(Ivar->getType()) !=
         getContext().getCanonicalType(ArgDecl->getType())) {
       ImplicitCastExpr ArgCasted(Ivar->getType(), CastExpr::CK_BitCast, &Arg,
-                                 CXXBaseSpecifierArray(), false);
+                                 false);
       BinaryOperator Assign(&IvarRef, &ArgCasted, BinaryOperator::Assign,
                             Ivar->getType(), Loc);
       EmitStmt(&Assign);
@@ -393,22 +309,6 @@ void CodeGenFunction::GenerateObjCSetter(ObjCImplementationDecl *IMP,
   }
 
   FinishFunction();
-}
-
-bool CodeGenFunction::IndirectObjCSetterArg(const CGFunctionInfo &FI) {
-  CGFunctionInfo::const_arg_iterator it = FI.arg_begin();
-  it++; it++;
-  const ABIArgInfo &AI = it->info;
-  // FIXME. Is this sufficient check?
-  return (AI.getKind() == ABIArgInfo::Indirect);
-}
-
-bool CodeGenFunction::IvarTypeWithAggrGCObjects(QualType Ty) {
-  if (CGM.getLangOptions().getGCMode() == LangOptions::NonGC)
-    return false;
-  if (const RecordType *FDTTy = Ty.getTypePtr()->getAs<RecordType>())
-    return FDTTy->getDecl()->hasObjectMember();
-  return false;
 }
 
 llvm::Value *CodeGenFunction::LoadObjCSelf() {
@@ -559,13 +459,12 @@ void CodeGenFunction::EmitObjCForCollectionStmt(const ObjCForCollectionStmt &S){
   static const unsigned NumItems = 16;
 
   // Get selector
-  IdentifierInfo *II[] = {
-    &CGM.getContext().Idents.get("countByEnumeratingWithState"),
-    &CGM.getContext().Idents.get("objects"),
-    &CGM.getContext().Idents.get("count")
-  };
-  Selector FastEnumSel =
-    CGM.getContext().Selectors.getSelector(llvm::array_lengthof(II), &II[0]);
+  llvm::SmallVector<IdentifierInfo*, 3> II;
+  II.push_back(&CGM.getContext().Idents.get("countByEnumeratingWithState"));
+  II.push_back(&CGM.getContext().Idents.get("objects"));
+  II.push_back(&CGM.getContext().Idents.get("count"));
+  Selector FastEnumSel = CGM.getContext().Selectors.getSelector(II.size(),
+                                                                &II[0]);
 
   QualType ItemsTy =
     getContext().getConstantArrayType(getContext().getObjCIdType(),
@@ -656,7 +555,7 @@ void CodeGenFunction::EmitObjCForCollectionStmt(const ObjCForCollectionStmt &S){
   // FIXME: We shouldn't need to get the function info here, the runtime already
   // should have computed it to build the function.
   EmitCall(CGM.getTypes().getFunctionInfo(getContext().VoidTy, Args2,
-                                          FunctionType::ExtInfo()),
+                                          CC_Default, false),
            EnumerationMutationFn, ReturnValueSlot(), Args2);
 
   EmitBlock(WasNotMutated);

@@ -26,15 +26,3 @@ template<class T, T i> struct X2 {
     // expected-error{{no viable conversion}}
   } 
 };
-
-namespace PR6831 {
-  namespace NA { struct S; }
-  namespace NB { struct S; }
-
-  using namespace NA;
-  using namespace NB;
-
-  template <typename S> void foo();
-  template <int S> void bar();
-  template <template<typename> class S> void baz();
-}

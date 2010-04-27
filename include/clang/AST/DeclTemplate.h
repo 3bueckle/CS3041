@@ -376,81 +376,6 @@ public:
     PointOfInstantiation = POI;
   }
 };
-
-/// \brief Provides information about a dependent function-template
-/// specialization declaration.  Since explicit function template
-/// specialization and instantiation declarations can only appear in
-/// namespace scope, and you can only specialize a member of a
-/// fully-specialized class, the only way to get one of these is in
-/// a friend declaration like the following:
-///
-///   template <class T> void foo(T);
-///   template <class T> class A {
-///     friend void foo<>(T);
-///   };
-class DependentFunctionTemplateSpecializationInfo {
-  union {
-    // Force sizeof to be a multiple of sizeof(void*) so that the
-    // trailing data is aligned.
-    void *Aligner; 
-
-    struct {
-      /// The number of potential template candidates.
-      unsigned NumTemplates;
-
-      /// The number of template arguments.
-      unsigned NumArgs;      
-    } d;
-  };
-
-  /// The locations of the left and right angle brackets.
-  SourceRange AngleLocs;
-
-  FunctionTemplateDecl * const *getTemplates() const {
-    return reinterpret_cast<FunctionTemplateDecl*const*>(this+1);
-  }
-
-  const TemplateArgumentLoc *getTemplateArgs() const {
-    return reinterpret_cast<const TemplateArgumentLoc*>(
-             &getTemplates()[getNumTemplates()]);
-  }
-
-public:
-  DependentFunctionTemplateSpecializationInfo(
-                                 const UnresolvedSetImpl &Templates,
-                                 const TemplateArgumentListInfo &TemplateArgs);
-
-  /// \brief Returns the number of function templates that this might
-  /// be a specialization of.
-  unsigned getNumTemplates() const {
-    return d.NumTemplates;
-  }
-
-  /// \brief Returns the i'th template candidate.
-  FunctionTemplateDecl *getTemplate(unsigned I) const {
-    assert(I < getNumTemplates() && "template index out of range");
-    return getTemplates()[I];
-  }
-
-  /// \brief Returns the number of explicit template arguments that were given.
-  unsigned getNumTemplateArgs() const {
-    return d.NumArgs;
-  }
-
-  /// \brief Returns the nth template argument.
-  const TemplateArgumentLoc &getTemplateArg(unsigned I) const {
-    assert(I < getNumTemplateArgs() && "template arg index out of range");
-    return getTemplateArgs()[I];
-  }
-
-  SourceLocation getLAngleLoc() const {
-    return AngleLocs.getBegin();
-  }
-
-  SourceLocation getRAngleLoc() const {
-    return AngleLocs.getEnd();
-  }
-};
   
 /// Declaration of a template function.
 class FunctionTemplateDecl : public TemplateDecl {
@@ -727,8 +652,7 @@ class NonTypeTemplateParmDecl
   NonTypeTemplateParmDecl(DeclContext *DC, SourceLocation L, unsigned D,
                           unsigned P, IdentifierInfo *Id, QualType T,
                           TypeSourceInfo *TInfo)
-    : VarDecl(NonTypeTemplateParm, DC, L, Id, T, TInfo, VarDecl::None,
-              VarDecl::None),
+    : VarDecl(NonTypeTemplateParm, DC, L, Id, T, TInfo, VarDecl::None),
       TemplateParmPosition(D, P), DefaultArgument(0)
   { }
 
@@ -847,10 +771,6 @@ class ClassTemplateSpecializationDecl
   llvm::PointerUnion<ClassTemplateDecl *, SpecializedPartialSpecialization *>
     SpecializedTemplate;
 
-  /// \brief The type-as-written of an explicit template specialization.
-  /// Does not apply to implicit specializations.
-  TypeSourceInfo *TypeAsWritten;
-
   /// \brief The template arguments used to describe this specialization.
   TemplateArgumentList TemplateArgs;
 
@@ -963,14 +883,8 @@ public:
 
   /// \brief Sets the type of this specialization as it was written by
   /// the user. This will be a class template specialization type.
-  void setTypeAsWritten(TypeSourceInfo *T) {
-    TypeAsWritten = T;
-  }
-
-  /// \brief Gets the type of this specialization as it was written by
-  /// the user, if it was so written.
-  TypeSourceInfo *getTypeAsWritten() const {
-    return TypeAsWritten;
+  void setTypeAsWritten(QualType T) {
+    TypeForDecl = T.getTypePtr();
   }
 
   void Profile(llvm::FoldingSetNodeID &ID) const {
@@ -1007,7 +921,6 @@ class ClassTemplatePartialSpecializationDecl
   TemplateParameterList* TemplateParams;
 
   /// \brief The source info for the template arguments as written.
-  /// FIXME: redundant with TypeAsWritten?
   TemplateArgumentLoc *ArgsAsWritten;
   unsigned NumArgsAsWritten;
 
@@ -1041,7 +954,6 @@ public:
          ClassTemplateDecl *SpecializedTemplate,
          TemplateArgumentListBuilder &Builder,
          const TemplateArgumentListInfo &ArgInfos,
-         QualType CanonInjectedType,
          ClassTemplatePartialSpecializationDecl *PrevDecl);
 
   /// Get the list of template parameters
@@ -1121,15 +1033,6 @@ public:
     assert(First->InstantiatedFromMember.getPointer() &&
            "Only member templates can be member template specializations");
     return First->InstantiatedFromMember.setInt(true);
-  }
-
-  /// Retrieves the injected specialization type for this partial
-  /// specialization.  This is not the same as the type-decl-type for
-  /// this partial specialization, which is an InjectedClassNameType.
-  QualType getInjectedSpecializationType() const {
-    assert(getTypeForDecl() && "partial specialization has no type set!");
-    return cast<InjectedClassNameType>(getTypeForDecl())
-             ->getInjectedSpecializationType();
   }
     
   // FIXME: Add Profile support!
@@ -1236,8 +1139,8 @@ public:
   /// the type \p T, or NULL if no such partial specialization exists.
   ClassTemplatePartialSpecializationDecl *findPartialSpecialization(QualType T);
 
-  /// \brief Retrieve the template specialization type of the
-  /// injected-class-name for this class template.
+  /// \brief Retrieve the type of the injected-class-name for this
+  /// class template.
   ///
   /// The injected-class-name for a class template \c X is \c
   /// X<template-args>, where \c template-args is formed from the
@@ -1250,7 +1153,7 @@ public:
   ///   typedef array this_type; // "array" is equivalent to "array<T, N>"
   /// };
   /// \endcode
-  QualType getInjectedClassNameSpecialization(ASTContext &Context);
+  QualType getInjectedClassNameType(ASTContext &Context);
 
   /// \brief Retrieve the member class template that this class template was
   /// derived from.
@@ -1323,7 +1226,7 @@ public:
 ///   template <typename U> friend class Foo<T>::Nested; // friend template
 class FriendTemplateDecl : public Decl {
 public:
-  typedef llvm::PointerUnion<NamedDecl*,TypeSourceInfo*> FriendUnion;
+  typedef llvm::PointerUnion<NamedDecl*,Type*> FriendUnion;
 
 private:
   // The number of template parameters;  always non-zero.
@@ -1362,8 +1265,8 @@ public:
   /// If this friend declaration names a templated type (or
   /// a dependent member type of a templated type), return that
   /// type;  otherwise return null.
-  TypeSourceInfo *getFriendType() const {
-    return Friend.dyn_cast<TypeSourceInfo*>();
+  Type *getFriendType() const {
+    return Friend.dyn_cast<Type*>();
   }
 
   /// If this friend declaration names a templated function (or

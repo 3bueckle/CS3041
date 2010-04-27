@@ -1,15 +1,13 @@
 // RUN: %clang_cc1 -fsyntax-only -verify %s
 
-class Base { // expected-error {{cannot define the implicit default assignment operator for 'Base', because non-static reference member 'ref' can't use default assignment operator}} \
-  // expected-warning{{class 'Base' does not declare any constructor to initialize its non-modifiable members}}
-  int &ref;  // expected-note {{declared here}} \
-  // expected-note{{reference member 'ref' will never be initialized}}
+class Base { // expected-error {{cannot define the implicit default assignment operator for 'class Base'}}
+  int &ref;  // expected-note {{declared at}}
 };
 
-class X  : Base {  // // expected-error {{cannot define the implicit default assignment operator for 'X', because non-static const member 'cint' can't use default assignment operator}}
+class X  : Base {  // // expected-error {{cannot define the implicit default assignment operator for 'class X'}}
 public:
   X();
-  const int cint;  // expected-note {{declared here}}
+  const int cint;  // expected-note {{declared at}}
 }; 
 
 struct Y  : X { 
@@ -72,9 +70,9 @@ void i() {
 
 // Test5
 
-class E1 { // expected-error{{cannot define the implicit default assignment operator for 'E1', because non-static const member 'a' can't use default assignment operator}}
+class E1 { // expected-error{{cannot define the implicit default assignment operator for 'class E1', because non-static const member 'a' can't use default assignment operator}}
 public:
-  const int a; // expected-note{{declared here}}
+  const int a; // expected-note{{declared at}}
   E1() : a(0) {}  
 
 };

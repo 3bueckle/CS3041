@@ -43,8 +43,7 @@ void ABIArgInfo::dump() const {
     getCoerceToType()->print(OS);
     break;
   case Indirect:
-    OS << "Indirect Align=" << getIndirectAlign()
-       << " Byal=" << getIndirectByVal();
+    OS << "Indirect Align=" << getIndirectAlign();
     break;
   case Expand:
     OS << "Expand";
@@ -271,7 +270,7 @@ ABIArgInfo DefaultABIInfo::classifyArgumentType(QualType Ty,
                                           llvm::LLVMContext &VMContext) const {
   if (CodeGenFunction::hasAggregateLLVMType(Ty))
     return ABIArgInfo::getIndirect(0);
-
+  
   // Treat an enum type as its underlying type.
   if (const EnumType *EnumTy = Ty->getAs<EnumType>())
     Ty = EnumTy->getDecl()->getIntegerType();
@@ -292,10 +291,8 @@ class X86_32ABIInfo : public ABIInfo {
 
   static bool shouldReturnTypeInRegister(QualType Ty, ASTContext &Context);
 
-  /// getIndirectResult - Give a source type \arg Ty, return a suitable result
-  /// such that the argument will be passed in memory.
-  ABIArgInfo getIndirectResult(QualType Ty, ASTContext &Context,
-                               bool ByVal = true) const;
+  static unsigned getIndirectArgumentAlignment(QualType Ty,
+                                               ASTContext &Context);
 
 public:
   ABIArgInfo classifyReturnType(QualType RetTy,
@@ -493,19 +490,14 @@ ABIArgInfo X86_32ABIInfo::classifyReturnType(QualType RetTy,
   }
 }
 
-ABIArgInfo X86_32ABIInfo::getIndirectResult(QualType Ty,
-                                            ASTContext &Context,
-                                            bool ByVal) const {
-  if (!ByVal)
-    return ABIArgInfo::getIndirect(0, false);
-
-  // Compute the byval alignment. We trust the back-end to honor the
-  // minimum ABI alignment for byval, to make cleaner IR.
-  const unsigned MinABIAlign = 4;
-  unsigned Align = Context.getTypeAlign(Ty) / 8;
-  if (Align > MinABIAlign)
-    return ABIArgInfo::getIndirect(Align);
-  return ABIArgInfo::getIndirect(0);
+unsigned X86_32ABIInfo::getIndirectArgumentAlignment(QualType Ty,
+                                                     ASTContext &Context) {
+  unsigned Align = Context.getTypeAlign(Ty);
+  if (Align < 128) return 0;
+  if (const RecordType* RT = Ty->getAs<RecordType>())
+    if (typeContainsSSEVector(RT->getDecl(), Context))
+      return 16;
+  return 0;
 }
 
 ABIArgInfo X86_32ABIInfo::classifyArgumentType(QualType Ty,
@@ -518,10 +510,11 @@ ABIArgInfo X86_32ABIInfo::classifyArgumentType(QualType Ty,
       // Structures with either a non-trivial destructor or a non-trivial
       // copy constructor are always indirect.
       if (hasNonTrivialDestructorOrCopyConstructor(RT))
-        return getIndirectResult(Ty, Context, /*ByVal=*/false);
-
+        return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+        
       if (RT->getDecl()->hasFlexibleArrayMember())
-        return getIndirectResult(Ty, Context);
+        return ABIArgInfo::getIndirect(getIndirectArgumentAlignment(Ty,
+                                                                    Context));
     }
 
     // Ignore empty structs.
@@ -536,7 +529,7 @@ ABIArgInfo X86_32ABIInfo::classifyArgumentType(QualType Ty,
         canExpandIndirectArgument(Ty, Context))
       return ABIArgInfo::getExpand();
 
-    return getIndirectResult(Ty, Context);
+    return ABIArgInfo::getIndirect(getIndirectArgumentAlignment(Ty, Context));
   } else {
     if (const EnumType *EnumTy = Ty->getAs<EnumType>())
       Ty = EnumTy->getDecl()->getIntegerType();
@@ -692,12 +685,9 @@ class X86_64ABIInfo : public ABIInfo {
                              ASTContext &Context) const;
 
   /// getIndirectResult - Give a source type \arg Ty, return a suitable result
-  /// such that the argument will be returned in memory.
-  ABIArgInfo getIndirectReturnResult(QualType Ty, ASTContext &Context) const;
-
-  /// getIndirectResult - Give a source type \arg Ty, return a suitable result
   /// such that the argument will be passed in memory.
-  ABIArgInfo getIndirectResult(QualType Ty, ASTContext &Context) const;
+  ABIArgInfo getIndirectResult(QualType Ty,
+                               ASTContext &Context) const;
 
   ABIArgInfo classifyReturnType(QualType RetTy,
                                 ASTContext &Context,
@@ -1070,22 +1060,6 @@ ABIArgInfo X86_64ABIInfo::getCoerceResult(QualType Ty,
   return ABIArgInfo::getCoerce(CoerceTo);
 }
 
-ABIArgInfo X86_64ABIInfo::getIndirectReturnResult(QualType Ty,
-                                                  ASTContext &Context) const {
-  // If this is a scalar LLVM value then assume LLVM will pass it in the right
-  // place naturally.
-  if (!CodeGenFunction::hasAggregateLLVMType(Ty)) {
-    // Treat an enum type as its underlying type.
-    if (const EnumType *EnumTy = Ty->getAs<EnumType>())
-      Ty = EnumTy->getDecl()->getIntegerType();
-
-    return (Ty->isPromotableIntegerType() ?
-            ABIArgInfo::getExtend() : ABIArgInfo::getDirect());
-  }
-
-  return ABIArgInfo::getIndirect(0);
-}
-
 ABIArgInfo X86_64ABIInfo::getIndirectResult(QualType Ty,
                                             ASTContext &Context) const {
   // If this is a scalar LLVM value then assume LLVM will pass it in the right
@@ -1099,16 +1073,10 @@ ABIArgInfo X86_64ABIInfo::getIndirectResult(QualType Ty,
             ABIArgInfo::getExtend() : ABIArgInfo::getDirect());
   }
 
-  if (isRecordWithNonTrivialDestructorOrCopyConstructor(Ty))
-    return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
+  bool ByVal = !isRecordWithNonTrivialDestructorOrCopyConstructor(Ty);
 
-  // Compute the byval alignment. We trust the back-end to honor the
-  // minimum ABI alignment for byval, to make cleaner IR.
-  const unsigned MinABIAlign = 8;
-  unsigned Align = Context.getTypeAlign(Ty) / 8;
-  if (Align > MinABIAlign)
-    return ABIArgInfo::getIndirect(Align);
-  return ABIArgInfo::getIndirect(0);
+  // FIXME: Set alignment correctly.
+  return ABIArgInfo::getIndirect(0, ByVal);
 }
 
 ABIArgInfo X86_64ABIInfo::classifyReturnType(QualType RetTy,
@@ -1136,7 +1104,7 @@ ABIArgInfo X86_64ABIInfo::classifyReturnType(QualType RetTy,
     // AMD64-ABI 3.2.3p4: Rule 2. Types of class memory are returned via
     // hidden argument.
   case Memory:
-    return getIndirectReturnResult(RetTy, Context);
+    return getIndirectResult(RetTy, Context);
 
     // AMD64-ABI 3.2.3p4: Rule 3. If the class is INTEGER, the next
     // available register of the sequence %rax, %rdx is used.
@@ -1158,8 +1126,7 @@ ABIArgInfo X86_64ABIInfo::classifyReturnType(QualType RetTy,
     // %st1.
   case ComplexX87:
     assert(Hi == ComplexX87 && "Unexpected ComplexX87 classification.");
-    ResType = llvm::StructType::get(VMContext,
-                                    llvm::Type::getX86_FP80Ty(VMContext),
+    ResType = llvm::StructType::get(VMContext, llvm::Type::getX86_FP80Ty(VMContext),
                                     llvm::Type::getX86_FP80Ty(VMContext),
                                     NULL);
     break;
@@ -1607,7 +1574,7 @@ ABIArgInfo PIC16ABIInfo::classifyArgumentType(QualType Ty,
 
 llvm::Value *PIC16ABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
                                        CodeGenFunction &CGF) const {
-  const llvm::Type *BP = llvm::Type::getInt8PtrTy(CGF.getLLVMContext());
+  const llvm::Type *BP = llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(CGF.getLLVMContext()));
   const llvm::Type *BPP = llvm::PointerType::getUnqual(BP);
 
   CGBuilderTy &Builder = CGF.Builder;
@@ -1627,80 +1594,6 @@ llvm::Value *PIC16ABIInfo::EmitVAArg(llvm::Value *VAListAddr, QualType Ty,
   Builder.CreateStore(NextAddr, VAListAddrAsBPP);
 
   return AddrTyped;
-}
-
-
-// PowerPC-32
-
-namespace {
-class PPC32TargetCodeGenInfo : public DefaultTargetCodeGenInfo {
-public:
-  int getDwarfEHStackPointer(CodeGen::CodeGenModule &M) const {
-    // This is recovered from gcc output.
-    return 1; // r1 is the dedicated stack pointer
-  }
-
-  bool initDwarfEHRegSizeTable(CodeGen::CodeGenFunction &CGF,
-                               llvm::Value *Address) const;  
-};
-
-}
-
-bool
-PPC32TargetCodeGenInfo::initDwarfEHRegSizeTable(CodeGen::CodeGenFunction &CGF,
-                                                llvm::Value *Address) const {
-  // This is calculated from the LLVM and GCC tables and verified
-  // against gcc output.  AFAIK all ABIs use the same encoding.
-
-  CodeGen::CGBuilderTy &Builder = CGF.Builder;
-  llvm::LLVMContext &Context = CGF.getLLVMContext();
-
-  const llvm::IntegerType *i8 = llvm::Type::getInt8Ty(Context);
-  llvm::Value *Four8 = llvm::ConstantInt::get(i8, 4);
-  llvm::Value *Eight8 = llvm::ConstantInt::get(i8, 8);
-  llvm::Value *Sixteen8 = llvm::ConstantInt::get(i8, 16);
-
-  // 0-31: r0-31, the 4-byte general-purpose registers
-  for (unsigned I = 0, E = 32; I != E; ++I) {
-    llvm::Value *Slot = Builder.CreateConstInBoundsGEP1_32(Address, I);
-    Builder.CreateStore(Four8, Slot);
-  }
-
-  // 32-63: fp0-31, the 8-byte floating-point registers
-  for (unsigned I = 32, E = 64; I != E; ++I) {
-    llvm::Value *Slot = Builder.CreateConstInBoundsGEP1_32(Address, I);
-    Builder.CreateStore(Eight8, Slot);
-  }
-
-  // 64-76 are various 4-byte special-purpose registers:
-  // 64: mq
-  // 65: lr
-  // 66: ctr
-  // 67: ap
-  // 68-75 cr0-7
-  // 76: xer
-  for (unsigned I = 64, E = 77; I != E; ++I) {
-    llvm::Value *Slot = Builder.CreateConstInBoundsGEP1_32(Address, I);
-    Builder.CreateStore(Four8, Slot);
-  }
-
-  // 77-108: v0-31, the 16-byte vector registers
-  for (unsigned I = 77, E = 109; I != E; ++I) {
-    llvm::Value *Slot = Builder.CreateConstInBoundsGEP1_32(Address, I);
-    Builder.CreateStore(Sixteen8, Slot);
-  }
-
-  // 109: vrsave
-  // 110: vscr
-  // 111: spe_acc
-  // 112: spefscr
-  // 113: sfp
-  for (unsigned I = 109, E = 114; I != E; ++I) {
-    llvm::Value *Slot = Builder.CreateConstInBoundsGEP1_32(Address, I);
-    Builder.CreateStore(Four8, Slot);
-  }
-
-  return false;  
 }
 
 
@@ -2147,9 +2040,6 @@ const TargetCodeGenInfo &CodeGenModule::getTargetCodeGenInfo() const {
 
   case llvm::Triple::pic16:
     return *(TheTargetCodeGenInfo = new PIC16TargetCodeGenInfo());
-
-  case llvm::Triple::ppc:
-    return *(TheTargetCodeGenInfo = new PPC32TargetCodeGenInfo());
 
   case llvm::Triple::systemz:
     return *(TheTargetCodeGenInfo = new SystemZTargetCodeGenInfo());

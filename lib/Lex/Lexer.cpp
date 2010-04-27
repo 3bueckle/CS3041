@@ -229,18 +229,14 @@ unsigned Lexer::MeasureTokenLength(SourceLocation Loc,
   // the token this macro expanded to.
   Loc = SM.getInstantiationLoc(Loc);
   std::pair<FileID, unsigned> LocInfo = SM.getDecomposedLoc(Loc);
-  bool Invalid = false;
-  llvm::StringRef Buffer = SM.getBufferData(LocInfo.first, &Invalid);
-  if (Invalid)
-    return 0;
-
-  const char *StrData = Buffer.data()+LocInfo.second;
+  std::pair<const char *,const char *> Buffer = SM.getBufferData(LocInfo.first);
+  const char *StrData = Buffer.first+LocInfo.second;
 
   if (isWhitespace(StrData[0]))
     return 0;
 
   // Create a lexer starting at the beginning of this token.
-  Lexer TheLexer(Loc, LangOpts, Buffer.begin(), StrData, Buffer.end());
+  Lexer TheLexer(Loc, LangOpts, Buffer.first, StrData, Buffer.second);
   TheLexer.SetCommentRetentionState(true);
   Token TheTok;
   TheLexer.LexFromRawLexer(TheTok);
@@ -1036,11 +1032,7 @@ bool Lexer::SaveBCPLComment(Token &Result, const char *CurPtr) {
 
   // If this BCPL-style comment is in a macro definition, transmogrify it into
   // a C-style block comment.
-  bool Invalid = false;
-  std::string Spelling = PP->getSpelling(Result, &Invalid);
-  if (Invalid)
-    return true;
-  
+  std::string Spelling = PP->getSpelling(Result);
   assert(Spelling[0] == '/' && Spelling[1] == '/' && "Not bcpl comment?");
   Spelling[1] = '*';   // Change prefix to "/*".
   Spelling += "*/";    // add suffix.
@@ -1372,7 +1364,8 @@ bool Lexer::LexEndOfFile(Token &Result, const char *CurPtr) {
   // a pedwarn.
   if (CurPtr != BufferStart && (CurPtr[-1] != '\n' && CurPtr[-1] != '\r'))
     Diag(BufferEnd, diag::ext_no_newline_eof)
-      << FixItHint::CreateInsertion(getSourceLocation(BufferEnd), "\n");
+      << CodeModificationHint::CreateInsertion(getSourceLocation(BufferEnd),
+                                               "\n");
 
   BufferPtr = CurPtr;
 
@@ -1874,10 +1867,9 @@ LexNextToken:
           if (PP->isCurrentLexer(this)) {
             // Start a new token. If this is a #include or something, the PP may
             // want us starting at the beginning of the line again.  If so, set
-            // the StartOfLine flag and clear LeadingSpace.
+            // the StartOfLine flag.
             if (IsAtStartOfLine) {
               Result.setFlag(Token::StartOfLine);
-              Result.clearFlag(Token::LeadingSpace);
               IsAtStartOfLine = false;
             }
             goto LexNextToken;   // GCC isn't tail call eliminating.
@@ -2025,10 +2017,9 @@ LexNextToken:
         if (PP->isCurrentLexer(this)) {
           // Start a new token.  If this is a #include or something, the PP may
           // want us starting at the beginning of the line again.  If so, set
-          // the StartOfLine flag and clear LeadingSpace.
+          // the StartOfLine flag.
           if (IsAtStartOfLine) {
             Result.setFlag(Token::StartOfLine);
-            Result.clearFlag(Token::LeadingSpace);
             IsAtStartOfLine = false;
           }
           goto LexNextToken;   // GCC isn't tail call eliminating.

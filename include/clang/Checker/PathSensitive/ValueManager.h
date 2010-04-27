@@ -22,7 +22,6 @@
 #include "clang/Checker/PathSensitive/BasicValueFactory.h"
 #include "clang/Checker/PathSensitive/SymbolManager.h"
 #include "clang/Checker/PathSensitive/SValuator.h"
-#include "clang/AST/ExprCXX.h"
 
 namespace llvm { class BumpPtrAllocator; }
 
@@ -132,11 +131,6 @@ public:
   nonloc::ConcreteInt makeIntVal(const IntegerLiteral* I) {
     return nonloc::ConcreteInt(BasicVals.getValue(I->getValue(),
                                         I->getType()->isUnsignedIntegerType()));
-  }
-
-  nonloc::ConcreteInt makeIntVal(const CXXBoolLiteralExpr *E) {
-    return E->getValue() ? nonloc::ConcreteInt(BasicVals.getValue(1, 1, true))
-                         : nonloc::ConcreteInt(BasicVals.getValue(0, 1, true));
   }
 
   nonloc::ConcreteInt makeIntVal(const llvm::APSInt& V) {

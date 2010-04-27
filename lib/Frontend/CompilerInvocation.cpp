@@ -148,20 +148,12 @@ static void CodeGenOptsToArgs(const CodeGenOptions &Opts,
   // VerifyModule is only derived.
   // Inlining is only derived.
 
-  if (Opts.DataSections)
-    Res.push_back("-fdata-sections");
-  if (Opts.FunctionSections)
-    Res.push_back("-ffunction-sections");
   if (Opts.AsmVerbose)
     Res.push_back("-masm-verbose");
   if (!Opts.CodeModel.empty()) {
     Res.push_back("-mcode-model");
     Res.push_back(Opts.CodeModel);
   }
-  if (!Opts.CXAAtExit)
-    Res.push_back("-fno-use-cxa-atexit");
-  if (Opts.CXXCtorDtorAliases)
-    Res.push_back("-mconstructor-aliases");
   if (!Opts.DebugPass.empty()) {
     Res.push_back("-mdebug-pass");
     Res.push_back(Opts.DebugPass);
@@ -178,16 +170,8 @@ static void CodeGenOptsToArgs(const CodeGenOptions &Opts,
   }
   if (Opts.NoZeroInitializedInBSS)
     Res.push_back("-mno-zero-initialized-bss");
-  switch (Opts.getObjCDispatchMethod()) {
-  case CodeGenOptions::Legacy:
-    break;
-  case CodeGenOptions::Mixed:
-    Res.push_back("-fobjc-dispatch-method=mixed");
-    break;
-  case CodeGenOptions::NonLegacy:
-    Res.push_back("-fobjc-dispatch-method=non-legacy");
-    break;
-  }
+  if (Opts.ObjCLegacyDispatch)
+    Res.push_back("-fobjc-legacy-dispatch");
   if (Opts.SoftFloat)
     Res.push_back("-msoft-float");
   if (Opts.UnwindTables)
@@ -196,6 +180,8 @@ static void CodeGenOptsToArgs(const CodeGenOptions &Opts,
     Res.push_back("-mrelocation-model");
     Res.push_back(Opts.RelocationModel);
   }
+  if (Opts.CXXCtorDtorAliases)
+    Res.push_back("-mconstructor-aliases");
   if (!Opts.VerifyModule)
     Res.push_back("-disable-llvm-verifier");
 }
@@ -244,15 +230,6 @@ static void DiagnosticOptsToArgs(const DiagnosticOptions &Opts,
     Res.push_back("-fdiagnostics-binary");
   if (Opts.ShowOptionNames)
     Res.push_back("-fdiagnostics-show-option");
-  if (Opts.ErrorLimit) {
-    Res.push_back("-ferror-limit");
-    Res.push_back(llvm::utostr(Opts.ErrorLimit));
-  }
-  if (Opts.TemplateBacktraceLimit != 10) {
-    Res.push_back("-ftemplate-backtrace-limit");
-    Res.push_back(llvm::utostr(Opts.TemplateBacktraceLimit));
-  }
-
   if (Opts.TabStop != DiagnosticOptions::DefaultTabStop) {
     Res.push_back("-ftabstop");
     Res.push_back(llvm::utostr(Opts.TabStop));
@@ -300,6 +277,7 @@ static const char *getActionName(frontend::ActionKind Kind) {
   case frontend::ASTPrintXML:            return "-ast-print-xml";
   case frontend::ASTView:                return "-ast-view";
   case frontend::DumpRawTokens:          return "-dump-raw-tokens";
+  case frontend::DumpRecordLayouts:      return "-dump-record-layouts";
   case frontend::DumpTokens:             return "-dump-tokens";
   case frontend::EmitAssembly:           return "-S";
   case frontend::EmitBC:                 return "-emit-llvm-bc";
@@ -310,7 +288,6 @@ static const char *getActionName(frontend::ActionKind Kind) {
   case frontend::FixIt:                  return "-fixit";
   case frontend::GeneratePCH:            return "-emit-pch";
   case frontend::GeneratePTH:            return "-emit-pth";
-  case frontend::InitOnly:               return "-init-only";
   case frontend::ParseNoop:              return "-parse-noop";
   case frontend::ParsePrintCallbacks:    return "-parse-print-callbacks";
   case frontend::ParseSyntaxOnly:        return "-fsyntax-only";
@@ -333,6 +310,8 @@ static void FrontendOptsToArgs(const FrontendOptions &Opts,
     Res.push_back("-no-code-completion-debug-printer");
   if (Opts.DisableFree)
     Res.push_back("-disable-free");
+  if (Opts.EmptyInputOnly)
+    Res.push_back("-empty-input-only");
   if (Opts.RelocatablePCH)
     Res.push_back("-relocatable-pch");
   if (Opts.ShowHelp)
@@ -369,6 +348,12 @@ static void FrontendOptsToArgs(const FrontendOptions &Opts,
     Res.push_back("-cxx-inheritance-view");
     Res.push_back(Opts.ViewClassInheritance);
   }
+  for (unsigned i = 0, e = Opts.FixItLocations.size(); i != e; ++i) {
+    Res.push_back("-fixit-at");
+    Res.push_back(Opts.FixItLocations[i].FileName + ":" +
+                  llvm::utostr(Opts.FixItLocations[i].Line) + ":" +
+                  llvm::utostr(Opts.FixItLocations[i].Column));
+  }
   if (!Opts.CodeCompletionAt.FileName.empty()) {
     Res.push_back("-code-completion-at");
     Res.push_back(Opts.CodeCompletionAt.FileName + ":" +
@@ -390,10 +375,6 @@ static void FrontendOptsToArgs(const FrontendOptions &Opts,
     Res.push_back("-ast-merge");
     Res.push_back(Opts.ASTMergeFiles[i]);
   }
-  for (unsigned i = 0, e = Opts.LLVMArgs.size(); i != e; ++i) {
-    Res.push_back("-mllvm");
-    Res.push_back(Opts.LLVMArgs[i]);
-  }
 }
 
 static void HeaderSearchOptsToArgs(const HeaderSearchOptions &Opts,
@@ -407,7 +388,7 @@ static void HeaderSearchOptsToArgs(const HeaderSearchOptions &Opts,
   for (unsigned i = 0, e = Opts.UserEntries.size(); i != e; ++i) {
     const HeaderSearchOptions::Entry &E = Opts.UserEntries[i];
     if (E.IsFramework && (E.Group != frontend::Angled || !E.IsUserSupplied))
-      llvm::report_fatal_error("Invalid option set!");
+      llvm::llvm_report_error("Invalid option set!");
     if (E.IsUserSupplied) {
       if (E.Group == frontend::After) {
         Res.push_back("-idirafter");
@@ -421,7 +402,7 @@ static void HeaderSearchOptsToArgs(const HeaderSearchOptions &Opts,
       }
     } else {
       if (E.Group != frontend::Angled && E.Group != frontend::System)
-        llvm::report_fatal_error("Invalid option set!");
+        llvm::llvm_report_error("Invalid option set!");
       Res.push_back(E.Group == frontend::Angled ? "-iwithprefixbefore" :
                     "-iwithprefix");
     }
@@ -430,23 +411,23 @@ static void HeaderSearchOptsToArgs(const HeaderSearchOptions &Opts,
 
   if (!Opts.EnvIncPath.empty()) {
     // FIXME: Provide an option for this, and move env detection to driver.
-    llvm::report_fatal_error("Not yet implemented!");
+    llvm::llvm_report_error("Not yet implemented!");
   }
   if (!Opts.CEnvIncPath.empty()) {
     // FIXME: Provide an option for this, and move env detection to driver.
-    llvm::report_fatal_error("Not yet implemented!");
+    llvm::llvm_report_error("Not yet implemented!");
   }
   if (!Opts.ObjCEnvIncPath.empty()) {
     // FIXME: Provide an option for this, and move env detection to driver.
-    llvm::report_fatal_error("Not yet implemented!");
+    llvm::llvm_report_error("Not yet implemented!");
   }
   if (!Opts.CXXEnvIncPath.empty()) {
     // FIXME: Provide an option for this, and move env detection to driver.
-    llvm::report_fatal_error("Not yet implemented!");
+    llvm::llvm_report_error("Not yet implemented!");
   }
   if (!Opts.ObjCXXEnvIncPath.empty()) {
     // FIXME: Provide an option for this, and move env detection to driver.
-    llvm::report_fatal_error("Not yet implemented!");
+    llvm::llvm_report_error("Not yet implemented!");
   }
   if (!Opts.ResourceDir.empty()) {
     Res.push_back("-resource-dir");
@@ -454,8 +435,6 @@ static void HeaderSearchOptsToArgs(const HeaderSearchOptions &Opts,
   }
   if (!Opts.UseStandardIncludes)
     Res.push_back("-nostdinc");
-  if (!Opts.UseStandardCXXIncludes)
-    Res.push_back("-nostdinc++");
   if (Opts.Verbose)
     Res.push_back("-v");
 }
@@ -480,10 +459,6 @@ static void LangOptsToArgs(const LangOptions &Opts,
   //   BCPLComment, C99, CPlusPlus0x, Digraphs, GNUInline, ImplicitInt, GNUMode
   if (Opts.DollarIdents)
     Res.push_back("-fdollars-in-identifiers");
-  if (Opts.GNUMode && !Opts.GNUKeywords)
-    Res.push_back("-fno-gnu-keywords");
-  if (!Opts.GNUMode && Opts.GNUKeywords)
-    Res.push_back("-fgnu-keywords");
   if (Opts.Microsoft)
     Res.push_back("-fms-extensions");
   if (Opts.ObjCNonFragileABI)
@@ -499,8 +474,6 @@ static void LangOptsToArgs(const LangOptions &Opts,
     Res.push_back("-fcatch-undefined-behavior");
   if (Opts.WritableStrings)
     Res.push_back("-fwritable-strings");
-  if (Opts.ConstStrings)
-    Res.push_back("-Wwrite-strings");
   if (!Opts.LaxVectorConversions)
     Res.push_back("-fno-lax-vector-conversions");
   if (Opts.AltiVec)
@@ -537,24 +510,15 @@ static void LangOptsToArgs(const LangOptions &Opts,
   // OptimizeSize is implicit.
   if (Opts.Static)
     Res.push_back("-static-define");
-  if (Opts.DumpRecordLayouts)
-    Res.push_back("-fdump-record-layouts");
-  if (Opts.DumpVTableLayouts)
-    Res.push_back("-fdump-vtable-layouts");
-  if (Opts.NoBitFieldTypeAlign)
-    Res.push_back("-fno-bitfield-type-alignment");
-  if (Opts.SjLjExceptions)
-    Res.push_back("-fsjlj-exceptions");
   if (Opts.PICLevel) {
     Res.push_back("-pic-level");
     Res.push_back(llvm::utostr(Opts.PICLevel));
   }
   if (Opts.ObjCGCBitmapPrint)
     Res.push_back("-print-ivar-layout");
-  if (Opts.NoConstantCFStrings)
-    Res.push_back("-fno-constant-cfstrings");
-  if (!Opts.AccessControl)
-    Res.push_back("-fno-access-control");
+  // FIXME: Don't forget to update when the default changes!
+  if (Opts.AccessControl)
+    Res.push_back("-faccess-control");
   if (!Opts.CharIsSigned)
     Res.push_back("-fno-signed-char");
   if (Opts.ShortWChar)
@@ -609,8 +573,6 @@ static void PreprocessorOptsToArgs(const PreprocessorOptions &Opts,
   }
   if (!Opts.UsePredefines)
     Res.push_back("-undef");
-  if (Opts.DetailedRecord)
-    Res.push_back("-detailed-preprocessing-record");
   if (!Opts.ImplicitPCHInclude.empty()) {
     Res.push_back("-include-pch");
     Res.push_back(Opts.ImplicitPCHInclude);
@@ -637,7 +599,7 @@ static void PreprocessorOptsToArgs(const PreprocessorOptions &Opts,
 static void PreprocessorOutputOptsToArgs(const PreprocessorOutputOptions &Opts,
                                          std::vector<std::string> &Res) {
   if (!Opts.ShowCPP && !Opts.ShowMacros)
-    llvm::report_fatal_error("Invalid option combination!");
+    llvm::llvm_report_error("Invalid option combination!");
 
   if (Opts.ShowCPP && Opts.ShowMacros)
     Res.push_back("-dD");
@@ -787,7 +749,6 @@ static void ParseAnalyzerArgs(AnalyzerOptions &Opts, ArgList &Args,
   Opts.EnableExperimentalInternalChecks =
     Args.hasArg(OPT_analyzer_experimental_internal_checks);
   Opts.TrimGraph = Args.hasArg(OPT_trim_egraph);
-  Opts.MaxNodes = getLastArgIntValue(Args, OPT_analyzer_max_nodes,150000,Diags);
 }
 
 static void ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
@@ -820,36 +781,20 @@ static void ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
   Opts.UnrollLoops = (Opts.OptimizationLevel > 1 && !Opts.OptimizeSize);
 
   Opts.AsmVerbose = Args.hasArg(OPT_masm_verbose);
-  Opts.CXAAtExit = !Args.hasArg(OPT_fno_use_cxa_atexit);
-  Opts.CXXCtorDtorAliases = Args.hasArg(OPT_mconstructor_aliases);
   Opts.CodeModel = getLastArgValue(Args, OPT_mcode_model);
   Opts.DebugPass = getLastArgValue(Args, OPT_mdebug_pass);
   Opts.DisableFPElim = Args.hasArg(OPT_mdisable_fp_elim);
   Opts.FloatABI = getLastArgValue(Args, OPT_mfloat_abi);
   Opts.LimitFloatPrecision = getLastArgValue(Args, OPT_mlimit_float_precision);
   Opts.NoZeroInitializedInBSS = Args.hasArg(OPT_mno_zero_initialized_in_bss);
+  Opts.ObjCLegacyDispatch = Args.hasArg(OPT_fobjc_legacy_dispatch);
   Opts.SoftFloat = Args.hasArg(OPT_msoft_float);
   Opts.UnwindTables = Args.hasArg(OPT_munwind_tables);
   Opts.RelocationModel = getLastArgValue(Args, OPT_mrelocation_model, "pic");
-
-  Opts.FunctionSections = Args.hasArg(OPT_ffunction_sections);
-  Opts.DataSections = Args.hasArg(OPT_fdata_sections);
+  Opts.CXXCtorDtorAliases = Args.hasArg(OPT_mconstructor_aliases);
 
   Opts.MainFileName = getLastArgValue(Args, OPT_main_file_name);
   Opts.VerifyModule = !Args.hasArg(OPT_disable_llvm_verifier);
-
-  if (Arg *A = Args.getLastArg(OPT_fobjc_dispatch_method_EQ)) {
-    llvm::StringRef Name = A->getValue(Args);
-    unsigned Method = llvm::StringSwitch<unsigned>(Name)
-      .Case("legacy", CodeGenOptions::Legacy)
-      .Case("non-legacy", CodeGenOptions::NonLegacy)
-      .Case("mixed", CodeGenOptions::Mixed)
-      .Default(~0U);
-    if (Method == ~0U)
-      Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args) << Name;
-    else
-      Opts.ObjCDispatchMethod = Method;
-  }
 }
 
 static void ParseDependencyOutputArgs(DependencyOutputOptions &Opts,
@@ -877,9 +822,6 @@ static void ParseDiagnosticArgs(DiagnosticOptions &Opts, ArgList &Args,
   Opts.ShowSourceRanges = Args.hasArg(OPT_fdiagnostics_print_source_range_info);
   Opts.VerifyDiagnostics = Args.hasArg(OPT_verify);
   Opts.BinaryOutput = Args.hasArg(OPT_fdiagnostics_binary);
-  Opts.ErrorLimit = getLastArgIntValue(Args, OPT_ferror_limit, 0, Diags);
-  Opts.TemplateBacktraceLimit
-    = getLastArgIntValue(Args, OPT_ftemplate_backtrace_limit, 0, Diags);
   Opts.TabStop = getLastArgIntValue(Args, OPT_ftabstop,
                                     DiagnosticOptions::DefaultTabStop, Diags);
   if (Opts.TabStop == 0 || Opts.TabStop > DiagnosticOptions::MaxTabStop) {
@@ -910,6 +852,8 @@ ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args, Diagnostic &Diags) {
       Opts.ProgramAction = frontend::ASTView; break;
     case OPT_dump_raw_tokens:
       Opts.ProgramAction = frontend::DumpRawTokens; break;
+    case OPT_dump_record_layouts:
+      Opts.ProgramAction = frontend::DumpRecordLayouts; break;
     case OPT_dump_tokens:
       Opts.ProgramAction = frontend::DumpTokens; break;
     case OPT_S:
@@ -924,17 +868,12 @@ ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args, Diagnostic &Diags) {
       Opts.ProgramAction = frontend::EmitLLVMOnly; break;
     case OPT_emit_obj:
       Opts.ProgramAction = frontend::EmitObj; break;
-    case OPT_fixit_EQ:
-      Opts.FixItSuffix = A->getValue(Args);
-      // fall-through!
     case OPT_fixit:
       Opts.ProgramAction = frontend::FixIt; break;
     case OPT_emit_pch:
       Opts.ProgramAction = frontend::GeneratePCH; break;
     case OPT_emit_pth:
       Opts.ProgramAction = frontend::GeneratePTH; break;
-    case OPT_init_only:
-      Opts.ProgramAction = frontend::InitOnly; break;
     case OPT_parse_noop:
       Opts.ProgramAction = frontend::ParseNoop; break;
     case OPT_parse_print_callbacks:
@@ -972,6 +911,21 @@ ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args, Diagnostic &Diags) {
   Opts.DebugCodeCompletionPrinter =
     !Args.hasArg(OPT_no_code_completion_debug_printer);
   Opts.DisableFree = Args.hasArg(OPT_disable_free);
+  Opts.EmptyInputOnly = Args.hasArg(OPT_empty_input_only);
+
+  Opts.FixItLocations.clear();
+  for (arg_iterator it = Args.filtered_begin(OPT_fixit_at),
+         ie = Args.filtered_end(); it != ie; ++it) {
+    const char *Loc = it->getValue(Args);
+    ParsedSourceLocation PSL = ParsedSourceLocation::FromString(Loc);
+
+    if (PSL.FileName.empty()) {
+      Diags.Report(diag::err_drv_invalid_value) << it->getAsString(Args) << Loc;
+      continue;
+    }
+
+    Opts.FixItLocations.push_back(PSL);
+  }
 
   Opts.OutputFile = getLastArgValue(Args, OPT_o);
   Opts.Plugins = getAllArgValues(Args, OPT_load);
@@ -983,7 +937,6 @@ ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args, Diagnostic &Diags) {
   Opts.ShowVersion = Args.hasArg(OPT_version);
   Opts.ViewClassInheritance = getLastArgValue(Args, OPT_cxx_inheritance_view);
   Opts.ASTMergeFiles = getAllArgValues(Args, OPT_ast_merge);
-  Opts.LLVMArgs = getAllArgValues(Args, OPT_mllvm);
 
   FrontendOptions::InputKind DashX = FrontendOptions::IK_None;
   if (const Arg *A = Args.getLastArg(OPT_x)) {
@@ -1054,7 +1007,6 @@ static void ParseHeaderSearchArgs(HeaderSearchOptions &Opts, ArgList &Args) {
   Opts.Verbose = Args.hasArg(OPT_v);
   Opts.UseBuiltinIncludes = !Args.hasArg(OPT_nobuiltininc);
   Opts.UseStandardIncludes = !Args.hasArg(OPT_nostdinc);
-  Opts.UseStandardCXXIncludes = !Args.hasArg(OPT_nostdincxx);
   Opts.ResourceDir = getLastArgValue(Args, OPT_resource_dir);
 
   // Add -I... and -F... options in order.
@@ -1167,14 +1119,6 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args,
   // OpenCL and C++ both have bool, true, false keywords.
   Opts.Bool = Opts.OpenCL || Opts.CPlusPlus;
 
-  // We abuse '-f[no-]gnu-keywords' to force overriding all GNU-extension
-  // keywords. This behavior is provided by GCC's poorly named '-fasm' flag,
-  // while a subset (the non-C++ GNU keywords) is provided by GCC's
-  // '-fgnu-keywords'. Clang conflates the two for simplicity under the single
-  // name, as it doesn't seem a useful distinction.
-  Opts.GNUKeywords = Args.hasFlag(OPT_fgnu_keywords, OPT_fno_gnu_keywords,
-                                  Opts.GNUMode);
-
   if (Opts.CPlusPlus)
     Opts.CXXOperatorNames = !Args.hasArg(OPT_fno_operator_names);
 
@@ -1185,8 +1129,6 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args,
 
   if (Args.hasArg(OPT_print_ivar_layout))
     Opts.ObjCGCBitmapPrint = 1;
-  if (Args.hasArg(OPT_fno_constant_cfstrings))
-    Opts.NoConstantCFStrings = 1;
 
   if (Args.hasArg(OPT_faltivec))
     Opts.AltiVec = 1;
@@ -1220,7 +1162,6 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args,
   Opts.PascalStrings = Args.hasArg(OPT_fpascal_strings);
   Opts.Microsoft = Args.hasArg(OPT_fms_extensions);
   Opts.WritableStrings = Args.hasArg(OPT_fwritable_strings);
-  Opts.ConstStrings = Args.hasArg(OPT_Wwrite_strings);
   if (Args.hasArg(OPT_fno_lax_vector_conversions))
     Opts.LaxVectorConversions = 0;
   if (Args.hasArg(OPT_fno_threadsafe_statics))
@@ -1234,7 +1175,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args,
   Opts.NoBuiltin = Args.hasArg(OPT_fno_builtin) || Opts.Freestanding;
   Opts.AssumeSaneOperatorNew = !Args.hasArg(OPT_fno_assume_sane_operator_new);
   Opts.HeinousExtensions = Args.hasArg(OPT_fheinous_gnu_extensions);
-  Opts.AccessControl = !Args.hasArg(OPT_fno_access_control);
+  Opts.AccessControl = Args.hasArg(OPT_faccess_control);
   Opts.ElideConstructors = !Args.hasArg(OPT_fno_elide_constructors);
   Opts.MathErrno = Args.hasArg(OPT_fmath_errno);
   Opts.InstantiationDepth = getLastArgIntValue(Args, OPT_ftemplate_depth, 99,
@@ -1251,9 +1192,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args,
   Opts.PICLevel = getLastArgIntValue(Args, OPT_pic_level, 0, Diags);
   Opts.SjLjExceptions = Args.hasArg(OPT_fsjlj_exceptions);
   Opts.Static = Args.hasArg(OPT_static_define);
-  Opts.DumpRecordLayouts = Args.hasArg(OPT_fdump_record_layouts);
-  Opts.DumpVTableLayouts = Args.hasArg(OPT_fdump_vtable_layouts);
-  Opts.NoBitFieldTypeAlign = Args.hasArg(OPT_fno_bitfield_type_align);
+  Opts.DumpVtableLayouts = Args.hasArg(OPT_fdump_vtable_layouts);
   Opts.OptimizeSize = 0;
 
   // FIXME: Eliminate this dependency.
@@ -1290,7 +1229,7 @@ static void ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
   else
     Opts.TokenCache = Opts.ImplicitPTHInclude;
   Opts.UsePredefines = !Args.hasArg(OPT_undef);
-  Opts.DetailedRecord = Args.hasArg(OPT_detailed_preprocessing_record);
+
   // Add macros from the command line.
   for (arg_iterator it = Args.filtered_begin(OPT_D, OPT_U),
          ie = Args.filtered_end(); it != ie; ++it) {
@@ -1317,10 +1256,6 @@ static void ParsePreprocessorArgs(PreprocessorOptions &Opts, ArgList &Args,
     } else
       Opts.Includes.push_back(it->getValue(Args));
   }
-
-  // Include 'altivec.h' if -faltivec option present
-  if (Args.hasArg(OPT_faltivec))
-    Opts.Includes.push_back("altivec.h");
 
   for (arg_iterator it = Args.filtered_begin(OPT_remap_file),
          ie = Args.filtered_end(); it != ie; ++it) {

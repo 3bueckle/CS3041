@@ -488,14 +488,6 @@ public:
   }
 };
 
-/// \brief Wrapper for source info for injected class names of class
-/// templates.
-class InjectedClassNameTypeLoc :
-    public InheritingConcreteTypeLoc<TypeSpecTypeLoc,
-                                     InjectedClassNameTypeLoc,
-                                     InjectedClassNameType> {
-};
-
 /// \brief Wrapper for source info for unresolved typename using decls.
 class UnresolvedUsingTypeLoc :
     public InheritingConcreteTypeLoc<TypeSpecTypeLoc,
@@ -1242,9 +1234,9 @@ class QualifiedNameTypeLoc :
 };
 
 // FIXME: locations for the typename keyword and nested name specifier.
-class DependentNameTypeLoc : public InheritingConcreteTypeLoc<TypeSpecTypeLoc,
-                                                         DependentNameTypeLoc,
-                                                         DependentNameType> {
+class TypenameTypeLoc : public InheritingConcreteTypeLoc<TypeSpecTypeLoc,
+                                                         TypenameTypeLoc,
+                                                         TypenameType> {
 };
 
 }

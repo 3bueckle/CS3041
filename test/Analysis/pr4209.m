@@ -48,14 +48,16 @@ CMProfileLocation;
 @interface GBCategoryChooserPanelController : NSWindowController {
   GSEbayCategory *rootCategory;
 }
-- (NSMutableDictionary*)categoryDictionaryForCategoryID:(int)inID inRootTreeCategories:(NSMutableArray*)inRootTreeCategories; // expected-note {{method definition for 'categoryDictionaryForCategoryID:inRootTreeCategories:' not found}}
--(NSString*) categoryID;  // expected-note {{method definition for 'categoryID' not found}}
+- (NSMutableDictionary*)categoryDictionaryForCategoryID:(int)inID inRootTreeCategories:(NSMutableArray*)inRootTreeCategories;
+-(NSString*) categoryID; 
 @end @interface GSEbayCategory : NSObject <NSCoding> {
 }
 - (int) categoryID;
 - (GSEbayCategory *) parent;
 - (GSEbayCategory*) subcategoryWithID:(int) inID;
-@end   @implementation GBCategoryChooserPanelController  + (int) chooseCategoryIDFromCategories:(NSArray*) inCategories        searchRequest:(GBSearchRequest*)inRequest         parentWindow:(NSWindow*) inParent { // expected-warning {{incomplete implementation}}
+@end   @implementation GBCategoryChooserPanelController  + (int) chooseCategoryIDFromCategories:(NSArray*) inCategories        searchRequest:(GBSearchRequest*)inRequest         parentWindow:(NSWindow*) inParent { // expected-warning {{incomplete implementation}} \
+// expected-warning {{method definition for 'categoryDictionaryForCategoryID:inRootTreeCategories:' not found}} \
+// expected-warning {{method definition for 'categoryID' not found}}
   return 0;
 }
 - (void) addCategory:(EBayCategoryType*)inCategory toRootTreeCategory:(NSMutableArray*)inRootTreeCategories {

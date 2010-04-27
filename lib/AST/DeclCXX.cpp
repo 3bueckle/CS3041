@@ -33,7 +33,7 @@ CXXRecordDecl::DefinitionData::DefinitionData(CXXRecordDecl *D)
     HasTrivialCopyConstructor(true), HasTrivialCopyAssignment(true),
     HasTrivialDestructor(true), ComputedVisibleConversions(false),
     Bases(0), NumBases(0), VBases(0), NumVBases(0),
-    Definition(D), FirstFriend(0) {
+    Definition(D) {
 }
 
 CXXRecordDecl::CXXRecordDecl(Kind K, TagKind TK, DeclContext *DC,
@@ -83,11 +83,9 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
   if (data().Bases)
     C.Deallocate(data().Bases);
 
-  // The set of seen virtual base types.
-  llvm::SmallPtrSet<CanQualType, 8> SeenVBaseTypes;
-  
-  // The virtual bases of this class.
-  llvm::SmallVector<const CXXBaseSpecifier *, 8> VBases;
+  int vbaseCount = 0;
+  llvm::SmallVector<const CXXBaseSpecifier*, 8> UniqueVbases;
+  bool hasDirectVirtualBase = false;
 
   data().Bases = new(C) CXXBaseSpecifier [NumBases];
   data().NumBases = NumBases;
@@ -101,44 +99,58 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
       continue;
     CXXRecordDecl *BaseClassDecl
       = cast<CXXRecordDecl>(BaseType->getAs<RecordType>()->getDecl());
-
-    // Now go through all virtual bases of this base and add them.
+    if (Base->isVirtual())
+      hasDirectVirtualBase = true;
     for (CXXRecordDecl::base_class_iterator VBase =
           BaseClassDecl->vbases_begin(),
          E = BaseClassDecl->vbases_end(); VBase != E; ++VBase) {
-      // Add this base if it's not already in the list.
-      if (SeenVBaseTypes.insert(C.getCanonicalType(VBase->getType())))
-        VBases.push_back(VBase);
+      // Add this vbase to the array of vbases for current class if it is
+      // not already in the list.
+      // FIXME. Note that we do a linear search as number of such classes are
+      // very few.
+      int i;
+      for (i = 0; i < vbaseCount; ++i)
+        if (UniqueVbases[i]->getType() == VBase->getType())
+          break;
+      if (i == vbaseCount) {
+        UniqueVbases.push_back(VBase);
+        ++vbaseCount;
+      }
     }
-
-    if (Base->isVirtual()) {
-      // Add this base if it's not already in the list.
-      if (SeenVBaseTypes.insert(C.getCanonicalType(BaseType)))
-          VBases.push_back(Base);
-    }
-
   }
-  
-  if (VBases.empty())
-    return;
-
-  // Create base specifier for any direct or indirect virtual bases.
-  data().VBases = new (C) CXXBaseSpecifier[VBases.size()];
-  data().NumVBases = VBases.size();
-  for (int I = 0, E = VBases.size(); I != E; ++I) {
-    QualType VBaseType = VBases[I]->getType();
-    
-    // Skip dependent types; we can't do any checking on them now.
-    if (VBaseType->isDependentType())
-      continue;
-
-    CXXRecordDecl *VBaseClassDecl
-      = cast<CXXRecordDecl>(VBaseType->getAs<RecordType>()->getDecl());
-
-    data().VBases[I] =
-      CXXBaseSpecifier(VBaseClassDecl->getSourceRange(), true,
-                       VBaseClassDecl->getTagKind() == RecordDecl::TK_class,
-                       VBases[I]->getAccessSpecifier(), VBaseType);
+  if (hasDirectVirtualBase) {
+    // Iterate one more time through the direct bases and add the virtual
+    // base to the list of vritual bases for current class.
+    for (unsigned i = 0; i < NumBases; ++i) {
+      const CXXBaseSpecifier *VBase = Bases[i];
+      if (!VBase->isVirtual())
+        continue;
+      int j;
+      for (j = 0; j < vbaseCount; ++j)
+        if (UniqueVbases[j]->getType() == VBase->getType())
+          break;
+      if (j == vbaseCount) {
+        UniqueVbases.push_back(VBase);
+        ++vbaseCount;
+      }
+    }
+  }
+  if (vbaseCount > 0) {
+    // build AST for inhireted, direct or indirect, virtual bases.
+    data().VBases = new (C) CXXBaseSpecifier [vbaseCount];
+    data().NumVBases = vbaseCount;
+    for (int i = 0; i < vbaseCount; i++) {
+      QualType QT = UniqueVbases[i]->getType();
+      // Skip dependent types; we can't do any checking on them now.
+      if (QT->isDependentType())
+        continue;
+      CXXRecordDecl *VBaseClassDecl
+        = cast<CXXRecordDecl>(QT->getAs<RecordType>()->getDecl());
+      data().VBases[i] =
+        CXXBaseSpecifier(VBaseClassDecl->getSourceRange(), true,
+                         VBaseClassDecl->getTagKind() == RecordDecl::TK_class,
+                         UniqueVbases[i]->getAccessSpecifier(), QT);
+    }
   }
 }
 
@@ -306,130 +318,105 @@ void CXXRecordDecl::addedAssignmentOperator(ASTContext &Context,
   data().PlainOldData = false;
 }
 
-static CanQualType GetConversionType(ASTContext &Context, NamedDecl *Conv) {
-  QualType T;
-  if (isa<UsingShadowDecl>(Conv))
-    Conv = cast<UsingShadowDecl>(Conv)->getTargetDecl();
-  if (FunctionTemplateDecl *ConvTemp = dyn_cast<FunctionTemplateDecl>(Conv))
-    T = ConvTemp->getTemplatedDecl()->getResultType();
-  else 
-    T = cast<CXXConversionDecl>(Conv)->getConversionType();
-  return Context.getCanonicalType(T);
+void
+CXXRecordDecl::collectConversionFunctions(
+                 llvm::SmallPtrSet<CanQualType, 8>& ConversionsTypeSet) const
+{
+  const UnresolvedSetImpl *Cs = getConversionFunctions();
+  for (UnresolvedSetImpl::iterator I = Cs->begin(), E = Cs->end();
+         I != E; ++I) {
+    NamedDecl *TopConv = *I;
+    CanQualType TConvType;
+    if (FunctionTemplateDecl *TConversionTemplate =
+        dyn_cast<FunctionTemplateDecl>(TopConv))
+      TConvType = 
+        getASTContext().getCanonicalType(
+                    TConversionTemplate->getTemplatedDecl()->getResultType());
+    else 
+      TConvType = 
+        getASTContext().getCanonicalType(
+                      cast<CXXConversionDecl>(TopConv)->getConversionType());
+    ConversionsTypeSet.insert(TConvType);
+  }  
 }
 
-/// Collect the visible conversions of a base class.
-///
-/// \param Base a base class of the class we're considering
-/// \param InVirtual whether this base class is a virtual base (or a base
-///   of a virtual base)
-/// \param Access the access along the inheritance path to this base
-/// \param ParentHiddenTypes the conversions provided by the inheritors
-///   of this base
-/// \param Output the set to which to add conversions from non-virtual bases
-/// \param VOutput the set to which to add conversions from virtual bases
-/// \param HiddenVBaseCs the set of conversions which were hidden in a
-///   virtual base along some inheritance path
-static void CollectVisibleConversions(ASTContext &Context,
-                                      CXXRecordDecl *Record,
-                                      bool InVirtual,
-                                      AccessSpecifier Access,
-                  const llvm::SmallPtrSet<CanQualType, 8> &ParentHiddenTypes,
-                                      UnresolvedSetImpl &Output,
-                                      UnresolvedSetImpl &VOutput,
-                           llvm::SmallPtrSet<NamedDecl*, 8> &HiddenVBaseCs) {
-  // The set of types which have conversions in this class or its
-  // subclasses.  As an optimization, we don't copy the derived set
-  // unless it might change.
-  const llvm::SmallPtrSet<CanQualType, 8> *HiddenTypes = &ParentHiddenTypes;
-  llvm::SmallPtrSet<CanQualType, 8> HiddenTypesBuffer;
-
-  // Collect the direct conversions and figure out which conversions
-  // will be hidden in the subclasses.
-  UnresolvedSetImpl &Cs = *Record->getConversionFunctions();
-  if (!Cs.empty()) {
-    HiddenTypesBuffer = ParentHiddenTypes;
-    HiddenTypes = &HiddenTypesBuffer;
-
-    for (UnresolvedSetIterator I = Cs.begin(), E = Cs.end(); I != E; ++I) {
-      bool Hidden =
-        !HiddenTypesBuffer.insert(GetConversionType(Context, I.getDecl()));
-
-      // If this conversion is hidden and we're in a virtual base,
-      // remember that it's hidden along some inheritance path.
-      if (Hidden && InVirtual)
-        HiddenVBaseCs.insert(cast<NamedDecl>(I.getDecl()->getCanonicalDecl()));
-
-      // If this conversion isn't hidden, add it to the appropriate output.
-      else if (!Hidden) {
-        AccessSpecifier IAccess
-          = CXXRecordDecl::MergeAccess(Access, I.getAccess());
-
-        if (InVirtual)
-          VOutput.addDecl(I.getDecl(), IAccess);
+/// getNestedVisibleConversionFunctions - imports unique conversion 
+/// functions from base classes into the visible conversion function
+/// list of the class 'RD'. This is a private helper method.
+/// TopConversionsTypeSet is the set of conversion functions of the class
+/// we are interested in. HiddenConversionTypes is set of conversion functions
+/// of the immediate derived class which  hides the conversion functions found 
+/// in current class.
+void
+CXXRecordDecl::getNestedVisibleConversionFunctions(CXXRecordDecl *RD,
+                const llvm::SmallPtrSet<CanQualType, 8> &TopConversionsTypeSet,                               
+                const llvm::SmallPtrSet<CanQualType, 8> &HiddenConversionTypes) 
+{
+  bool inTopClass = (RD == this);
+  QualType ClassType = getASTContext().getTypeDeclType(this);
+  if (const RecordType *Record = ClassType->getAs<RecordType>()) {
+    const UnresolvedSetImpl *Cs
+      = cast<CXXRecordDecl>(Record->getDecl())->getConversionFunctions();
+    
+    for (UnresolvedSetImpl::iterator I = Cs->begin(), E = Cs->end();
+           I != E; ++I) {
+      NamedDecl *Conv = *I;
+      // Only those conversions not exact match of conversions in current
+      // class are candidateconversion routines.
+      CanQualType ConvType;
+      if (FunctionTemplateDecl *ConversionTemplate = 
+            dyn_cast<FunctionTemplateDecl>(Conv))
+        ConvType = 
+          getASTContext().getCanonicalType(
+                      ConversionTemplate->getTemplatedDecl()->getResultType());
+      else
+        ConvType = 
+          getASTContext().getCanonicalType(
+                          cast<CXXConversionDecl>(Conv)->getConversionType());
+      // We only add conversion functions found in the base class if they
+      // are not hidden by those found in HiddenConversionTypes which are
+      // the conversion functions in its derived class.
+      if (inTopClass || 
+          (!TopConversionsTypeSet.count(ConvType) && 
+           !HiddenConversionTypes.count(ConvType)) ) {
+        if (FunctionTemplateDecl *ConversionTemplate =
+              dyn_cast<FunctionTemplateDecl>(Conv))
+          RD->addVisibleConversionFunction(ConversionTemplate);
         else
-          Output.addDecl(I.getDecl(), IAccess);
+          RD->addVisibleConversionFunction(cast<CXXConversionDecl>(Conv));
       }
     }
   }
 
-  // Collect information recursively from any base classes.
-  for (CXXRecordDecl::base_class_iterator
-         I = Record->bases_begin(), E = Record->bases_end(); I != E; ++I) {
-    const RecordType *RT = I->getType()->getAs<RecordType>();
-    if (!RT) continue;
+  if (getNumBases() == 0 && getNumVBases() == 0)
+    return;
 
-    AccessSpecifier BaseAccess
-      = CXXRecordDecl::MergeAccess(Access, I->getAccessSpecifier());
-    bool BaseInVirtual = InVirtual || I->isVirtual();
+  llvm::SmallPtrSet<CanQualType, 8> ConversionFunctions;
+  if (!inTopClass)
+    collectConversionFunctions(ConversionFunctions);
 
-    CXXRecordDecl *Base = cast<CXXRecordDecl>(RT->getDecl());
-    CollectVisibleConversions(Context, Base, BaseInVirtual, BaseAccess,
-                              *HiddenTypes, Output, VOutput, HiddenVBaseCs);
+  for (CXXRecordDecl::base_class_iterator VBase = vbases_begin(),
+       E = vbases_end(); VBase != E; ++VBase) {
+    if (const RecordType *RT = VBase->getType()->getAs<RecordType>()) {
+      CXXRecordDecl *VBaseClassDecl
+        = cast<CXXRecordDecl>(RT->getDecl());
+      VBaseClassDecl->getNestedVisibleConversionFunctions(RD,
+                    TopConversionsTypeSet,
+                    (inTopClass ? TopConversionsTypeSet : ConversionFunctions));
+    }
   }
-}
+  for (CXXRecordDecl::base_class_iterator Base = bases_begin(),
+       E = bases_end(); Base != E; ++Base) {
+    if (Base->isVirtual())
+      continue;
+    if (const RecordType *RT = Base->getType()->getAs<RecordType>()) {
+      CXXRecordDecl *BaseClassDecl
+        = cast<CXXRecordDecl>(RT->getDecl());
 
-/// Collect the visible conversions of a class.
-///
-/// This would be extremely straightforward if it weren't for virtual
-/// bases.  It might be worth special-casing that, really.
-static void CollectVisibleConversions(ASTContext &Context,
-                                      CXXRecordDecl *Record,
-                                      UnresolvedSetImpl &Output) {
-  // The collection of all conversions in virtual bases that we've
-  // found.  These will be added to the output as long as they don't
-  // appear in the hidden-conversions set.
-  UnresolvedSet<8> VBaseCs;
-  
-  // The set of conversions in virtual bases that we've determined to
-  // be hidden.
-  llvm::SmallPtrSet<NamedDecl*, 8> HiddenVBaseCs;
-
-  // The set of types hidden by classes derived from this one.
-  llvm::SmallPtrSet<CanQualType, 8> HiddenTypes;
-
-  // Go ahead and collect the direct conversions and add them to the
-  // hidden-types set.
-  UnresolvedSetImpl &Cs = *Record->getConversionFunctions();
-  Output.append(Cs.begin(), Cs.end());
-  for (UnresolvedSetIterator I = Cs.begin(), E = Cs.end(); I != E; ++I)
-    HiddenTypes.insert(GetConversionType(Context, I.getDecl()));
-
-  // Recursively collect conversions from base classes.
-  for (CXXRecordDecl::base_class_iterator
-         I = Record->bases_begin(), E = Record->bases_end(); I != E; ++I) {
-    const RecordType *RT = I->getType()->getAs<RecordType>();
-    if (!RT) continue;
-
-    CollectVisibleConversions(Context, cast<CXXRecordDecl>(RT->getDecl()),
-                              I->isVirtual(), I->getAccessSpecifier(),
-                              HiddenTypes, Output, VBaseCs, HiddenVBaseCs);
-  }
-
-  // Add any unhidden conversions provided by virtual bases.
-  for (UnresolvedSetIterator I = VBaseCs.begin(), E = VBaseCs.end();
-         I != E; ++I) {
-    if (!HiddenVBaseCs.count(cast<NamedDecl>(I.getDecl()->getCanonicalDecl())))
-      Output.addDecl(I.getDecl(), I.getAccess());
+      BaseClassDecl->getNestedVisibleConversionFunctions(RD,
+                    TopConversionsTypeSet,
+                    (inTopClass ? TopConversionsTypeSet : ConversionFunctions));
+    }
   }
 }
 
@@ -442,49 +429,40 @@ const UnresolvedSetImpl *CXXRecordDecl::getVisibleConversionFunctions() {
   // If visible conversion list is already evaluated, return it.
   if (data().ComputedVisibleConversions)
     return &data().VisibleConversions;
-  CollectVisibleConversions(getASTContext(), this, data().VisibleConversions);
+  llvm::SmallPtrSet<CanQualType, 8> TopConversionsTypeSet;
+  collectConversionFunctions(TopConversionsTypeSet);
+  getNestedVisibleConversionFunctions(this, TopConversionsTypeSet,
+                                      TopConversionsTypeSet);
   data().ComputedVisibleConversions = true;
   return &data().VisibleConversions;
 }
 
-#ifndef NDEBUG
-void CXXRecordDecl::CheckConversionFunction(NamedDecl *ConvDecl) {
-  assert(ConvDecl->getDeclContext() == this &&
-         "conversion function does not belong to this record");
-
-  ConvDecl = ConvDecl->getUnderlyingDecl();
-  if (FunctionTemplateDecl *Temp = dyn_cast<FunctionTemplateDecl>(ConvDecl)) {
-    assert(isa<CXXConversionDecl>(Temp->getTemplatedDecl()));
-  } else {
-    assert(isa<CXXConversionDecl>(ConvDecl));
-  }
+void CXXRecordDecl::addVisibleConversionFunction(
+                                          CXXConversionDecl *ConvDecl) {
+  assert(!ConvDecl->getDescribedFunctionTemplate() &&
+         "Conversion function templates should cast to FunctionTemplateDecl.");
+  data().VisibleConversions.addDecl(ConvDecl);
 }
-#endif
 
-void CXXRecordDecl::removeConversion(const NamedDecl *ConvDecl) {
-  // This operation is O(N) but extremely rare.  Sema only uses it to
-  // remove UsingShadowDecls in a class that were followed by a direct
-  // declaration, e.g.:
-  //   class A : B {
-  //     using B::operator int;
-  //     operator int();
-  //   };
-  // This is uncommon by itself and even more uncommon in conjunction
-  // with sufficiently large numbers of directly-declared conversions
-  // that asymptotic behavior matters.
-
-  UnresolvedSetImpl &Convs = *getConversionFunctions();
-  for (unsigned I = 0, E = Convs.size(); I != E; ++I) {
-    if (Convs[I].getDecl() == ConvDecl) {
-      Convs.erase(I);
-      assert(std::find(Convs.begin(), Convs.end(), ConvDecl) == Convs.end()
-             && "conversion was found multiple times in unresolved set");
-      return;
-    }
-  }
-
-  llvm_unreachable("conversion not found in set!");
+void CXXRecordDecl::addVisibleConversionFunction(
+                                          FunctionTemplateDecl *ConvDecl) {
+  assert(isa<CXXConversionDecl>(ConvDecl->getTemplatedDecl()) &&
+         "Function template is not a conversion function template");
+  data().VisibleConversions.addDecl(ConvDecl);
 }
+
+void CXXRecordDecl::addConversionFunction(CXXConversionDecl *ConvDecl) {
+  assert(!ConvDecl->getDescribedFunctionTemplate() &&
+         "Conversion function templates should cast to FunctionTemplateDecl.");
+  data().Conversions.addDecl(ConvDecl);
+}
+
+void CXXRecordDecl::addConversionFunction(FunctionTemplateDecl *ConvDecl) {
+  assert(isa<CXXConversionDecl>(ConvDecl->getTemplatedDecl()) &&
+         "Function template is not a conversion function template");
+  data().Conversions.addDecl(ConvDecl);
+}
+
 
 void CXXRecordDecl::setMethodAsVirtual(FunctionDecl *Method) {
   Method->setVirtualAsWritten(true);
@@ -587,9 +565,9 @@ CXXMethodDecl *
 CXXMethodDecl::Create(ASTContext &C, CXXRecordDecl *RD,
                       SourceLocation L, DeclarationName N,
                       QualType T, TypeSourceInfo *TInfo,
-                      bool isStatic, StorageClass SCAsWritten, bool isInline) {
+                      bool isStatic, bool isInline) {
   return new (C) CXXMethodDecl(CXXMethod, RD, L, N, T, TInfo,
-                               isStatic, SCAsWritten, isInline);
+                               isStatic, isInline);
 }
 
 bool CXXMethodDecl::isUsualDeallocationFunction() const {
@@ -658,7 +636,11 @@ QualType CXXMethodDecl::getThisType(ASTContext &C) const {
 
   assert(isInstance() && "No 'this' for static methods!");
 
-  QualType ClassTy = C.getTypeDeclType(getParent());
+  QualType ClassTy;
+  if (ClassTemplateDecl *TD = getParent()->getDescribedClassTemplate())
+    ClassTy = TD->getInjectedClassNameType(C);
+  else
+    ClassTy = C.getTagDeclType(getParent());
   ClassTy = C.getQualifiedType(ClassTy,
                                Qualifiers::fromCVRMask(getTypeQualifiers()));
   return C.getPointerType(ClassTy);
@@ -677,9 +659,9 @@ bool CXXMethodDecl::hasInlineBody() const {
 
 CXXBaseOrMemberInitializer::
 CXXBaseOrMemberInitializer(ASTContext &Context,
-                           TypeSourceInfo *TInfo, bool IsVirtual,
+                           TypeSourceInfo *TInfo, 
                            SourceLocation L, Expr *Init, SourceLocation R)
-  : BaseOrMember(TInfo), Init(Init), AnonUnionMember(0), IsVirtual(IsVirtual),
+  : BaseOrMember(TInfo), Init(Init), AnonUnionMember(0),
     LParenLoc(L), RParenLoc(R) 
 {
 }
@@ -736,12 +718,11 @@ CXXConstructorDecl::Create(ASTContext &C, CXXRecordDecl *RD,
                            SourceLocation L, DeclarationName N,
                            QualType T, TypeSourceInfo *TInfo,
                            bool isExplicit,
-                           bool isInline,
-                           bool isImplicitlyDeclared) {
+                           bool isInline, bool isImplicitlyDeclared) {
   assert(N.getNameKind() == DeclarationName::CXXConstructorName &&
          "Name must refer to a constructor");
-  return new (C) CXXConstructorDecl(RD, L, N, T, TInfo, isExplicit,
-                                    isInline, isImplicitlyDeclared);
+  return new (C) CXXConstructorDecl(RD, L, N, T, TInfo, isExplicit, isInline,
+                                      isImplicitlyDeclared);
 }
 
 bool CXXConstructorDecl::isDefaultConstructor() const {
@@ -840,7 +821,8 @@ CXXDestructorDecl::Create(ASTContext &C, CXXRecordDecl *RD,
                           bool isImplicitlyDeclared) {
   assert(N.getNameKind() == DeclarationName::CXXDestructorName &&
          "Name must refer to a destructor");
-  return new (C) CXXDestructorDecl(RD, L, N, T, isInline, isImplicitlyDeclared);
+  return new (C) CXXDestructorDecl(RD, L, N, T, isInline,
+                                   isImplicitlyDeclared);
 }
 
 void
@@ -857,6 +839,28 @@ CXXConversionDecl::Create(ASTContext &C, CXXRecordDecl *RD,
   assert(N.getNameKind() == DeclarationName::CXXConversionFunctionName &&
          "Name must refer to a conversion function");
   return new (C) CXXConversionDecl(RD, L, N, T, TInfo, isInline, isExplicit);
+}
+
+FriendDecl *FriendDecl::Create(ASTContext &C, DeclContext *DC,
+                               SourceLocation L,
+                               FriendUnion Friend,
+                               SourceLocation FriendL) {
+#ifndef NDEBUG
+  if (Friend.is<NamedDecl*>()) {
+    NamedDecl *D = Friend.get<NamedDecl*>();
+    assert(isa<FunctionDecl>(D) ||
+           isa<CXXRecordDecl>(D) ||
+           isa<FunctionTemplateDecl>(D) ||
+           isa<ClassTemplateDecl>(D));
+
+    // As a temporary hack, we permit template instantiation to point
+    // to the original declaration when instantiating members.
+    assert(D->getFriendObjectKind() ||
+           (cast<CXXRecordDecl>(DC)->getTemplateSpecializationKind()));
+  }
+#endif
+
+  return new (C) FriendDecl(DC, L, Friend, FriendL);
 }
 
 LinkageSpecDecl *LinkageSpecDecl::Create(ASTContext &C,
@@ -943,7 +947,8 @@ StaticAssertDecl *StaticAssertDecl::Create(ASTContext &C, DeclContext *DC,
 void StaticAssertDecl::Destroy(ASTContext& C) {
   AssertExpr->Destroy(C);
   Message->Destroy(C);
-  Decl::Destroy(C);
+  this->~StaticAssertDecl();
+  C.Deallocate((void *)this);
 }
 
 StaticAssertDecl::~StaticAssertDecl() {

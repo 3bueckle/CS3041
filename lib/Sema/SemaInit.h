@@ -92,12 +92,11 @@ private:
     unsigned Location;
     
     /// \brief When Kind == EK_Base, the base specifier that provides the 
-    /// base class. The lower bit specifies whether the base is an inherited
-    /// virtual base.
-    uintptr_t Base;
+    /// base class.
+    CXXBaseSpecifier *Base;
 
-    /// \brief When Kind == EK_ArrayElement or EK_VectorElement, the
-    /// index of the array or vector element being initialized. 
+    /// \brief When Kind = EK_ArrayElement or EK_VectorElement, the
+    /// index of the array or vector element being initialized.
     unsigned Index;
   };
 
@@ -142,12 +141,7 @@ public:
   /// \brief Create the initialization entity for a parameter that is
   /// only known by its type.
   static InitializedEntity InitializeParameter(QualType Type) {
-    InitializedEntity Entity;
-    Entity.Kind = EK_Parameter;
-    Entity.Type = Type;
-    Entity.Parent = 0;
-    Entity.VariableOrMember = 0;
-    return Entity;
+    return InitializedEntity(EK_Parameter, SourceLocation(), Type);
   }
 
   /// \brief Create the initialization entity for the result of a function.
@@ -174,8 +168,7 @@ public:
   
   /// \brief Create the initialization entity for a base class subobject.
   static InitializedEntity InitializeBase(ASTContext &Context,
-                                          CXXBaseSpecifier *Base,
-                                          bool IsInheritedVirtualBase);
+                                          CXXBaseSpecifier *Base);
   
   /// \brief Create the initialization entity for a member subobject.
   static InitializedEntity InitializeMember(FieldDecl *Member,
@@ -211,13 +204,7 @@ public:
   /// \brief Retrieve the base specifier.
   CXXBaseSpecifier *getBaseSpecifier() const {
     assert(getKind() == EK_Base && "Not a base specifier");
-    return reinterpret_cast<CXXBaseSpecifier *>(Base & ~0x1);
-  }
-
-  /// \brief Return whether the base is an inherited virtual base.
-  bool isInheritedVirtualBase() const {
-    assert(getKind() == EK_Base && "Not a base specifier");
-    return Base & 0x1;
+    return Base;
   }
 
   /// \brief Determine the location of the 'return' keyword when initializing
@@ -429,10 +416,6 @@ public:
     SK_BindReference,
     /// \brief Reference binding to a temporary.
     SK_BindReferenceToTemporary,
-    /// \brief An optional copy of a temporary object to another
-    /// temporary object, which is permitted (but not required) by
-    /// C++98/03 but not C++0x.
-    SK_ExtraneousCopyToTemporary,
     /// \brief Perform a user-defined conversion, either via a conversion
     /// function or via a constructor.
     SK_UserConversion,
@@ -471,10 +454,7 @@ public:
       /// Always a FunctionDecl.
       /// For conversion decls, the naming class is the source type.
       /// For construct decls, the naming class is the target type.
-      struct {
-        FunctionDecl *Function;
-        DeclAccessPair FoundDecl;
-      } Function;
+      DeclAccessPair Function;
       
       /// \brief When Kind = SK_ConversionSequence, the implicit conversion
       /// sequence 
@@ -542,11 +522,7 @@ private:
   
   /// \brief The candidate set created when initialization failed.
   OverloadCandidateSet FailedCandidateSet;
-
-  /// \brief Prints a follow-up note that highlights the location of
-  /// the initialized entity, if it's remote.
-  void PrintInitLocationNote(Sema &S, const InitializedEntity &Entity);
-
+  
 public:
   /// \brief Try to perform initialization of the given entity, creating a 
   /// record of the steps required to perform the initialization.
@@ -620,24 +596,12 @@ public:
   step_iterator step_begin() const { return Steps.begin(); }
   step_iterator step_end()   const { return Steps.end(); }
 
-  /// \brief Determine whether this initialization is a direct reference 
-  /// binding (C++ [dcl.init.ref]).
-  bool isDirectReferenceBinding() const;
-  
-  /// \brief Determine whether this initialization failed due to an ambiguity.
-  bool isAmbiguous() const;
-  
-  /// \brief Determine whether this initialization is direct call to a 
-  /// constructor.
-  bool isConstructorInitialization() const;
-  
   /// \brief Add a new step in the initialization that resolves the address
   /// of an overloaded function to a specific function declaration.
   ///
   /// \param Function the function to which the overloaded function reference
   /// resolves.
-  void AddAddressOverloadResolutionStep(FunctionDecl *Function,
-                                        DeclAccessPair Found);
+  void AddAddressOverloadResolutionStep(FunctionDecl *Function);
   
   /// \brief Add a new step in the initialization that performs a derived-to-
   /// base cast.
@@ -650,30 +614,15 @@ public:
      
   /// \brief Add a new step binding a reference to an object.
   ///
-  /// \param BindingTemporary True if we are binding a reference to a temporary
+  /// \param BindingTemporary true if we are binding a reference to a temporary
   /// object (thereby extending its lifetime); false if we are binding to an
   /// lvalue or an lvalue treated as an rvalue.
-  ///
-  /// \param UnnecessaryCopy True if we should check for a copy
-  /// constructor for a completely unnecessary but
   void AddReferenceBindingStep(QualType T, bool BindingTemporary);
-
-  /// \brief Add a new step that makes an extraneous copy of the input
-  /// to a temporary of the same class type.
-  ///
-  /// This extraneous copy only occurs during reference binding in
-  /// C++98/03, where we are permitted (but not required) to introduce
-  /// an extra copy. At a bare minimum, we must check that we could
-  /// call the copy constructor, and produce a diagnostic if the copy
-  /// constructor is inaccessible or no copy constructor matches.
-  //
-  /// \param T The type of the temporary being created.
-  void AddExtraneousCopyToTemporary(QualType T);
-
+  
   /// \brief Add a new step invoking a conversion function, which is either
   /// a constructor or a conversion function.
   void AddUserConversionStep(FunctionDecl *Function,
-                             DeclAccessPair FoundDecl,
+                             AccessSpecifier Access,
                              QualType T);
   
   /// \brief Add a new step that performs a qualification conversion to the

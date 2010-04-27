@@ -294,6 +294,8 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
       //   C++ translation unit.
       Builder.defineMacro("__cplusplus", "199711L");
     Builder.defineMacro("__private_extern__", "extern");
+    // Ugly hack to work with GNU libstdc++.
+    Builder.defineMacro("_GNU_SOURCE");
   }
 
   if (LangOpts.Microsoft) {
@@ -501,11 +503,7 @@ void clang::InitializePreprocessor(Preprocessor &PP,
   InitializeFileRemapping(PP.getDiagnostics(), PP.getSourceManager(),
                           PP.getFileManager(), InitOpts);
 
-  // Emit line markers for various builtin sections of the file.  We don't do
-  // this in asm preprocessor mode, because "# 4" is not a line marker directive
-  // in this mode.
-  if (!PP.getLangOptions().AsmPreprocessor)
-    Builder.append("# 1 \"<built-in>\" 3");
+  Builder.append("# 1 \"<built-in>\" 3");
 
   // Install things like __POWERPC__, __GNUC__, etc into the macro table.
   if (InitOpts.UsePredefines)
@@ -514,8 +512,7 @@ void clang::InitializePreprocessor(Preprocessor &PP,
 
   // Add on the predefines from the driver.  Wrap in a #line directive to report
   // that they come from the command line.
-  if (!PP.getLangOptions().AsmPreprocessor)
-    Builder.append("# 1 \"<command line>\" 1");
+  Builder.append("# 1 \"<command line>\" 1");
 
   // Process #define's and #undef's in the order they are given.
   for (unsigned i = 0, e = InitOpts.Macros.size(); i != e; ++i) {
@@ -541,8 +538,7 @@ void clang::InitializePreprocessor(Preprocessor &PP,
   }
 
   // Exit the command line and go back to <built-in> (2 is LC_LEAVE).
-  if (!PP.getLangOptions().AsmPreprocessor)
-    Builder.append("# 1 \"<built-in>\" 2");
+  Builder.append("# 1 \"<built-in>\" 2");
 
   // Copy PredefinedBuffer into the Preprocessor.
   PP.setPredefines(Predefines.str());

@@ -32,7 +32,7 @@ struct E;
 
 typedef E E_typedef;
 struct E {
-  ~E_typedef(); // expected-error{{destructor cannot be declared using a typedef 'E_typedef' (aka 'E') of the class name}}
+  ~E_typedef(); // expected-error{{destructor cannot be declared using a typedef 'E_typedef' (aka 'struct E') of the class name}}
 };
 
 struct F {
@@ -77,9 +77,4 @@ namespace PR6421 {
       bob<QGenericArgument>(t); // expected-error{{undeclared identifier 'bob'}}
     }
   };
-}
-
-namespace PR6709 {
-  template<class T> class X { T v; ~X() { ++*v; } };
-  void a(X<int> x) {}
 }

@@ -20,12 +20,6 @@
 #include "llvm/Support/raw_ostream.h"
 using namespace clang;
 
-llvm::raw_ostream &RewriteBuffer::write(llvm::raw_ostream &os) const {
-  // FIXME: eliminate the copy by writing out each chunk at a time
-  os << std::string(begin(), end());
-  return os;
-}
-
 void RewriteBuffer::RemoveText(unsigned OrigOffset, unsigned Size) {
   // Nothing to remove, exit early.
   if (Size == 0) return;
@@ -171,8 +165,8 @@ RewriteBuffer &Rewriter::getEditBuffer(FileID FID) {
     return I->second;
   I = RewriteBuffers.insert(I, std::make_pair(FID, RewriteBuffer()));
 
-  llvm::StringRef MB = SourceMgr->getBufferData(FID);
-  I->second.Initialize(MB.begin(), MB.end());
+  std::pair<const char*, const char*> MB = SourceMgr->getBufferData(FID);
+  I->second.Initialize(MB.first, MB.second);
 
   return I->second;
 }
@@ -228,3 +222,5 @@ bool Rewriter::ReplaceStmt(Stmt *From, Stmt *To) {
   ReplaceText(From->getLocStart(), Size, Str);
   return false;
 }
+
+

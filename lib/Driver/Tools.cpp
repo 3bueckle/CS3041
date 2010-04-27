@@ -56,35 +56,6 @@ static void CheckCodeGenerationOptions(const Driver &D, const ArgList &Args) {
         << A->getAsString(Args) << "-static";
 }
 
-// Quote target names for inclusion in GNU Make dependency files.
-// Only the characters '$', '#', ' ', '\t' are quoted.
-static void QuoteTarget(llvm::StringRef Target,
-                        llvm::SmallVectorImpl<char> &Res) {
-  for (unsigned i = 0, e = Target.size(); i != e; ++i) {
-    switch (Target[i]) {
-    case ' ':
-    case '\t':
-      // Escape the preceding backslashes
-      for (int j = i - 1; j >= 0 && Target[j] == '\\'; --j)
-        Res.push_back('\\');
-
-      // Escape the space/tab
-      Res.push_back('\\');
-      break;
-    case '$':
-      Res.push_back('$');
-      break;
-    case '#':
-      Res.push_back('\\');
-      break;
-    default:
-      break;
-    }
-
-    Res.push_back(Target[i]);
-  }
-}
-
 void Clang::AddPreprocessingOptions(const Driver &D,
                                     const ArgList &Args,
                                     ArgStringList &CmdArgs,
@@ -120,7 +91,9 @@ void Clang::AddPreprocessingOptions(const Driver &D,
     CmdArgs.push_back("-dependency-file");
     CmdArgs.push_back(DepFile);
 
-    // Add a default target if one wasn't specified.
+    // Add an -MT option if the user didn't specify their own.
+    //
+    // FIXME: This should use -MQ, when we support it.
     if (!Args.hasArg(options::OPT_MT) && !Args.hasArg(options::OPT_MQ)) {
       const char *DepTarget;
 
@@ -141,9 +114,7 @@ void Clang::AddPreprocessingOptions(const Driver &D,
       }
 
       CmdArgs.push_back("-MT");
-      llvm::SmallString<128> Quoted;
-      QuoteTarget(DepTarget, Quoted);
-      CmdArgs.push_back(Args.MakeArgString(Quoted));
+      CmdArgs.push_back(DepTarget);
     }
 
     if (A->getOption().matches(options::OPT_M) ||
@@ -152,25 +123,7 @@ void Clang::AddPreprocessingOptions(const Driver &D,
   }
 
   Args.AddLastArg(CmdArgs, options::OPT_MP);
-
-  // Convert all -MQ <target> args to -MT <quoted target>
-  for (arg_iterator it = Args.filtered_begin(options::OPT_MT,
-                                             options::OPT_MQ),
-         ie = Args.filtered_end(); it != ie; ++it) {
-
-    it->claim();
-
-    if (it->getOption().matches(options::OPT_MQ)) {
-      CmdArgs.push_back("-MT");
-      llvm::SmallString<128> Quoted;
-      QuoteTarget(it->getValue(Args), Quoted);
-      CmdArgs.push_back(Args.MakeArgString(Quoted));
-
-    // -MT flag - no change
-    } else {
-      it->render(Args, CmdArgs);
-    }
-  }
+  Args.AddAllArgs(CmdArgs, options::OPT_MT);
 
   // Add -i* options, and automatically translate to
   // -include-pch/-include-pth for transparent PCH support. It's
@@ -566,9 +519,13 @@ void Clang::AddMIPSTargetArgs(const ArgList &Args,
 
   // If unspecified, choose the default based on the platform.
   if (FloatABI.empty()) {
-    // Assume "soft", but warn the user we are guessing.
-    FloatABI = "soft";
-    D.Diag(clang::diag::warn_drv_assuming_mfloat_abi_is) << "soft";
+    switch (getToolChain().getTriple().getOS()) {
+    default:
+      // Assume "soft", but warn the user we are guessing.
+      FloatABI = "soft";
+      D.Diag(clang::diag::warn_drv_assuming_mfloat_abi_is) << "soft";
+      break;
+    }
   }
 
   if (FloatABI == "soft") {
@@ -619,11 +576,6 @@ void Clang::AddX86TargetArgs(const ArgList &Args,
         CPUName = "core2";
       else if (getToolChain().getArchName() == "i386")
         CPUName = "yonah";
-    } else if (getToolChain().getOS().startswith("haiku"))  {
-      if (getToolChain().getArchName() == "x86_64")
-        CPUName = "x86-64";
-      else if (getToolChain().getArchName() == "i386")
-        CPUName = "i586";
     } else {
       if (getToolChain().getArchName() == "x86_64")
         CPUName = "x86-64";
@@ -703,12 +655,6 @@ static std::string getEffectiveClangTriple(const Driver &D,
   } else {
     const toolchains::Darwin &DarwinTC(
       reinterpret_cast<const toolchains::Darwin&>(TC));
-
-    // If the target isn't initialized (e.g., an unknown Darwin platform, return
-    // the default triple).
-    if (!DarwinTC.isTargetInitialized())
-      return Triple.getTriple();
-    
     unsigned Version[3];
     DarwinTC.getTargetVersion(Version);
 
@@ -740,8 +686,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                          const InputInfoList &Inputs,
                          const ArgList &Args,
                          const char *LinkingOutput) const {
-  bool KernelOrKext = Args.hasArg(options::OPT_mkernel,
-                                  options::OPT_fapple_kext);
   const Driver &D = getToolChain().getDriver();
   ArgStringList CmdArgs;
 
@@ -844,11 +788,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     else
       CmdArgs.push_back("plist");
 
-    // Disable the presentation of standard compiler warnings when
-    // using --analyze.  We only want to show static analyzer diagnostics
-    // or frontend errors.
-    CmdArgs.push_back("-w");
-
     // Add -Xanalyzer arguments when running as analyzer.
     Args.AddAllArgValues(CmdArgs, options::OPT_Xanalyzer);
   }
@@ -931,7 +870,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     Args.hasFlag(options::OPT_fasynchronous_unwind_tables,
                  options::OPT_fno_asynchronous_unwind_tables,
                  getToolChain().IsUnwindTablesDefault() &&
-                 !KernelOrKext);
+                 !Args.hasArg(options::OPT_mkernel));
   if (Args.hasFlag(options::OPT_funwind_tables, options::OPT_fno_unwind_tables,
                    AsynchronousUnwindTables))
     CmdArgs.push_back("-munwind-tables");
@@ -978,6 +917,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   Arg *Unsupported;
   if ((Unsupported = Args.getLastArg(options::OPT_MG)) ||
+      (Unsupported = Args.getLastArg(options::OPT_MQ)) ||
       (Unsupported = Args.getLastArg(options::OPT_iframework)) ||
       (Unsupported = Args.getLastArg(options::OPT_fshort_enums)))
     D.Diag(clang::diag::err_drv_clang_unsupported)
@@ -995,7 +935,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-g");
 
   Args.AddLastArg(CmdArgs, options::OPT_nostdinc);
-  Args.AddLastArg(CmdArgs, options::OPT_nostdincxx);
   Args.AddLastArg(CmdArgs, options::OPT_nobuiltininc);
 
   // Pass the path to compiler resource files.
@@ -1074,18 +1013,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(A->getValue(Args));
   }
 
-  CmdArgs.push_back("-ferror-limit");
-  if (Arg *A = Args.getLastArg(options::OPT_ferror_limit_EQ))
-    CmdArgs.push_back(A->getValue(Args));
-  else
-    CmdArgs.push_back("19");
-
-  CmdArgs.push_back("-ftemplate-backtrace-limit");
-  if (Arg *A = Args.getLastArg(options::OPT_ftemplate_backtrace_limit_EQ))
-    CmdArgs.push_back(A->getValue(Args));
-  else
-    CmdArgs.push_back("10");
-  
   // Pass -fmessage-length=.
   CmdArgs.push_back("-fmessage-length");
   if (Arg *A = Args.getLastArg(options::OPT_fmessage_length_EQ)) {
@@ -1102,39 +1029,16 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(A->getValue(Args));
   }
 
-  // -fhosted is default.
-  if (KernelOrKext || Args.hasFlag(options::OPT_ffreestanding,
-                                   options::OPT_fhosted,
-                                   false))
-    CmdArgs.push_back("-ffreestanding");
-
   // Forward -f (flag) options which we can pass directly.
   Args.AddLastArg(CmdArgs, options::OPT_fcatch_undefined_behavior);
   Args.AddLastArg(CmdArgs, options::OPT_femit_all_decls);
+  Args.AddLastArg(CmdArgs, options::OPT_ffreestanding);
   Args.AddLastArg(CmdArgs, options::OPT_fheinous_gnu_extensions);
-
-  // -flax-vector-conversions is default.
-  if (!Args.hasFlag(options::OPT_flax_vector_conversions,
-                    options::OPT_fno_lax_vector_conversions))
-    CmdArgs.push_back("-fno-lax-vector-conversions");
-
-  // Handle -fobjc-gc and -fobjc-gc-only. They are exclusive, and -fobjc-gc-only
-  // takes precedence.
-  const Arg *GCArg = Args.getLastArg(options::OPT_fobjc_gc_only);
-  if (!GCArg)
-    GCArg = Args.getLastArg(options::OPT_fobjc_gc);
-  if (GCArg) {
-    if (getToolChain().SupportsObjCGC()) {
-      GCArg->render(Args, CmdArgs);
-    } else {
-      // FIXME: We should move this to a hard error.
-      D.Diag(clang::diag::warn_drv_objc_gc_unsupported)
-        << GCArg->getAsString(Args);
-    }
-  }
-
+  Args.AddLastArg(CmdArgs, options::OPT_flax_vector_conversions);
   Args.AddLastArg(CmdArgs, options::OPT_fno_caret_diagnostics);
   Args.AddLastArg(CmdArgs, options::OPT_fno_show_column);
+  Args.AddLastArg(CmdArgs, options::OPT_fobjc_gc_only);
+  Args.AddLastArg(CmdArgs, options::OPT_fobjc_gc);
   Args.AddLastArg(CmdArgs, options::OPT_fobjc_sender_dependent_dispatch);
   Args.AddLastArg(CmdArgs, options::OPT_fdiagnostics_print_source_range_info);
   Args.AddLastArg(CmdArgs, options::OPT_ftime_report);
@@ -1176,12 +1080,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fblocks");
   }
 
-  // -faccess-control is default.
-  if (Args.hasFlag(options::OPT_fno_access_control,
-                   options::OPT_faccess_control,
-                   false))
-    CmdArgs.push_back("-fno-access-control");
-
   // -fexceptions=0 is default.
   if (needsExceptions(Args, InputType, getToolChain().getTriple()))
     CmdArgs.push_back("-fexceptions");
@@ -1190,8 +1088,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fsjlj-exceptions");
 
   // -frtti is default.
-  if (KernelOrKext ||
-      !Args.hasFlag(options::OPT_frtti, options::OPT_fno_rtti))
+  if (!Args.hasFlag(options::OPT_frtti, options::OPT_fno_rtti))
     CmdArgs.push_back("-fno-rtti");
 
   // -fsigned-char is default.
@@ -1204,21 +1101,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                     options::OPT_fno_threadsafe_statics))
     CmdArgs.push_back("-fno-threadsafe-statics");
 
-  // -fuse-cxa-atexit is default.
-  if (KernelOrKext || !Args.hasFlag(options::OPT_fuse_cxa_atexit,
-                                    options::OPT_fno_use_cxa_atexit))
-    CmdArgs.push_back("-fno-use-cxa-atexit");
-
   // -fms-extensions=0 is default.
   if (Args.hasFlag(options::OPT_fms_extensions, options::OPT_fno_ms_extensions,
                    getToolChain().getTriple().getOS() == llvm::Triple::Win32))
     CmdArgs.push_back("-fms-extensions");
-
-  // -fgnu-keywords default varies depending on language; only pass if
-  // specified.
-  if (Arg *A = Args.getLastArg(options::OPT_fgnu_keywords,
-                               options::OPT_fno_gnu_keywords))
-    A->render(Args, CmdArgs);
 
   // -fnext-runtime is default.
   if (!Args.hasFlag(options::OPT_fnext_runtime, options::OPT_fgnu_runtime,
@@ -1230,17 +1116,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     if (Args.hasArg(options::OPT_fobjc_nonfragile_abi) ||
         getToolChain().IsObjCNonFragileABIDefault()) {
       CmdArgs.push_back("-fobjc-nonfragile-abi");
-
-      // -fobjc-dispatch-method is only relevant with the nonfragile-abi, and
-      // legacy is the default.
-      if (!Args.hasFlag(options::OPT_fobjc_legacy_dispatch,
-                        options::OPT_fno_objc_legacy_dispatch,
-                        getToolChain().IsObjCLegacyDispatchDefault())) {
-        if (getToolChain().UseObjCMixedDispatch())
-          CmdArgs.push_back("-fobjc-dispatch-method=mixed");
-        else
-          CmdArgs.push_back("-fobjc-dispatch-method=non-legacy");
-      }
+      
+      // -fobjc-legacy-dispatch is only relevant with the nonfragile-abi, and
+      // defaults to off.
+      if (Args.hasFlag(options::OPT_fobjc_legacy_dispatch,
+                       options::OPT_fno_objc_legacy_dispatch,
+                       getToolChain().IsObjCLegacyDispatchDefault()))
+        CmdArgs.push_back("-fobjc-legacy-dispatch");
     }
   }
 
@@ -1341,20 +1223,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_dM);
   Args.AddLastArg(CmdArgs, options::OPT_dD);
 
-  // Forward -Xclang arguments to -cc1, and -mllvm arguments to the LLVM option
-  // parser.
   Args.AddAllArgValues(CmdArgs, options::OPT_Xclang);
-  for (arg_iterator it = Args.filtered_begin(options::OPT_mllvm),
-         ie = Args.filtered_end(); it != ie; ++it) {
-    it->claim();
-
-    // We translate this by hand to the -cc1 argument, since nightly test uses
-    // it and developers have been trained to spell it with -mllvm.
-    if (llvm::StringRef(it->getValue(Args, 0)) == "-disable-llvm-optzns")
-      CmdArgs.push_back("-disable-llvm-optzns");
-    else
-      it->render(Args, CmdArgs);
-  }
+  Args.AddAllArgValues(CmdArgs, options::OPT_mllvm);
 
   if (Output.getType() == types::TY_Dependencies) {
     // Handled with other dependency code.
@@ -1411,9 +1281,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Claim some arguments which clang supports automatically.
 
-  // -fpch-preprocess is used with gcc to add a special marker in the output to
-  // include the PCH file. Clang's PTH solution is completely transparent, so we
-  // do not need to deal with it at all.
+  // -fpch-preprocess is used with gcc to add a special marker in the
+  // -output to include the PCH file. Clang's PTH solution is
+  // -completely transparent, so we do not need to deal with it at
+  // -all.
   Args.ClaimAllArgs(options::OPT_fpch_preprocess);
 
   // Claim some arguments which clang doesn't support, but we don't
@@ -1800,7 +1671,6 @@ void darwin::CC1::AddCPPUniqueOptionsArgs(const ArgList &Args,
   if (!Args.hasArg(options::OPT_Q))
     CmdArgs.push_back("-quiet");
   Args.AddAllArgs(CmdArgs, options::OPT_nostdinc);
-  Args.AddAllArgs(CmdArgs, options::OPT_nostdincxx);
   Args.AddLastArg(CmdArgs, options::OPT_v);
   Args.AddAllArgs(CmdArgs, options::OPT_I_Group, options::OPT_F);
   Args.AddLastArg(CmdArgs, options::OPT_P);

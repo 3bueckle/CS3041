@@ -314,10 +314,6 @@ public:
   }
 
   BinOpInfo EmitBinOps(const BinaryOperator *E);
-  LValue EmitCompoundAssignLValue(const CompoundAssignOperator *E,
-                            Value *(ScalarExprEmitter::*F)(const BinOpInfo &),
-                                  Value *&BitFieldResult);
-
   Value *EmitCompoundAssign(const CompoundAssignOperator *E,
                             Value *(ScalarExprEmitter::*F)(const BinOpInfo &));
 
@@ -773,9 +769,6 @@ Value *ScalarExprEmitter::VisitInitListExpr(InitListExpr *E) {
 
 static bool ShouldNullCheckClassCastValue(const CastExpr *CE) {
   const Expr *E = CE->getSubExpr();
-
-  if (CE->getCastKind() == CastExpr::CK_UncheckedDerivedToBase)
-    return false;
   
   if (isa<CXXThisExpr>(E)) {
     // We always assume that 'this' is never null.
@@ -822,23 +815,32 @@ Value *ScalarExprEmitter::EmitCastExpr(CastExpr *CE) {
     return Visit(const_cast<Expr*>(E));
 
   case CastExpr::CK_BaseToDerived: {
+    const CXXRecordDecl *BaseClassDecl = 
+      E->getType()->getCXXRecordDeclForPointerType();
     const CXXRecordDecl *DerivedClassDecl = 
       DestTy->getCXXRecordDeclForPointerType();
     
-    return CGF.GetAddressOfDerivedClass(Visit(E), DerivedClassDecl, 
-                                        CE->getBasePath(), 
-                                        ShouldNullCheckClassCastValue(CE));
+    Value *Src = Visit(const_cast<Expr*>(E));
+    
+    bool NullCheckValue = ShouldNullCheckClassCastValue(CE);
+    return CGF.GetAddressOfDerivedClass(Src, BaseClassDecl, DerivedClassDecl, 
+                                        NullCheckValue);
   }
-  case CastExpr::CK_UncheckedDerivedToBase:
   case CastExpr::CK_DerivedToBase: {
     const RecordType *DerivedClassTy = 
       E->getType()->getAs<PointerType>()->getPointeeType()->getAs<RecordType>();
     CXXRecordDecl *DerivedClassDecl = 
       cast<CXXRecordDecl>(DerivedClassTy->getDecl());
 
-    return CGF.GetAddressOfBaseClass(Visit(E), DerivedClassDecl, 
-                                     CE->getBasePath(),
-                                     ShouldNullCheckClassCastValue(CE));
+    const RecordType *BaseClassTy = 
+      DestTy->getAs<PointerType>()->getPointeeType()->getAs<RecordType>();
+    CXXRecordDecl *BaseClassDecl = cast<CXXRecordDecl>(BaseClassTy->getDecl());
+    
+    Value *Src = Visit(const_cast<Expr*>(E));
+
+    bool NullCheckValue = ShouldNullCheckClassCastValue(CE);
+    return CGF.GetAddressOfBaseClass(Src, DerivedClassDecl, BaseClassDecl,
+                                     NullCheckValue);
   }
   case CastExpr::CK_Dynamic: {
     Value *V = Visit(const_cast<Expr*>(E));
@@ -888,8 +890,7 @@ Value *ScalarExprEmitter::EmitCastExpr(CastExpr *CE) {
       std::swap(DerivedDecl, BaseDecl);
 
     if (llvm::Constant *Adj = 
-          CGF.CGM.GetNonVirtualBaseClassOffset(DerivedDecl, 
-                                               CE->getBasePath())) {
+          CGF.CGM.GetNonVirtualBaseClassOffset(DerivedDecl, BaseDecl)) {
       if (CE->getCastKind() == CastExpr::CK_DerivedToBaseMemberPointer)
         Src = Builder.CreateSub(Src, Adj, "adj");
       else
@@ -1098,24 +1099,22 @@ BinOpInfo ScalarExprEmitter::EmitBinOps(const BinaryOperator *E) {
   return Result;
 }
 
-LValue ScalarExprEmitter::EmitCompoundAssignLValue(
-                                              const CompoundAssignOperator *E,
-                        Value *(ScalarExprEmitter::*Func)(const BinOpInfo &),
-                                                   Value *&BitFieldResult) {
+Value *ScalarExprEmitter::EmitCompoundAssign(const CompoundAssignOperator *E,
+                      Value *(ScalarExprEmitter::*Func)(const BinOpInfo &)) {
+  bool Ignore = TestAndClearIgnoreResultAssign();
   QualType LHSTy = E->getLHS()->getType();
-  BitFieldResult = 0;
+
   BinOpInfo OpInfo;
-  
+
   if (E->getComputationResultType()->isAnyComplexType()) {
     // This needs to go through the complex expression emitter, but it's a tad
     // complicated to do that... I'm leaving it out for now.  (Note that we do
     // actually need the imaginary part of the RHS for multiplication and
     // division.)
     CGF.ErrorUnsupported(E, "complex compound assignment");
-    llvm::UndefValue::get(CGF.ConvertType(E->getType()));
-    return LValue();
+    return llvm::UndefValue::get(CGF.ConvertType(E->getType()));
   }
-  
+
   // Emit the RHS first.  __block variables need to have the rhs evaluated
   // first, plus this should improve codegen a little.
   OpInfo.RHS = Visit(E->getRHS());
@@ -1126,38 +1125,26 @@ LValue ScalarExprEmitter::EmitCompoundAssignLValue(
   OpInfo.LHS = EmitLoadOfLValue(LHSLV, LHSTy);
   OpInfo.LHS = EmitScalarConversion(OpInfo.LHS, LHSTy,
                                     E->getComputationLHSType());
-  
+
   // Expand the binary operator.
   Value *Result = (this->*Func)(OpInfo);
-  
+
   // Convert the result back to the LHS type.
   Result = EmitScalarConversion(Result, E->getComputationResultType(), LHSTy);
-  
+
   // Store the result value into the LHS lvalue. Bit-fields are handled
   // specially because the result is altered by the store, i.e., [C99 6.5.16p1]
   // 'An assignment expression has the value of the left operand after the
   // assignment...'.
-  if (LHSLV.isBitField()) {
+  if (LHSLV.isBitfield()) {
     if (!LHSLV.isVolatileQualified()) {
       CGF.EmitStoreThroughBitfieldLValue(RValue::get(Result), LHSLV, LHSTy,
                                          &Result);
-      BitFieldResult = Result;
-      return LHSLV;
+      return Result;
     } else
       CGF.EmitStoreThroughBitfieldLValue(RValue::get(Result), LHSLV, LHSTy);
   } else
     CGF.EmitStoreThroughLValue(RValue::get(Result), LHSLV, LHSTy);
-  return LHSLV;
-}
-
-Value *ScalarExprEmitter::EmitCompoundAssign(const CompoundAssignOperator *E,
-                      Value *(ScalarExprEmitter::*Func)(const BinOpInfo &)) {
-  bool Ignore = TestAndClearIgnoreResultAssign();
-  Value *BitFieldResult;
-  LValue LHSLV = EmitCompoundAssignLValue(E, Func, BitFieldResult);
-  if (BitFieldResult)
-    return BitFieldResult;
-  
   if (Ignore)
     return 0;
   return EmitLoadOfLValue(LHSLV, E->getType());
@@ -1350,11 +1337,6 @@ Value *ScalarExprEmitter::EmitSub(const BinOpInfo &Ops) {
 
     if (Ops.LHS->getType()->isFPOrFPVectorTy())
       return Builder.CreateFSub(Ops.LHS, Ops.RHS, "sub");
-
-    // Signed integer overflow is undefined behavior.
-    if (Ops.Ty->isSignedIntegerType())
-      return Builder.CreateNSWSub(Ops.LHS, Ops.RHS, "sub");
-
     return Builder.CreateSub(Ops.LHS, Ops.RHS, "sub");
   }
 
@@ -1584,7 +1566,7 @@ Value *ScalarExprEmitter::VisitBinAssign(const BinaryOperator *E) {
   // because the result is altered by the store, i.e., [C99 6.5.16p1]
   // 'An assignment expression has the value of the left operand after
   // the assignment...'.
-  if (LHS.isBitField()) {
+  if (LHS.isBitfield()) {
     if (!LHS.isVolatileQualified()) {
       CGF.EmitStoreThroughBitfieldLValue(RValue::get(RHS), LHS, E->getType(),
                                          &RHS);
@@ -1923,53 +1905,3 @@ LValue CodeGenFunction::EmitObjCIsaExpr(const ObjCIsaExpr *E) {
   return LV;
 }
 
-
-LValue CodeGenFunction::EmitCompoundAssignOperatorLValue(
-                                            const CompoundAssignOperator *E) {
-  ScalarExprEmitter Scalar(*this);
-  Value *BitFieldResult = 0;
-  switch (E->getOpcode()) {
-#define COMPOUND_OP(Op)                                                       \
-    case BinaryOperator::Op##Assign:                                          \
-      return Scalar.EmitCompoundAssignLValue(E, &ScalarExprEmitter::Emit##Op, \
-                                             BitFieldResult)
-  COMPOUND_OP(Mul);
-  COMPOUND_OP(Div);
-  COMPOUND_OP(Rem);
-  COMPOUND_OP(Add);
-  COMPOUND_OP(Sub);
-  COMPOUND_OP(Shl);
-  COMPOUND_OP(Shr);
-  COMPOUND_OP(And);
-  COMPOUND_OP(Xor);
-  COMPOUND_OP(Or);
-#undef COMPOUND_OP
-      
-  case BinaryOperator::PtrMemD:
-  case BinaryOperator::PtrMemI:
-  case BinaryOperator::Mul:
-  case BinaryOperator::Div:
-  case BinaryOperator::Rem:
-  case BinaryOperator::Add:
-  case BinaryOperator::Sub:
-  case BinaryOperator::Shl:
-  case BinaryOperator::Shr:
-  case BinaryOperator::LT:
-  case BinaryOperator::GT:
-  case BinaryOperator::LE:
-  case BinaryOperator::GE:
-  case BinaryOperator::EQ:
-  case BinaryOperator::NE:
-  case BinaryOperator::And:
-  case BinaryOperator::Xor:
-  case BinaryOperator::Or:
-  case BinaryOperator::LAnd:
-  case BinaryOperator::LOr:
-  case BinaryOperator::Assign:
-  case BinaryOperator::Comma:
-    assert(false && "Not valid compound assignment operators");
-    break;
-  }
-   
-  llvm_unreachable("Unhandled compound assignment operator");
-}

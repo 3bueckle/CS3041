@@ -24,6 +24,7 @@ def AddressOfTemporary : DiagGroup<"address-of-temporary">;
 def : DiagGroup<"aggregate-return">;
 def : DiagGroup<"attributes">;
 def : DiagGroup<"bad-function-cast">;
+def BadLiteral : DiagGroup<"bad-literal">;
 def : DiagGroup<"c++-compat">;
 def : DiagGroup<"cast-align">;
 def : DiagGroup<"cast-qual">;
@@ -31,7 +32,6 @@ def : DiagGroup<"char-align">;
 def Comment : DiagGroup<"comment">;
 def : DiagGroup<"ctor-dtor-privacy">;
 def : DiagGroup<"declaration-after-statement">;
-def GNUDesignator : DiagGroup<"gnu-designator">;
 def Deprecated : DiagGroup<"deprecated">;
 def : DiagGroup<"disabled-optimization">;
 def : DiagGroup<"discard-qual">;
@@ -49,7 +49,6 @@ def : DiagGroup<"init-self">;
 def : DiagGroup<"inline">;
 def : DiagGroup<"int-to-pointer-cast">;
 def : DiagGroup<"invalid-pch">;
-def LiteralRange : DiagGroup<"literal-range">;
 def MissingBraces : DiagGroup<"missing-braces">;
 def : DiagGroup<"missing-declarations">;
 def : DiagGroup<"missing-format-attribute">;
@@ -60,7 +59,7 @@ def : DiagGroup<"nested-externs">;
 def : DiagGroup<"newline-eof">;
 def LongLong : DiagGroup<"long-long">;
 def MismatchedTags : DiagGroup<"mismatched-tags">;
-def MissingFieldInitializers : DiagGroup<"missing-field-initializers">;
+def : DiagGroup<"missing-field-initializers">;
 def NonNull : DiagGroup<"nonnull">;
 def : DiagGroup<"nonportable-cfstrings">;
 def : DiagGroup<"non-virtual-dtor">;
@@ -74,7 +73,7 @@ def : DiagGroup<"redundant-decls">;
 def ReturnType : DiagGroup<"return-type">;
 def SemiBeforeMethodBody : DiagGroup<"semicolon-before-method-body">;
 def : DiagGroup<"sequence-point">;
-def Shadow : DiagGroup<"shadow">;
+def : DiagGroup<"shadow">;
 def : DiagGroup<"shorten-64-to-32">;
 def SignCompare : DiagGroup<"sign-compare">;
 def : DiagGroup<"synth">;
@@ -116,7 +115,6 @@ def UnusedVariable : DiagGroup<"unused-variable">;
 def ReadOnlySetterAttrs : DiagGroup<"readonly-setter-attrs">;
 def Reorder : DiagGroup<"reorder">;
 def UndeclaredSelector : DiagGroup<"undeclared-selector">;
-def Protocol : DiagGroup<"protocol">;
 def SuperSubClassMismatch : DiagGroup<"super-class-method-mismatch">;
 def : DiagGroup<"variadic-macros">;
 def VariadicMacros : DiagGroup<"variadic-macros">;
@@ -138,8 +136,7 @@ def Conversion : DiagGroup<"conversion",
 
 def Unused : DiagGroup<"unused",
                        [UnusedArgument, UnusedFunction, UnusedLabel,
-                        // UnusedParameter, (matches GCC's behavior)
-                        UnusedValue, UnusedVariable]>;
+                        UnusedParameter, UnusedValue, UnusedVariable]>;
 
 // Format settings.
 def Format : DiagGroup<"format", [FormatExtraArgs, FormatZeroLength, NonNull]>;
@@ -150,29 +147,29 @@ def Format2 : DiagGroup<"format=2",
                         [FormatNonLiteral, FormatSecurity, FormatY2K]>;
 
 def Extra : DiagGroup<"extra", [
-    MissingFieldInitializers,
     SemiBeforeMethodBody,
     SignCompare,
     UnusedParameter
   ]>;
 
 def Most : DiagGroup<"most", [
-    CharSubscript,
     Comment,
     Format,
     Implicit,
     MismatchedTags,
     MissingBraces,
     MultiChar,
-    Reorder,
     ReturnType,
     Switch,
     Trigraphs,
     Uninitialized,
     UnknownPragmas,
-    Unused,
+    UnusedValue,
+    UnusedVariable,
     VectorConversions,
-    VolatileRegisterVar
+    VolatileRegisterVar,
+    Reorder,
+    CharSubscript
  ]>;
 
 // -Wall is -Wmost -Wparentheses
@@ -186,7 +183,4 @@ def : DiagGroup<"comments", [Comment]>;         // -Wcomments = -Wcomment
 // A warning group for warnings that we want to have on by default in clang,
 // but which aren't on by default in GCC.
 def NonGCC : DiagGroup<"non-gcc",
-    [SignCompare, Conversion, LiteralRange]>;
-
-// A warning group for warnings about GCC extensions.
-def GNU : DiagGroup<"gnu", [GNUDesignator]>;
+    [SignCompare, Conversion, BadLiteral]>;

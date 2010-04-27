@@ -43,10 +43,10 @@ void check_size() {
 static int I;
 typedef int TA[I]; // expected-error {{variable length array declaration not allowed at file scope}}
 
-void strFunc(char *); // expected-note{{passing argument to parameter here}}
+void strFunc(char *);
 const char staticAry[] = "test";
 void checkStaticAry() { 
-  strFunc(staticAry); // expected-warning{{passing 'char const [5]' to parameter of type 'char *' discards qualifiers}}
+  strFunc(staticAry); // expected-warning{{passing 'char const [5]' discards qualifiers, expected 'char *'}}
 }
 
 

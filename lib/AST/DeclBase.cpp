@@ -15,10 +15,8 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclContextInternals.h"
 #include "clang/AST/DeclCXX.h"
-#include "clang/AST/DeclFriend.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/DeclTemplate.h"
-#include "clang/AST/DependentDiagnostic.h"
 #include "clang/AST/ExternalASTSource.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Type.h"
@@ -231,28 +229,24 @@ unsigned Decl::getIdentifierNamespaceForKind(Kind DeclKind) {
     case CXXConstructor:
     case CXXDestructor:
     case CXXConversion:
+    case Typedef:
     case EnumConstant:
     case Var:
     case ImplicitParam:
     case ParmVar:
     case NonTypeTemplateParm:
     case ObjCMethod:
-    case ObjCProperty:
-      return IDNS_Ordinary;
-
-    case ObjCCompatibleAlias:
+    case ObjCContainer:
     case ObjCInterface:
-      return IDNS_Ordinary | IDNS_Type;
-
-    case Typedef:
-    case UnresolvedUsingTypename:
-    case TemplateTypeParm:
-      return IDNS_Ordinary | IDNS_Type;
+    case ObjCProperty:
+    case ObjCCompatibleAlias:
+      return IDNS_Ordinary;
 
     case UsingShadow:
       return 0; // we'll actually overwrite this later
 
     case UnresolvedUsingValue:
+    case UnresolvedUsingTypename:
       return IDNS_Ordinary | IDNS_Using;
 
     case Using:
@@ -260,6 +254,13 @@ unsigned Decl::getIdentifierNamespaceForKind(Kind DeclKind) {
 
     case ObjCProtocol:
       return IDNS_ObjCProtocol;
+
+    case ObjCImplementation:
+      return IDNS_ObjCImplementation;
+
+    case ObjCCategory:
+    case ObjCCategoryImpl:
+      return IDNS_ObjCCategoryName;
 
     case Field:
     case ObjCAtDefsField:
@@ -269,18 +270,16 @@ unsigned Decl::getIdentifierNamespaceForKind(Kind DeclKind) {
     case Record:
     case CXXRecord:
     case Enum:
-      return IDNS_Tag | IDNS_Type;
+    case TemplateTypeParm:
+      return IDNS_Tag;
 
     case Namespace:
-    case NamespaceAlias:
-      return IDNS_Namespace;
-
+    case Template:
     case FunctionTemplate:
-      return IDNS_Ordinary;
-
     case ClassTemplate:
     case TemplateTemplateParm:
-      return IDNS_Ordinary | IDNS_Tag | IDNS_Type;
+    case NamespaceAlias:
+      return IDNS_Tag | IDNS_Ordinary;
 
     // Never have names.
     case Friend:
@@ -294,13 +293,10 @@ unsigned Decl::getIdentifierNamespaceForKind(Kind DeclKind) {
     case Block:
     case TranslationUnit:
 
+    // Aren't looked up?
     case UsingDirective:
     case ClassTemplateSpecialization:
     case ClassTemplatePartialSpecialization:
-    case ObjCImplementation:
-    case ObjCCategory:
-    case ObjCCategoryImpl:
-      // Never looked up by name.
       return 0;
   }
 
@@ -484,7 +480,7 @@ DeclContext::~DeclContext() {
   // FIXME: Currently ~ASTContext will delete the StoredDeclsMaps because
   // ~DeclContext() is not guaranteed to be called when ASTContext uses
   // a BumpPtrAllocator.
-  // delete LookupPtr;
+  // delete static_cast<StoredDeclsMap*>(LookupPtr);
 }
 
 void DeclContext::DestroyDecls(ASTContext &C) {
@@ -519,15 +515,9 @@ bool DeclContext::isDependentContext() const {
     if (Record->getDescribedClassTemplate())
       return true;
 
-  if (const FunctionDecl *Function = dyn_cast<FunctionDecl>(this)) {
+  if (const FunctionDecl *Function = dyn_cast<FunctionDecl>(this))
     if (Function->getDescribedFunctionTemplate())
       return true;
-
-    // Friend function declarations are dependent if their *lexical*
-    // context is dependent.
-    if (cast<Decl>(this)->getFriendObjectKind())
-      return getLexicalParent()->isDependentContext();
-  }
 
   return getParent() && getParent()->isDependentContext();
 }
@@ -584,22 +574,11 @@ DeclContext *DeclContext::getPrimaryContext() {
     if (DeclKind >= Decl::TagFirst && DeclKind <= Decl::TagLast) {
       // If this is a tag type that has a definition or is currently
       // being defined, that definition is our primary context.
-      TagDecl *Tag = cast<TagDecl>(this);
-      assert(isa<TagType>(Tag->TypeForDecl) ||
-             isa<InjectedClassNameType>(Tag->TypeForDecl));
-
-      if (TagDecl *Def = Tag->getDefinition())
-        return Def;
-
-      if (!isa<InjectedClassNameType>(Tag->TypeForDecl)) {
-        const TagType *TagTy = cast<TagType>(Tag->TypeForDecl);
-        if (TagTy->isBeingDefined())
-          // FIXME: is it necessarily being defined in the decl
-          // that owns the type?
-          return TagTy->getDecl();
-      }
-
-      return Tag;
+      if (const TagType *TagT =cast<TagDecl>(this)->TypeForDecl->getAs<TagType>())
+        if (TagT->isBeingDefined() ||
+            (TagT->getDecl() && TagT->getDecl()->isDefinition()))
+          return TagT->getDecl();
+      return this;
     }
 
     assert(DeclKind >= Decl::FunctionFirst && DeclKind <= Decl::FunctionLast &&
@@ -675,7 +654,9 @@ DeclContext::LoadVisibleDeclsFromExternalStorage() const {
   // Load the declaration IDs for all of the names visible in this
   // context.
   assert(!LookupPtr && "Have a lookup map before de-serialization?");
-  StoredDeclsMap *Map = CreateStoredDeclsMap(getParentASTContext());
+  StoredDeclsMap *Map =
+    (StoredDeclsMap*) getParentASTContext().CreateStoredDeclsMap();
+  LookupPtr = Map;
   for (unsigned I = 0, N = Decls.size(); I != N; ++I) {
     (*Map)[Decls[I].Name].setFromDeclIDs(Decls[I].Declarations);
   }
@@ -734,9 +715,10 @@ void DeclContext::removeDecl(Decl *D) {
   if (isa<NamedDecl>(D)) {
     NamedDecl *ND = cast<NamedDecl>(D);
 
-    StoredDeclsMap *Map = getPrimaryContext()->LookupPtr;
-    if (!Map) return;
+    void *OpaqueMap = getPrimaryContext()->LookupPtr;
+    if (!OpaqueMap) return;
 
+    StoredDeclsMap *Map = static_cast<StoredDeclsMap*>(OpaqueMap);
     StoredDeclsMap::iterator Pos = Map->find(ND->getDeclName());
     assert(Pos != Map->end() && "no lookup entry for decl");
     Pos->second.remove(ND);
@@ -814,8 +796,9 @@ DeclContext::lookup(DeclarationName Name) {
       return lookup_result(0, 0);
   }
 
-  StoredDeclsMap::iterator Pos = LookupPtr->find(Name);
-  if (Pos == LookupPtr->end())
+  StoredDeclsMap *Map = static_cast<StoredDeclsMap*>(LookupPtr);
+  StoredDeclsMap::iterator Pos = Map->find(Name);
+  if (Pos == Map->end())
     return lookup_result(0, 0);
   return Pos->second.getLookupResult(getParentASTContext());
 }
@@ -883,11 +866,12 @@ void DeclContext::makeDeclVisibleInContextImpl(NamedDecl *D) {
   ASTContext *C = 0;
   if (!LookupPtr) {
     C = &getParentASTContext();
-    CreateStoredDeclsMap(*C);
+    LookupPtr = (StoredDeclsMap*) C->CreateStoredDeclsMap();
   }
 
   // Insert this declaration into the map.
-  StoredDeclsList &DeclNameEntries = (*LookupPtr)[D->getDeclName()];
+  StoredDeclsMap &Map = *static_cast<StoredDeclsMap*>(LookupPtr);
+  StoredDeclsList &DeclNameEntries = Map[D->getDeclName()];
   if (DeclNameEntries.isNull()) {
     DeclNameEntries.setOnlyValue(D);
     return;
@@ -956,69 +940,13 @@ void StoredDeclsList::materializeDecls(ASTContext &Context) {
 // Creation and Destruction of StoredDeclsMaps.                               //
 //===----------------------------------------------------------------------===//
 
-StoredDeclsMap *DeclContext::CreateStoredDeclsMap(ASTContext &C) const {
-  assert(!LookupPtr && "context already has a decls map");
-  assert(getPrimaryContext() == this &&
-         "creating decls map on non-primary context");
-
-  StoredDeclsMap *M;
-  bool Dependent = isDependentContext();
-  if (Dependent)
-    M = new DependentStoredDeclsMap();
-  else
-    M = new StoredDeclsMap();
-  M->Previous = C.LastSDM;
-  C.LastSDM = llvm::PointerIntPair<StoredDeclsMap*,1>(M, Dependent);
-  LookupPtr = M;
+void *ASTContext::CreateStoredDeclsMap() {
+  StoredDeclsMap *M = new StoredDeclsMap();
+  SDMs.push_back(M);
   return M;
 }
 
 void ASTContext::ReleaseDeclContextMaps() {
-  // It's okay to delete DependentStoredDeclsMaps via a StoredDeclsMap
-  // pointer because the subclass doesn't add anything that needs to
-  // be deleted.
-  
-  StoredDeclsMap::DestroyAll(LastSDM.getPointer(), LastSDM.getInt());
-}
-
-void StoredDeclsMap::DestroyAll(StoredDeclsMap *Map, bool Dependent) {
-  while (Map) {
-    // Advance the iteration before we invalidate memory.
-    llvm::PointerIntPair<StoredDeclsMap*,1> Next = Map->Previous;
-
-    if (Dependent)
-      delete static_cast<DependentStoredDeclsMap*>(Map);
-    else
-      delete Map;
-
-    Map = Next.getPointer();
-    Dependent = Next.getInt();
-  }
-}
-
-DependentDiagnostic *DependentDiagnostic::Create(ASTContext &C,
-                                                 DeclContext *Parent,
-                                           const PartialDiagnostic &PDiag) {
-  assert(Parent->isDependentContext()
-         && "cannot iterate dependent diagnostics of non-dependent context");
-  Parent = Parent->getPrimaryContext();
-  if (!Parent->LookupPtr)
-    Parent->CreateStoredDeclsMap(C);
-
-  DependentStoredDeclsMap *Map
-    = static_cast<DependentStoredDeclsMap*>(Parent->LookupPtr);
-
-  // Allocate the copy of the PartialDiagnostic via the ASTContext's
-  // BumpPtrAllocator, rather than the ASTContext itself.
-  PartialDiagnostic::Storage *DiagStorage = 0;
-  if (PDiag.hasStorage())
-    DiagStorage = new (C) PartialDiagnostic::Storage;
-  
-  DependentDiagnostic *DD = new (C) DependentDiagnostic(PDiag, DiagStorage);
-
-  // TODO: Maybe we shouldn't reverse the order during insertion.
-  DD->NextDiagnostic = Map->FirstDiagnostic;
-  Map->FirstDiagnostic = DD;
-
-  return DD;
+  for (std::vector<void*>::iterator I = SDMs.begin(), E = SDMs.end(); I!=E; ++I)
+    delete (StoredDeclsMap*) *I;
 }

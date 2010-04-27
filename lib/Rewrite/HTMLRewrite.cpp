@@ -43,13 +43,8 @@ void html::HighlightRange(Rewriter &R, SourceLocation B, SourceLocation E,
   // Include the whole end token in the range.
   EOffset += Lexer::MeasureTokenLength(E, R.getSourceMgr(), R.getLangOpts());
 
-  bool Invalid = false;
-  const char *BufferStart = SM.getBufferData(FID, &Invalid).data();
-  if (Invalid)
-    return;
-  
   HighlightRange(R.getEditBuffer(FID), BOffset, EOffset,
-                 BufferStart, StartTag, EndTag);
+                 SM.getBufferData(FID).first, StartTag, EndTag);
 }
 
 /// HighlightRange - This is the same as the above method, but takes
@@ -533,7 +528,6 @@ void html::HighlightMacros(Rewriter &R, FileID FID, const Preprocessor& PP) {
     std::string Expansion = EscapeText(TmpPP.getSpelling(Tok));
     unsigned LineLen = Expansion.size();
 
-    Token PrevPrevTok;
     Token PrevTok = Tok;
     // Okay, eat this token, getting the next one.
     TmpPP.Lex(Tok);
@@ -554,14 +548,13 @@ void html::HighlightMacros(Rewriter &R, FileID FID, const Preprocessor& PP) {
       // If the tokens were already space separated, or if they must be to avoid
       // them being implicitly pasted, add a space between them.
       if (Tok.hasLeadingSpace() ||
-          ConcatInfo.AvoidConcat(PrevPrevTok, PrevTok, Tok))
+          ConcatInfo.AvoidConcat(PrevTok, Tok))
         Expansion += ' ';
 
       // Escape any special characters in the token text.
       Expansion += EscapeText(TmpPP.getSpelling(Tok));
       LineLen += Expansion.size();
 
-      PrevPrevTok = PrevTok;
       PrevTok = Tok;
       TmpPP.Lex(Tok);
     }

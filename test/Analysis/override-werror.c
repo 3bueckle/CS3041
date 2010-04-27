@@ -6,7 +6,7 @@
 // analyzer results.
 
 char* f(int *p) { 
-  return p; // expected-warning{{incompatible pointer types}}
+  return p; // expected-warning{{incompatible pointer types returning 'int *', expected 'char *'}}
 }
 
 void g(int *p) {

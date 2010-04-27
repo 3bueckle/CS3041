@@ -31,9 +31,7 @@ class StringLiteral;
 class TemplateArgumentList;
 class MemberSpecializationInfo;
 class FunctionTemplateSpecializationInfo;
-class DependentFunctionTemplateSpecializationInfo;
 class TypeLoc;
-class UnresolvedSetImpl;
 
 /// \brief A container of type source information.
 ///
@@ -198,10 +196,6 @@ public:
     return DC->isRecord();
   }
 
-  /// \brief Given that this declaration is a C++ class member,
-  /// determine whether it's an instance member of its class.
-  bool isCXXInstanceMember() const;
-
   /// \brief Determine what kind of linkage this entity has.
   Linkage getLinkage() const;
 
@@ -217,12 +211,6 @@ public:
   static bool classofKind(Kind K) { return K >= NamedFirst && K <= NamedLast; }
 };
 
-inline llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
-                                     const NamedDecl *ND) {
-  ND->getDeclName().printName(OS);
-  return OS;
-}
-
 /// NamespaceDecl - Represent a C++ namespace.
 class NamespaceDecl : public NamedDecl, public DeclContext {
   SourceLocation LBracLoc, RBracLoc;
@@ -236,26 +224,18 @@ class NamespaceDecl : public NamedDecl, public DeclContext {
   // NextNamespace points to the next extended declaration.
   // OrigNamespace points to the original namespace declaration.
   // OrigNamespace of the first namespace decl points to itself.
-  NamespaceDecl *NextNamespace;
+  NamespaceDecl *OrigNamespace, *NextNamespace;
 
-  /// \brief A pointer to either the original namespace definition for
-  /// this namespace (if the boolean value is false) or the anonymous
-  /// namespace that lives just inside this namespace (if the boolean
-  /// value is true).
-  ///
-  /// We can combine these two notions because the anonymous namespace
-  /// must only be stored in one of the namespace declarations (so all
-  /// of the namespace declarations can find it). We therefore choose
-  /// the original namespace declaration, since all of the namespace
-  /// declarations have a link directly to it; the original namespace
-  /// declaration itself only needs to know that it is the original
-  /// namespace declaration (which the boolean indicates).
-  llvm::PointerIntPair<NamespaceDecl *, 1, bool> OrigOrAnonNamespace;
+  // The (most recently entered) anonymous namespace inside this
+  // namespace.
+  NamespaceDecl *AnonymousNamespace;
 
   NamespaceDecl(DeclContext *DC, SourceLocation L, IdentifierInfo *Id)
-    : NamedDecl(Namespace, DC, L, Id), DeclContext(Namespace),
-      NextNamespace(0), OrigOrAnonNamespace(0, true) { }
-
+    : NamedDecl(Namespace, DC, L, Id), DeclContext(Namespace) {
+    OrigNamespace = this;
+    NextNamespace = 0;
+    AnonymousNamespace = 0;
+  }
 public:
   static NamespaceDecl *Create(ASTContext &C, DeclContext *DC,
                                SourceLocation L, IdentifierInfo *Id);
@@ -278,33 +258,22 @@ public:
   void setNextNamespace(NamespaceDecl *ND) { NextNamespace = ND; }
 
   NamespaceDecl *getOriginalNamespace() const {
-    if (OrigOrAnonNamespace.getInt())
-      return const_cast<NamespaceDecl *>(this);
-
-    return OrigOrAnonNamespace.getPointer();
+    return OrigNamespace;
   }
-
-  void setOriginalNamespace(NamespaceDecl *ND) { 
-    if (ND != this) {
-      OrigOrAnonNamespace.setPointer(ND);
-      OrigOrAnonNamespace.setInt(false);
-    }
-  }
+  void setOriginalNamespace(NamespaceDecl *ND) { OrigNamespace = ND; }
 
   NamespaceDecl *getAnonymousNamespace() const {
-    return getOriginalNamespace()->OrigOrAnonNamespace.getPointer();
+    return AnonymousNamespace;
   }
 
   void setAnonymousNamespace(NamespaceDecl *D) {
     assert(!D || D->isAnonymousNamespace());
     assert(!D || D->getParent() == this);
-    getOriginalNamespace()->OrigOrAnonNamespace.setPointer(D);
+    AnonymousNamespace = D;
   }
 
-  virtual NamespaceDecl *getCanonicalDecl() { return getOriginalNamespace(); }
-  const NamespaceDecl *getCanonicalDecl() const { 
-    return getOriginalNamespace(); 
-  }
+  virtual NamespaceDecl *getCanonicalDecl() { return OrigNamespace; }
+  const NamespaceDecl *getCanonicalDecl() const { return OrigNamespace; }
 
   virtual SourceRange getSourceRange() const {
     return SourceRange(getLocation(), RBracLoc);
@@ -350,19 +319,7 @@ public:
 /// \brief Represents a ValueDecl that came out of a declarator.
 /// Contains type source information through TypeSourceInfo.
 class DeclaratorDecl : public ValueDecl {
-  // A struct representing both a TInfo and a syntactic qualifier,
-  // to be used for the (uncommon) case of out-of-line declarations.
-  struct ExtInfo {
-    TypeSourceInfo *TInfo;
-    NestedNameSpecifier *NNS;
-    SourceRange NNSRange;
-  };
-
-  llvm::PointerUnion<TypeSourceInfo*, ExtInfo*> DeclInfo;
-
-  bool hasExtInfo() const { return DeclInfo.is<ExtInfo*>(); }
-  ExtInfo *getExtInfo() { return DeclInfo.get<ExtInfo*>(); }
-  const ExtInfo *getExtInfo() const { return DeclInfo.get<ExtInfo*>(); }
+  TypeSourceInfo *DeclInfo;
 
 protected:
   DeclaratorDecl(Kind DK, DeclContext *DC, SourceLocation L,
@@ -370,29 +327,8 @@ protected:
     : ValueDecl(DK, DC, L, N, T), DeclInfo(TInfo) {}
 
 public:
-  virtual ~DeclaratorDecl();
-  virtual void Destroy(ASTContext &C);
-
-  TypeSourceInfo *getTypeSourceInfo() const {
-    return hasExtInfo()
-      ? DeclInfo.get<ExtInfo*>()->TInfo
-      : DeclInfo.get<TypeSourceInfo*>();
-  }
-  void setTypeSourceInfo(TypeSourceInfo *TI) {
-    if (hasExtInfo())
-      DeclInfo.get<ExtInfo*>()->TInfo = TI;
-    else
-      DeclInfo = TI;
-  }
-
-  NestedNameSpecifier *getQualifier() const {
-    return hasExtInfo() ? DeclInfo.get<ExtInfo*>()->NNS : 0;
-  }
-  SourceRange getQualifierRange() const {
-    return hasExtInfo() ? DeclInfo.get<ExtInfo*>()->NNSRange : SourceRange();
-  }
-  void setQualifierInfo(NestedNameSpecifier *Qualifier,
-                        SourceRange QualifierRange);
+  TypeSourceInfo *getTypeSourceInfo() const { return DeclInfo; }
+  void setTypeSourceInfo(TypeSourceInfo *TInfo) { DeclInfo = TInfo; }
 
   SourceLocation getTypeSpecStartLoc() const;
 
@@ -490,7 +426,6 @@ protected:
 private:
   // FIXME: This can be packed into the bitfields in Decl.
   unsigned SClass : 3;
-  unsigned SClassAsWritten : 3;
   bool ThreadSpecified : 1;
   bool HasCXXDirectInit : 1;
 
@@ -501,13 +436,11 @@ private:
   friend class StmtIteratorBase;
 protected:
   VarDecl(Kind DK, DeclContext *DC, SourceLocation L, IdentifierInfo *Id,
-          QualType T, TypeSourceInfo *TInfo, StorageClass SC,
-          StorageClass SCAsWritten)
+          QualType T, TypeSourceInfo *TInfo, StorageClass SC)
     : DeclaratorDecl(DK, DC, L, Id, T, TInfo), Init(),
       ThreadSpecified(false), HasCXXDirectInit(false),
       DeclaredInCondition(false) {
     SClass = SC;
-    SClassAsWritten = SCAsWritten;
   }
 
   typedef Redeclarable<VarDecl> redeclarable_base;
@@ -524,8 +457,7 @@ public:
 
   static VarDecl *Create(ASTContext &C, DeclContext *DC,
                          SourceLocation L, IdentifierInfo *Id,
-                         QualType T, TypeSourceInfo *TInfo, StorageClass S,
-                         StorageClass SCAsWritten);
+                         QualType T, TypeSourceInfo *TInfo, StorageClass S);
 
   virtual void Destroy(ASTContext& C);
   virtual ~VarDecl();
@@ -533,11 +465,7 @@ public:
   virtual SourceRange getSourceRange() const;
 
   StorageClass getStorageClass() const { return (StorageClass)SClass; }
-  StorageClass getStorageClassAsWritten() const {
-    return (StorageClass) SClassAsWritten;
-  }
   void setStorageClass(StorageClass SC) { SClass = SC; }
-  void setStorageClassAsWritten(StorageClass SC) { SClassAsWritten = SC; }
 
   void setThreadSpecified(bool T) { ThreadSpecified = T; }
   bool isThreadSpecified() const {
@@ -556,12 +484,6 @@ public:
     return getStorageClass() <= Register;
   }
 
-  /// isStaticLocal - Returns true if a variable with function scope is a 
-  /// static local variable.
-  bool isStaticLocal() const {
-    return getStorageClass() == Static && !isFileVarDecl();
-  }
-  
   /// hasExternStorage - Returns true if a variable has extern or
   /// __private_extern__ storage.
   bool hasExternalStorage() const {
@@ -578,8 +500,7 @@ public:
   bool isExternC() const;
 
   /// isBlockVarDecl - Returns true for local variable declarations.  Note that
-  /// this includes static variables inside of functions. It also includes
-  /// variables inside blocks.
+  /// this includes static variables inside of functions.
   ///
   ///   void foo() { int x; static int y; extern int z; }
   ///
@@ -588,17 +509,6 @@ public:
       return false;
     if (const DeclContext *DC = getDeclContext())
       return DC->getLookupContext()->isFunctionOrMethod();
-    return false;
-  }
-
-  /// isFunctionOrMethodVarDecl - Similar to isBlockVarDecl, but excludes
-  /// variables declared in blocks.
-  bool isFunctionOrMethodVarDecl() const {
-    if (getKind() != Decl::Var)
-      return false;
-    if (const DeclContext *DC = getDeclContext())
-      return DC->getLookupContext()->isFunctionOrMethod() &&
-             DC->getLookupContext()->getDeclKind() != Decl::Block;
     return false;
   }
 
@@ -870,7 +780,7 @@ class ImplicitParamDecl : public VarDecl {
 protected:
   ImplicitParamDecl(Kind DK, DeclContext *DC, SourceLocation L,
                     IdentifierInfo *Id, QualType Tw)
-    : VarDecl(DK, DC, L, Id, Tw, /*TInfo=*/0, VarDecl::None, VarDecl::None) {}
+    : VarDecl(DK, DC, L, Id, Tw, /*TInfo=*/0, VarDecl::None) {}
 public:
   static ImplicitParamDecl *Create(ASTContext &C, DeclContext *DC,
                                    SourceLocation L, IdentifierInfo *Id,
@@ -887,14 +797,12 @@ class ParmVarDecl : public VarDecl {
   /// FIXME: Also can be paced into the bitfields in Decl.
   /// in, inout, etc.
   unsigned objcDeclQualifier : 6;
-  bool HasInheritedDefaultArg : 1;
 
 protected:
   ParmVarDecl(Kind DK, DeclContext *DC, SourceLocation L,
               IdentifierInfo *Id, QualType T, TypeSourceInfo *TInfo,
-              StorageClass S, StorageClass SCAsWritten, Expr *DefArg)
-    : VarDecl(DK, DC, L, Id, T, TInfo, S, SCAsWritten),
-      objcDeclQualifier(OBJC_TQ_None), HasInheritedDefaultArg(false) {
+              StorageClass S, Expr *DefArg)
+  : VarDecl(DK, DC, L, Id, T, TInfo, S), objcDeclQualifier(OBJC_TQ_None) {
     setDefaultArg(DefArg);
   }
 
@@ -902,8 +810,7 @@ public:
   static ParmVarDecl *Create(ASTContext &C, DeclContext *DC,
                              SourceLocation L,IdentifierInfo *Id,
                              QualType T, TypeSourceInfo *TInfo,
-                             StorageClass S, StorageClass SCAsWritten,
-                             Expr *DefArg);
+                             StorageClass S, Expr *DefArg);
 
   ObjCDeclQualifier getObjCDeclQualifier() const {
     return ObjCDeclQualifier(objcDeclQualifier);
@@ -974,14 +881,6 @@ public:
     Init = (UnparsedDefaultArgument *)0;
   }
 
-  bool hasInheritedDefaultArg() const {
-    return HasInheritedDefaultArg;
-  }
-
-  void setHasInheritedDefaultArg(bool I = true) {
-    HasInheritedDefaultArg = I;
-  }
-
   QualType getOriginalType() const {
     if (getTypeSourceInfo())
       return getTypeSourceInfo()->getType();
@@ -1029,7 +928,6 @@ private:
   // FIXME: This can be packed into the bitfields in Decl.
   // NOTE: VC++ treats enums as signed, avoid using the StorageClass enum
   unsigned SClass : 2;
-  unsigned SClassAsWritten : 2;
   bool IsInline : 1;
   bool IsVirtualAsWritten : 1;
   bool IsPure : 1;
@@ -1061,20 +959,19 @@ private:
   /// FunctionTemplateSpecializationInfo, which contains information about
   /// the template being specialized and the template arguments involved in
   /// that specialization.
-  llvm::PointerUnion4<FunctionTemplateDecl *, 
+  llvm::PointerUnion3<FunctionTemplateDecl *, 
                       MemberSpecializationInfo *,
-                      FunctionTemplateSpecializationInfo *,
-                      DependentFunctionTemplateSpecializationInfo *>
+                      FunctionTemplateSpecializationInfo *>
     TemplateOrSpecialization;
 
 protected:
   FunctionDecl(Kind DK, DeclContext *DC, SourceLocation L,
                DeclarationName N, QualType T, TypeSourceInfo *TInfo,
-               StorageClass S, StorageClass SCAsWritten, bool isInline)
+               StorageClass S, bool isInline)
     : DeclaratorDecl(DK, DC, L, N, T, TInfo),
       DeclContext(DK),
       ParamInfo(0), Body(),
-      SClass(S), SClassAsWritten(SCAsWritten), IsInline(isInline),
+      SClass(S), IsInline(isInline), 
       IsVirtualAsWritten(false), IsPure(false), HasInheritedPrototype(false),
       HasWrittenPrototype(true), IsDeleted(false), IsTrivial(false),
       IsCopyAssignment(false),
@@ -1099,9 +996,7 @@ public:
   static FunctionDecl *Create(ASTContext &C, DeclContext *DC, SourceLocation L,
                               DeclarationName N, QualType T,
                               TypeSourceInfo *TInfo,
-                              StorageClass S = None,
-                              StorageClass SCAsWritten = None,
-                              bool isInline = false,
+                              StorageClass S = None, bool isInline = false,
                               bool hasWrittenPrototype = true);
 
   virtual void getNameForDiagnostic(std::string &S,
@@ -1256,11 +1151,6 @@ public:
   StorageClass getStorageClass() const { return StorageClass(SClass); }
   void setStorageClass(StorageClass SC) { SClass = SC; }
 
-  StorageClass getStorageClassAsWritten() const {
-    return StorageClass(SClassAsWritten);
-  }
-  void setStorageClassAsWritten(StorageClass SC) { SClassAsWritten = SC; }
-
   /// \brief Determine whether the "inline" keyword was specified for this
   /// function.
   bool isInlineSpecified() const { return IsInline; }
@@ -1396,18 +1286,6 @@ public:
                                       const TemplateArgumentList *TemplateArgs,
                                          void *InsertPos,
                     TemplateSpecializationKind TSK = TSK_ImplicitInstantiation);
-
-  /// \brief Specifies that this function declaration is actually a
-  /// dependent function template specialization.
-  void setDependentTemplateSpecialization(ASTContext &Context,
-                             const UnresolvedSetImpl &Templates,
-                      const TemplateArgumentListInfo &TemplateArgs);
-
-  DependentFunctionTemplateSpecializationInfo *
-  getDependentSpecializationInfo() const {
-    return TemplateOrSpecialization.
-             dyn_cast<DependentFunctionTemplateSpecializationInfo*>();
-  }
 
   /// \brief Determine what kind of template instantiation this function
   /// represents.
@@ -1551,6 +1429,7 @@ class TypeDecl : public NamedDecl {
   friend class DeclContext;
   friend class TagDecl;
   friend class TemplateTypeParmDecl;
+  friend class ClassTemplateSpecializationDecl;
   friend class TagType;
 
 protected:
@@ -1634,38 +1513,22 @@ private:
 
   /// IsEmbeddedInDeclarator - True if this tag declaration is
   /// "embedded" (i.e., defined or declared for the very first time)
-  /// in the syntax of a declarator.
+  /// in the syntax of a declarator,
   bool IsEmbeddedInDeclarator : 1;
+
+  /// TypedefForAnonDecl - If a TagDecl is anonymous and part of a typedef,
+  /// this points to the TypedefDecl. Used for mangling.
+  TypedefDecl *TypedefForAnonDecl;
 
   SourceLocation TagKeywordLoc;
   SourceLocation RBraceLoc;
 
-  // A struct representing syntactic qualifier info,
-  // to be used for the (uncommon) case of out-of-line declarations.
-  struct ExtInfo {
-    NestedNameSpecifier *NNS;
-    SourceRange NNSRange;
-  };
-
-  /// TypedefDeclOrQualifier - If the (out-of-line) tag declaration name
-  /// is qualified, it points to the qualifier info (nns and range);
-  /// otherwise, if the tag declaration is anonymous and it is part of
-  /// a typedef, it points to the TypedefDecl (used for mangling);
-  /// otherwise, it is a null (TypedefDecl) pointer.
-  llvm::PointerUnion<TypedefDecl*, ExtInfo*> TypedefDeclOrQualifier;
-
-  bool hasExtInfo() const { return TypedefDeclOrQualifier.is<ExtInfo*>(); }
-  ExtInfo *getExtInfo() { return TypedefDeclOrQualifier.get<ExtInfo*>(); }
-  const ExtInfo *getExtInfo() const {
-    return TypedefDeclOrQualifier.get<ExtInfo*>();
-  }
-
 protected:
-  TagDecl(Kind DK, TagKind TK, DeclContext *DC,
-          SourceLocation L, IdentifierInfo *Id,
-          TagDecl *PrevDecl, SourceLocation TKL = SourceLocation())
-    : TypeDecl(DK, DC, L, Id), DeclContext(DK), TagKeywordLoc(TKL),
-      TypedefDeclOrQualifier((TypedefDecl*) 0) {
+  TagDecl(Kind DK, TagKind TK, DeclContext *DC, SourceLocation L,
+          IdentifierInfo *Id, TagDecl *PrevDecl,
+          SourceLocation TKL = SourceLocation())
+    : TypeDecl(DK, DC, L, Id), DeclContext(DK), TypedefForAnonDecl(0),
+      TagKeywordLoc(TKL) {
     assert((DK != Enum || TK == TK_enum) &&"EnumDecl not matched with TK_enum");
     TagDeclKind = TK;
     IsDefinition = false;
@@ -1677,8 +1540,6 @@ protected:
   virtual TagDecl *getNextRedeclaration() { return RedeclLink.getNext(); }
 
 public:
-  void Destroy(ASTContext &C);
-
   typedef redeclarable_base::redecl_iterator redecl_iterator;
   redecl_iterator redecls_begin() const {
     return redeclarable_base::redecls_begin();
@@ -1758,21 +1619,8 @@ public:
   bool isUnion()  const { return getTagKind() == TK_union; }
   bool isEnum()   const { return getTagKind() == TK_enum; }
 
-  TypedefDecl *getTypedefForAnonDecl() const {
-    return hasExtInfo() ? 0 : TypedefDeclOrQualifier.get<TypedefDecl*>();
-  }
-  void setTypedefForAnonDecl(TypedefDecl *TDD) { TypedefDeclOrQualifier = TDD; }
-
-  NestedNameSpecifier *getQualifier() const {
-    return hasExtInfo() ? TypedefDeclOrQualifier.get<ExtInfo*>()->NNS : 0;
-  }
-  SourceRange getQualifierRange() const {
-    return hasExtInfo()
-      ? TypedefDeclOrQualifier.get<ExtInfo*>()->NNSRange
-      : SourceRange();
-  }
-  void setQualifierInfo(NestedNameSpecifier *Qualifier,
-                        SourceRange QualifierRange);
+  TypedefDecl *getTypedefForAnonDecl() const { return TypedefForAnonDecl; }
+  void setTypedefForAnonDecl(TypedefDecl *TDD) { TypedefForAnonDecl = TDD; }
 
   // Implement isa/cast/dyncast/etc.
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
@@ -1886,12 +1734,12 @@ class RecordDecl : public TagDecl {
   /// If so, this cannot be contained in arrays or other structs as a member.
   bool HasFlexibleArrayMember : 1;
 
-  /// AnonymousStructOrUnion - Whether this is the type of an anonymous struct
-  /// or union.
+  /// AnonymousStructOrUnion - Whether this is the type of an
+  /// anonymous struct or union.
   bool AnonymousStructOrUnion : 1;
 
-  /// HasObjectMember - This is true if this struct has at least one member
-  /// containing an object.
+  /// HasObjectMember - This is true if this struct has at least one
+  /// member containing an object
   bool HasObjectMember : 1;
 
 protected:

@@ -21,13 +21,13 @@
 @end
 
 @interface DTFilterOutputStream2
-- nextOutputStream; // expected-note {{{{method definition for 'nextOutputStream' not found}}
+- nextOutputStream;
 @end
 
-@implementation DTFilterOutputStream2 // expected-warning {{incomplete implementation}}
+@implementation DTFilterOutputStream2 // expected-warning {{incomplete implementation}} expected-warning {{method definition for 'nextOutputStream' not found}}
 - (id)initWithNextOutputStream:(id <DTOutputStreams>) outputStream {
   id <DTOutputStreams> nextOutputStream = [self nextOutputStream];
-  self = nextOutputStream; // expected-warning {{assigning to 'DTFilterOutputStream2 *' from incompatible type 'id<DTOutputStreams>'}}
+  self = nextOutputStream; // expected-warning {{incompatible type assigning 'id<DTOutputStreams>', expected 'DTFilterOutputStream2 *'}}
   return nextOutputStream ? nextOutputStream : self; // expected-warning {{incompatible operand types ('id<DTOutputStreams>' and 'DTFilterOutputStream2 *')}}
 }
 @end
@@ -36,7 +36,7 @@
 @implementation DTFilterOutputStream3 // expected-warning {{cannot find interface declaration for 'DTFilterOutputStream3'}}
 - (id)initWithNextOutputStream:(id <DTOutputStreams>) outputStream {
   id <DTOutputStreams> nextOutputStream = [self nextOutputStream]; // expected-warning {{method '-nextOutputStream' not found (return type defaults to 'id')}}
-  self = nextOutputStream; // expected-warning {{assigning to 'DTFilterOutputStream3 *' from incompatible type 'id<DTOutputStreams>'}}
+  self = nextOutputStream; // expected-warning {{incompatible type assigning 'id<DTOutputStreams>', expected 'DTFilterOutputStream3 *'}}
   return nextOutputStream ? nextOutputStream : self; // expected-warning {{incompatible operand types ('id<DTOutputStreams>' and 'DTFilterOutputStream3 *')}}
 }
 @end

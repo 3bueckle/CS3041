@@ -14,12 +14,15 @@
 #ifndef LLVM_CLANG_ANALYSIS_BUGTYPE
 #define LLVM_CLANG_ANALYSIS_BUGTYPE
 
-#include "clang/Checker/BugReporter/BugReporter.h"
-#include "llvm/ADT/FoldingSet.h"
+#include <llvm/ADT/FoldingSet.h>
 #include <string>
 
 namespace clang {
 
+class BugReportEquivClass;
+class BugReporter;
+class BuiltinBugReport;
+class BugReporterContext;
 class ExplodedNode;
 class GRExprEngine;
 

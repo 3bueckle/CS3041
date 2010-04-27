@@ -54,6 +54,7 @@ AttributeList::Kind AttributeList::getKind(const IdentifierInfo *Name) {
   if (AttrName.startswith("__") && AttrName.endswith("__"))
     AttrName = AttrName.substr(2, AttrName.size() - 4);
 
+  // FIXME: Hand generating this is neither smart nor efficient.
   return llvm::StringSwitch<AttributeList::Kind>(AttrName)
     .Case("weak", AT_weak)
     .Case("weakref", AT_weakref)
@@ -105,7 +106,6 @@ AttributeList::Kind AttributeList::getKind(const IdentifierInfo *Name) {
     .Case("overloadable", AT_overloadable)
     .Case("address_space", AT_address_space)
     .Case("always_inline", AT_always_inline)
-    .Case("returns_twice", IgnoredAttribute)
     .Case("vec_type_hint", IgnoredAttribute)
     .Case("objc_exception", AT_objc_exception)
     .Case("ext_vector_type", AT_ext_vector_type)

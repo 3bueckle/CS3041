@@ -22,12 +22,12 @@ namespace NS {
     void test_elab2(struct S4 *s4);
   };
 
-  void X::test_elab2(S4 *s4) { } // expected-note{{passing argument to parameter 's4' here}}
+  void X::test_elab2(S4 *s4) { }
 }
 
 void test_X_elab(NS::X x) {
   struct S4 *s4 = 0;
-  x.test_elab2(s4); // expected-error{{cannot initialize a parameter of type 'NS::S4 *' with an lvalue of type 'struct S4 *'}}
+  x.test_elab2(s4); // expected-error{{cannot initialize a parameter of type 'struct NS::S4 *' with an lvalue of type 'struct S4 *'}}
 }
 
 namespace NS {

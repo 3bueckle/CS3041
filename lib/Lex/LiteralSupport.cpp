@@ -654,7 +654,6 @@ CharLiteralParser::CharLiteralParser(const char *begin, const char *end,
   llvm::APInt LitVal(PP.getTargetInfo().getIntWidth(), 0);
 
   unsigned NumCharsSoFar = 0;
-  bool Warned = false;
   while (begin[0] != '\'') {
     uint64_t ResultChar;
     if (begin[0] != '\\')     // If this is a normal character, consume it.
@@ -671,10 +670,8 @@ CharLiteralParser::CharLiteralParser(const char *begin, const char *end,
       } else {
         // Narrow character literals act as though their value is concatenated
         // in this implementation, but warn on overflow.
-        if (LitVal.countLeadingZeros() < 8 && !Warned) {
+        if (LitVal.countLeadingZeros() < 8)
           PP.Diag(Loc, diag::warn_char_constant_too_large);
-          Warned = true;
-        }
         LitVal <<= 8;
       }
     }
@@ -809,14 +806,7 @@ StringLiteralParser(const Token *StringToks, unsigned NumStringToks,
     // Get the spelling of the token, which eliminates trigraphs, etc.  We know
     // that ThisTokBuf points to a buffer that is big enough for the whole token
     // and 'spelled' tokens can only shrink.
-    bool StringInvalid = false;
-    unsigned ThisTokLen = PP.getSpelling(StringToks[i], ThisTokBuf, 
-                                         &StringInvalid);
-    if (StringInvalid) {
-      hadError = 1;
-      continue;
-    }
-
+    unsigned ThisTokLen = PP.getSpelling(StringToks[i], ThisTokBuf);
     const char *ThisTokEnd = ThisTokBuf+ThisTokLen-1;  // Skip end quote.
 
     // TODO: Input character set mapping support.
@@ -914,12 +904,8 @@ unsigned StringLiteralParser::getOffsetOfStringByte(const Token &Tok,
   llvm::SmallString<16> SpellingBuffer;
   SpellingBuffer.resize(Tok.getLength());
 
-  bool StringInvalid = false;
   const char *SpellingPtr = &SpellingBuffer[0];
-  unsigned TokLen = PP.getSpelling(Tok, SpellingPtr, &StringInvalid);
-  if (StringInvalid) {
-    return 0;
-  }
+  unsigned TokLen = PP.getSpelling(Tok, SpellingPtr);
 
   assert(SpellingPtr[0] != 'L' && "Doesn't handle wide strings yet");
 

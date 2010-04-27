@@ -36,7 +36,7 @@ ifeq ($(shell test -d $(COMPILERRT_SRC_ROOT) && echo OK),OK)
 RuntimeDirs :=
 ifeq ($(OS),Darwin)
 RuntimeDirs += darwin
-RuntimeLibrary.darwin.Configs = 10.4 armv6 cc_kext
+RuntimeLibrary.darwin.Configs = 10.4 armv6
 endif
 
 # Rule to build the compiler-rt libraries we need.

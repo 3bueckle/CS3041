@@ -16,6 +16,7 @@
 #ifndef CLANG_CODEGEN_OBCJRUNTIME_H
 #define CLANG_CODEGEN_OBCJRUNTIME_H
 #include "clang/Basic/IdentifierTable.h" // Selector
+#include "llvm/ADT/SmallVector.h"
 #include "clang/AST/DeclObjC.h"
 #include <string>
 
@@ -61,11 +62,12 @@ namespace CodeGen {
 
 /// Implements runtime-specific code generation functions.
 class CGObjCRuntime {
-protected:
+public:
   // Utility functions for unified ivar access. These need to
   // eventually be folded into other places (the structure layout
   // code).
 
+protected:
   /// Compute an offset to the given ivar, suitable for passing to
   /// EmitValueForIvarAtOffset.  Note that the correct handling of
   /// bit-fields is carefully coordinated by these two, use caution!
@@ -167,9 +169,6 @@ public:
   /// Return the runtime function for setting properties.
   virtual llvm::Constant *GetPropertySetFunction() = 0;
 
-  // API for atomic copying of qualified aggregates in setter/getter.
-  virtual llvm::Constant *GetCopyStructFunction() = 0;
-  
   /// GetClass - Return a reference to the class for the given
   /// interface decl.
   virtual llvm::Value *GetClass(CGBuilderTy &Builder,

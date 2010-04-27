@@ -17,9 +17,6 @@
 #include "clang/AST/APValue.h"
 #include "clang/AST/Stmt.h"
 #include "clang/AST/Type.h"
-#include "clang/AST/DeclAccessPair.h"
-#include "clang/AST/ASTVector.h"
-#include "clang/AST/UsuallyTinyPtrVector.h"
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/SmallVector.h"
@@ -35,14 +32,10 @@ namespace clang {
   class NamedDecl;
   class ValueDecl;
   class BlockDecl;
-  class CXXBaseSpecifier;
   class CXXOperatorCallExpr;
   class CXXMemberCallExpr;
   class TemplateArgumentLoc;
   class TemplateArgumentListInfo;
-
-/// \brief A simple array of base specifiers.
-typedef UsuallyTinyPtrVector<const CXXBaseSpecifier> CXXBaseSpecifierArray;
 
 /// Expr - This represents one expression.  Note that Expr's are subclasses of
 /// Stmt.  This allows an expression to be transparently used any place a Stmt
@@ -157,6 +150,7 @@ public:
     LV_InvalidExpression,
     LV_MemberFunction,
     LV_SubObjCPropertySetting,
+    LV_SubObjCPropertyGetterSetting,
     LV_ClassTemporary
   };
   isLvalueResult isLvalue(ASTContext &Ctx) const;
@@ -188,6 +182,7 @@ public:
     MLV_NoSetterProperty,
     MLV_MemberFunction,
     MLV_SubObjCPropertySetting,
+    MLV_SubObjCPropertyGetterSetting,
     MLV_ClassTemporary
   };
   isModifiableLvalueResult isModifiableLvalue(ASTContext &Ctx,
@@ -203,12 +198,6 @@ public:
 
   /// \brief Returns whether this expression refers to a vector element.
   bool refersToVectorElement() const;
-  
-  /// isKnownToHaveBooleanValue - Return true if this is an integer expression
-  /// that is known to return 0 or 1.  This happens for _Bool/bool expressions
-  /// but also int expressions which are produced by things like comparisons in
-  /// C.
-  bool isKnownToHaveBooleanValue() const;
   
   /// isIntegerConstantExpr - Return true if this expression is a valid integer
   /// constant expression, and, if so, return its value in Result.  If not a
@@ -315,7 +304,7 @@ public:
   ///  its subexpression.  If that subexpression is also a ParenExpr,
   ///  then this method recursively returns its subexpression, and so forth.
   ///  Otherwise, the method returns the current Expr.
-  Expr *IgnoreParens();
+  Expr* IgnoreParens();
 
   /// IgnoreParenCasts - Ignore parentheses and casts.  Strip off any ParenExpr
   /// or CastExprs, returning their operand.
@@ -335,16 +324,7 @@ public:
   /// the expression is a default argument.
   bool isDefaultArgument() const;
   
-  /// \brief Determine whether this expression directly creates a
-  /// temporary object (of class type).
-  bool isTemporaryObject() const { return getTemporaryObject() != 0; }
-
-  /// \brief If this expression directly creates a temporary object of
-  /// class type, return the expression that actually constructs that
-  /// temporary object.
-  const Expr *getTemporaryObject() const;
-
-  const Expr *IgnoreParens() const {
+  const Expr* IgnoreParens() const {
     return const_cast<Expr*>(this)->IgnoreParens();
   }
   const Expr *IgnoreParenCasts() const {
@@ -1285,11 +1265,6 @@ public:
 /// MemberExpr - [C99 6.5.2.3] Structure and Union Members.  X->F and X.F.
 ///
 class MemberExpr : public Expr {
-  /// Extra data stored in some member expressions.
-  struct MemberNameQualifier : public NameQualifier {
-    DeclAccessPair FoundDecl;
-  };
-
   /// Base - the expression for the base pointer or structure references.  In
   /// X.F, this is "X".
   Stmt *Base;
@@ -1305,26 +1280,27 @@ class MemberExpr : public Expr {
   bool IsArrow : 1;
 
   /// \brief True if this member expression used a nested-name-specifier to
-  /// refer to the member, e.g., "x->Base::f", or found its member via a using
-  /// declaration.  When true, a MemberNameQualifier
+  /// refer to the member, e.g., "x->Base::f". When true, a NameQualifier
   /// structure is allocated immediately after the MemberExpr.
-  bool HasQualifierOrFoundDecl : 1;
+  bool HasQualifier : 1;
 
   /// \brief True if this member expression specified a template argument list
   /// explicitly, e.g., x->f<int>. When true, an ExplicitTemplateArgumentList
   /// structure (and its TemplateArguments) are allocated immediately after
   /// the MemberExpr or, if the member expression also has a qualifier, after
-  /// the MemberNameQualifier structure.
+  /// the NameQualifier structure.
   bool HasExplicitTemplateArgumentList : 1;
 
   /// \brief Retrieve the qualifier that preceded the member name, if any.
-  MemberNameQualifier *getMemberQualifier() {
-    assert(HasQualifierOrFoundDecl);
-    return reinterpret_cast<MemberNameQualifier *> (this + 1);
+  NameQualifier *getMemberQualifier() {
+    if (!HasQualifier)
+      return 0;
+
+    return reinterpret_cast<NameQualifier *> (this + 1);
   }
 
   /// \brief Retrieve the qualifier that preceded the member name, if any.
-  const MemberNameQualifier *getMemberQualifier() const {
+  const NameQualifier *getMemberQualifier() const {
     return const_cast<MemberExpr *>(this)->getMemberQualifier();
   }
 
@@ -1334,7 +1310,7 @@ class MemberExpr : public Expr {
     if (!HasExplicitTemplateArgumentList)
       return 0;
 
-    if (!HasQualifierOrFoundDecl)
+    if (!HasQualifier)
       return reinterpret_cast<ExplicitTemplateArgumentList *>(this + 1);
 
     return reinterpret_cast<ExplicitTemplateArgumentList *>(
@@ -1347,22 +1323,26 @@ class MemberExpr : public Expr {
     return const_cast<MemberExpr *>(this)->getExplicitTemplateArgumentList();
   }
 
+  MemberExpr(Expr *base, bool isarrow, NestedNameSpecifier *qual,
+             SourceRange qualrange, ValueDecl *memberdecl, SourceLocation l,
+             const TemplateArgumentListInfo *targs, QualType ty);
+
 public:
   MemberExpr(Expr *base, bool isarrow, ValueDecl *memberdecl,
              SourceLocation l, QualType ty)
     : Expr(MemberExprClass, ty,
            base->isTypeDependent(), base->isValueDependent()),
       Base(base), MemberDecl(memberdecl), MemberLoc(l), IsArrow(isarrow),
-      HasQualifierOrFoundDecl(false), HasExplicitTemplateArgumentList(false) {}
+      HasQualifier(false), HasExplicitTemplateArgumentList(false) {}
 
   /// \brief Build an empty member reference expression.
   explicit MemberExpr(EmptyShell Empty)
-    : Expr(MemberExprClass, Empty), HasQualifierOrFoundDecl(false),
+    : Expr(MemberExprClass, Empty), HasQualifier(false),
       HasExplicitTemplateArgumentList(false) { }
 
   static MemberExpr *Create(ASTContext &C, Expr *base, bool isarrow,
                             NestedNameSpecifier *qual, SourceRange qualrange,
-                            ValueDecl *memberdecl, DeclAccessPair founddecl,
+                            ValueDecl *memberdecl,
                             SourceLocation l,
                             const TemplateArgumentListInfo *targs,
                             QualType ty);
@@ -1377,24 +1357,16 @@ public:
   ValueDecl *getMemberDecl() const { return MemberDecl; }
   void setMemberDecl(ValueDecl *D) { MemberDecl = D; }
 
-  /// \brief Retrieves the declaration found by lookup.
-  DeclAccessPair getFoundDecl() const {
-    if (!HasQualifierOrFoundDecl)
-      return DeclAccessPair::make(getMemberDecl(),
-                                  getMemberDecl()->getAccess());
-    return getMemberQualifier()->FoundDecl;
-  }
-
   /// \brief Determines whether this member expression actually had
   /// a C++ nested-name-specifier prior to the name of the member, e.g.,
   /// x->Base::foo.
-  bool hasQualifier() const { return getQualifier() != 0; }
+  bool hasQualifier() const { return HasQualifier; }
 
   /// \brief If the member name was qualified, retrieves the source range of
   /// the nested-name-specifier that precedes the member name. Otherwise,
   /// returns an empty source range.
   SourceRange getQualifierRange() const {
-    if (!HasQualifierOrFoundDecl)
+    if (!HasQualifier)
       return SourceRange();
 
     return getMemberQualifier()->Range;
@@ -1404,7 +1376,7 @@ public:
   /// nested-name-specifier that precedes the member name. Otherwise, returns
   /// NULL.
   NestedNameSpecifier *getQualifier() const {
-    if (!HasQualifierOrFoundDecl)
+    if (!HasQualifier)
       return 0;
 
     return getMemberQualifier()->NNS;
@@ -1575,10 +1547,6 @@ public:
     /// CK_DerivedToBase - Derived to base class casts.
     CK_DerivedToBase,
 
-    /// CK_UncheckedDerivedToBase - Derived to base class casts that
-    /// assume that the derived pointer is not null.
-    CK_UncheckedDerivedToBase,
-
     /// CK_Dynamic - Dynamic cast.
     CK_Dynamic,
 
@@ -1650,53 +1618,8 @@ public:
 private:
   CastKind Kind;
   Stmt *Op;
-
-  /// BasePath - For derived-to-base and base-to-derived casts, the base array
-  /// contains the inheritance path.
-  CXXBaseSpecifierArray BasePath;
-
-  void CheckBasePath() const {
-#ifndef NDEBUG
-    switch (getCastKind()) {
-    case CK_DerivedToBase:
-    case CK_UncheckedDerivedToBase:
-    case CK_DerivedToBaseMemberPointer:
-    case CK_BaseToDerived:
-    case CK_BaseToDerivedMemberPointer:
-      assert(!BasePath.empty() && "Cast kind should have a base path!");
-      break;
-
-    // These should not have an inheritance path.
-    case CK_Unknown:
-    case CK_BitCast:
-    case CK_NoOp:
-    case CK_Dynamic:
-    case CK_ToUnion:
-    case CK_ArrayToPointerDecay:
-    case CK_FunctionToPointerDecay:
-    case CK_NullToMemberPointer:
-    case CK_UserDefinedConversion:
-    case CK_ConstructorConversion:
-    case CK_IntegralToPointer:
-    case CK_PointerToIntegral:
-    case CK_ToVoid:
-    case CK_VectorSplat:
-    case CK_IntegralCast:
-    case CK_IntegralToFloating:
-    case CK_FloatingToIntegral:
-    case CK_FloatingCast:
-    case CK_MemberPointerToBoolean:
-    case CK_AnyPointerToObjCPointerCast:
-    case CK_AnyPointerToBlockPointerCast:
-      assert(BasePath.empty() && "Cast kind should not have a base path!");
-      break;
-    }
-#endif
-  }
-
 protected:
-  CastExpr(StmtClass SC, QualType ty, const CastKind kind, Expr *op,
-           CXXBaseSpecifierArray BasePath) :
+  CastExpr(StmtClass SC, QualType ty, const CastKind kind, Expr *op) :
     Expr(SC, ty,
          // Cast expressions are type-dependent if the type is
          // dependent (C++ [temp.dep.expr]p3).
@@ -1704,15 +1627,11 @@ protected:
          // Cast expressions are value-dependent if the type is
          // dependent or if the subexpression is value-dependent.
          ty->isDependentType() || (op && op->isValueDependent())),
-    Kind(kind), Op(op), BasePath(BasePath) {
-      CheckBasePath();
-    }
+    Kind(kind), Op(op) {}
 
   /// \brief Construct an empty cast.
   CastExpr(StmtClass SC, EmptyShell Empty)
     : Expr(SC, Empty) { }
-
-  virtual void DoDestroy(ASTContext &C);
 
 public:
   CastKind getCastKind() const { return Kind; }
@@ -1730,12 +1649,10 @@ public:
   const Expr *getSubExprAsWritten() const {
     return const_cast<CastExpr *>(this)->getSubExprAsWritten();
   }
-
-  const CXXBaseSpecifierArray& getBasePath() const { return BasePath; }
-
+    
   static bool classof(const Stmt *T) {
     StmtClass SC = T->getStmtClass();
-    if (SC >= CXXStaticCastExprClass && SC <= CXXFunctionalCastExprClass)
+    if (SC >= CXXNamedCastExprClass && SC <= CXXFunctionalCastExprClass)
       return true;
 
     if (SC >= ImplicitCastExprClass && SC <= CStyleCastExprClass)
@@ -1771,14 +1688,13 @@ class ImplicitCastExpr : public CastExpr {
   bool LvalueCast;
 
 public:
-  ImplicitCastExpr(QualType ty, CastKind kind, Expr *op, 
-                   CXXBaseSpecifierArray BasePath, bool Lvalue)
-    : CastExpr(ImplicitCastExprClass, ty, kind, op, BasePath), 
-    LvalueCast(Lvalue) { }
+  ImplicitCastExpr(QualType ty, CastKind kind, Expr *op, bool Lvalue) :
+    CastExpr(ImplicitCastExprClass, ty, kind, op), LvalueCast(Lvalue) { }
 
   /// \brief Construct an empty implicit cast.
   explicit ImplicitCastExpr(EmptyShell Shell)
     : CastExpr(ImplicitCastExprClass, Shell) { }
+
 
   virtual SourceRange getSourceRange() const {
     return getSubExpr()->getSourceRange();
@@ -1819,9 +1735,8 @@ class ExplicitCastExpr : public CastExpr {
 
 protected:
   ExplicitCastExpr(StmtClass SC, QualType exprTy, CastKind kind,
-                   Expr *op, CXXBaseSpecifierArray BasePath,
-                   TypeSourceInfo *writtenTy)
-    : CastExpr(SC, exprTy, kind, op, BasePath), TInfo(writtenTy) {}
+                   Expr *op, TypeSourceInfo *writtenTy)
+    : CastExpr(SC, exprTy, kind, op), TInfo(writtenTy) {}
 
   /// \brief Construct an empty explicit cast.
   ExplicitCastExpr(StmtClass SC, EmptyShell Shell)
@@ -1841,7 +1756,7 @@ public:
     StmtClass SC = T->getStmtClass();
     if (SC >= CStyleCastExprClass && SC <= CStyleCastExprClass)
       return true;
-    if (SC >= CXXStaticCastExprClass && SC <= CXXFunctionalCastExprClass)
+    if (SC >= CXXNamedCastExprClass && SC <= CXXFunctionalCastExprClass)
       return true;
 
     return false;
@@ -1857,10 +1772,10 @@ class CStyleCastExpr : public ExplicitCastExpr {
   SourceLocation RPLoc; // the location of the right paren
 public:
   CStyleCastExpr(QualType exprTy, CastKind kind, Expr *op,
-                 CXXBaseSpecifierArray BasePath, TypeSourceInfo *writtenTy,
-                 SourceLocation l, SourceLocation r)
-    : ExplicitCastExpr(CStyleCastExprClass, exprTy, kind, op, BasePath,
-                       writtenTy), LPLoc(l), RPLoc(r) {}
+                 TypeSourceInfo *writtenTy,
+                 SourceLocation l, SourceLocation r) :
+    ExplicitCastExpr(CStyleCastExprClass, exprTy, kind, op, writtenTy),
+    LPLoc(l), RPLoc(r) {}
 
   /// \brief Construct an empty C-style explicit cast.
   explicit CStyleCastExpr(EmptyShell Shell)
@@ -2429,7 +2344,7 @@ public:
   virtual child_iterator child_end();
 };
 
-/// VAArgExpr, used for the builtin function __builtin_va_arg.
+/// VAArgExpr, used for the builtin function __builtin_va_start.
 class VAArgExpr : public Expr {
   Stmt *Val;
   SourceLocation BuiltinLoc, RParenLoc;
@@ -2440,7 +2355,7 @@ public:
       BuiltinLoc(BLoc),
       RParenLoc(RPLoc) { }
 
-  /// \brief Create an empty __builtin_va_arg expression.
+  /// \brief Create an empty __builtin_va_start expression.
   explicit VAArgExpr(EmptyShell Empty) : Expr(VAArgExprClass, Empty) { }
 
   const Expr *getSubExpr() const { return cast<Expr>(Val); }
@@ -2505,8 +2420,7 @@ public:
 /// serves as its syntactic form.
 class InitListExpr : public Expr {
   // FIXME: Eliminate this vector in favor of ASTContext allocation
-  typedef ASTVector<Stmt *> InitExprsTy;
-  InitExprsTy InitExprs;
+  std::vector<Stmt *> InitExprs;
   SourceLocation LBraceLoc, RBraceLoc;
 
   /// Contains the initializer list that describes the syntactic form
@@ -2522,13 +2436,11 @@ class InitListExpr : public Expr {
   bool HadArrayRangeDesignator;
 
 public:
-  InitListExpr(ASTContext &C, SourceLocation lbraceloc,
-               Expr **initexprs, unsigned numinits,
+  InitListExpr(SourceLocation lbraceloc, Expr **initexprs, unsigned numinits,
                SourceLocation rbraceloc);
 
   /// \brief Build an empty initializer list.
-  explicit InitListExpr(ASTContext &C, EmptyShell Empty)
-    : Expr(InitListExprClass, Empty), InitExprs(C) { }
+  explicit InitListExpr(EmptyShell Empty) : Expr(InitListExprClass, Empty) { }
 
   unsigned getNumInits() const { return InitExprs.size(); }
 
@@ -2548,7 +2460,7 @@ public:
   }
 
   /// \brief Reserve space for some number of initializers.
-  void reserveInits(ASTContext &C, unsigned NumInits);
+  void reserveInits(unsigned NumInits);
 
   /// @brief Specify the number of initializers
   ///
@@ -2565,7 +2477,7 @@ public:
   /// When @p Init is out of range for this initializer list, the
   /// initializer list will be extended with NULL expressions to
   /// accomodate the new entry.
-  Expr *updateInit(ASTContext &C, unsigned Init, Expr *expr);
+  Expr *updateInit(unsigned Init, Expr *expr);
 
   /// \brief If this initializes a union, specifies which field in the
   /// union to initialize.
@@ -2611,8 +2523,8 @@ public:
   virtual child_iterator child_begin();
   virtual child_iterator child_end();
 
-  typedef InitExprsTy::iterator iterator;
-  typedef InitExprsTy::reverse_iterator reverse_iterator;
+  typedef std::vector<Stmt *>::iterator iterator;
+  typedef std::vector<Stmt *>::reverse_iterator reverse_iterator;
 
   iterator begin() { return InitExprs.begin(); }
   iterator end() { return InitExprs.end(); }

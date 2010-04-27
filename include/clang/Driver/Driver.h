@@ -64,12 +64,6 @@ public:
   /// The path to the compiler resource directory.
   std::string ResourceDir;
 
-  /// A prefix directory used to emulated a limited subset of GCC's '-Bprefix'
-  /// functionality.
-  /// FIXME: This type of customization should be removed in favor of the
-  /// universal driver when it is ready.
-  std::string PrefixDir;
-
   /// Default host triple.
   std::string DefaultHostTriple;
 
@@ -89,9 +83,6 @@ public:
   /// Name to use when calling the generic gcc.
   std::string CCCGenericGCCName;
 
-  /// The file to log CC_PRINT_OPTIONS output to, if enabled.
-  const char *CCPrintOptionsFilename;
-
   /// Whether the driver should follow g++ like behavior.
   unsigned CCCIsCXX : 1;
 
@@ -100,10 +91,6 @@ public:
 
   /// Only print tool bindings, don't build any jobs.
   unsigned CCCPrintBindings : 1;
-
-  /// Set CC_PRINT_OPTIONS mode, which is like -v but logs the commands to
-  /// CCPrintOptionsFilename or to stderr.
-  unsigned CCPrintOptions : 1;
 
 private:
   /// Whether to check that input files exist when constructing compilation
@@ -139,8 +126,7 @@ public:
   Driver(llvm::StringRef _Name, llvm::StringRef _Dir,
          llvm::StringRef _DefaultHostTriple,
          llvm::StringRef _DefaultImageName,
-         bool IsProduction, bool CXXIsProduction,
-         Diagnostic &_Diags);
+         bool IsProduction, Diagnostic &_Diags);
   ~Driver();
 
   /// @name Accessors

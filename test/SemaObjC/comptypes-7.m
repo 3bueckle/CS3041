@@ -24,27 +24,27 @@ int main()
 
   /* These should all generate warnings.  */
   
-  obj = i; // expected-warning {{incompatible integer to pointer conversion assigning to 'id' from 'int'}}
-  obj = j; // expected-warning {{incompatible pointer types assigning to 'id' from 'int *'}}
+  obj = i; // expected-warning {{incompatible integer to pointer conversion assigning 'int', expected 'id'}}
+  obj = j; // expected-warning {{incompatible pointer types assigning 'int *', expected 'id'}}
 
-  obj_p = i; // expected-warning {{incompatible integer to pointer conversion assigning to 'id<MyProtocol>' from 'int'}}
-  obj_p = j; // expected-warning {{ incompatible pointer types assigning to 'id<MyProtocol>' from 'int *'}}
+  obj_p = i; // expected-warning {{incompatible integer to pointer conversion assigning 'int', expected 'id<MyProtocol>'}}
+  obj_p = j; // expected-warning {{incompatible pointer types assigning 'int *', expected 'id<MyProtocol>'}}
   
-  obj_c = i; // expected-warning {{ incompatible integer to pointer conversion assigning to 'MyClass *' from 'int'}}
-  obj_c = j; // expected-warning {{incompatible pointer types assigning to 'MyClass *' from 'int *'}}
+  obj_c = i; // expected-warning {{incompatible integer to pointer conversion assigning 'int', expected 'MyClass *'}}
+  obj_c = j; // expected-warning {{incompatible pointer types assigning 'int *', expected 'MyClass *'}}
 
-  obj_C = i; // expected-warning {{incompatible integer to pointer conversion assigning to 'Class' from 'int'}}
-  obj_C = j; // expected-warning {{incompatible pointer types assigning to 'Class' from 'int *'}}
+  obj_C = i; // expected-warning {{incompatible integer to pointer conversion assigning 'int', expected 'Class'}}
+  obj_C = j; // expected-warning {{incompatible pointer types assigning 'int *', expected 'Class'}}
   
-  i = obj;   // expected-warning {{incompatible pointer to integer conversion assigning to 'int' from 'id'}}
-  i = obj_p; // expected-warning {{incompatible pointer to integer conversion assigning to 'int' from 'id<MyProtocol>'}}
-  i = obj_c; // expected-warning {{incompatible pointer to integer conversion assigning to 'int' from 'MyClass *'}}
-  i = obj_C; // expected-warning {{incompatible pointer to integer conversion assigning to 'int' from 'Class'}}
+  i = obj;   // expected-warning {{incompatible pointer to integer conversion assigning 'id', expected 'int'}}
+  i = obj_p; // expected-warning {{incompatible pointer to integer conversion assigning 'id<MyProtocol>', expected 'int'}}
+  i = obj_c; // expected-warning {{incompatible pointer to integer conversion assigning 'MyClass *', expected 'int'}}
+  i = obj_C; // expected-warning {{incompatible pointer to integer conversion assigning 'Class', expected 'int'}}
   
-  j = obj;   // expected-warning {{incompatible pointer types assigning to 'int *' from 'id'}}
-  j = obj_p; // expected-warning {{ incompatible pointer types assigning to 'int *' from 'id<MyProtocol>'}}
-  j = obj_c; // expected-warning {{incompatible pointer types assigning to 'int *' from 'MyClass *'}}
-  j = obj_C; // expected-warning {{incompatible pointer types assigning to 'int *' from 'Class'}}
+  j = obj;   // expected-warning {{incompatible pointer types assigning 'id', expected 'int *'}}
+  j = obj_p; // expected-warning {{incompatible pointer types assigning 'id<MyProtocol>', expected 'int *'}}
+  j = obj_c; // expected-warning {{incompatible pointer types assigning 'MyClass *', expected 'int *'}}
+  j = obj_C; // expected-warning {{incompatible pointer types assigning 'Class', expected 'int *'}}
   
   if (obj == i) foo() ; // expected-warning {{comparison between pointer and integer ('id' and 'int')}}
   if (i == obj) foo() ; // expected-warning {{comparison between pointer and integer ('int' and 'id')}}
@@ -65,11 +65,6 @@ int main()
   if (i == obj_C) foo() ; // expected-warning {{comparison between pointer and integer ('int' and 'Class')}}
   if (obj_C == j) foo() ; // expected-warning {{comparison of distinct pointer types ('Class' and 'int *')}}
   if (j == obj_C) foo() ; // expected-warning {{comparison of distinct pointer types ('int *' and 'Class')}}
-
-  Class bar1 = Nil;
-  Class <MyProtocol> bar = Nil;
-  bar = bar1;
-  bar1 = bar;
 
   return 0;
 }

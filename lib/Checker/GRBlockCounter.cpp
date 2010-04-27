@@ -18,34 +18,7 @@
 
 using namespace clang;
 
-namespace {
-
-class CountKey {
-  const StackFrameContext *CallSite;
-  unsigned BlockID;
-
-public:
-  CountKey(const StackFrameContext *CS, unsigned ID) 
-    : CallSite(CS), BlockID(ID) {}
-
-  bool operator==(const CountKey &RHS) const {
-    return (CallSite == RHS.CallSite) && (BlockID == RHS.BlockID);
-  }
-
-  bool operator<(const CountKey &RHS) const {
-    return (CallSite == RHS.CallSite) ? (BlockID < RHS.BlockID) 
-                                      : (CallSite < RHS.CallSite);
-  }
-
-  void Profile(llvm::FoldingSetNodeID &ID) const {
-    ID.AddPointer(CallSite);
-    ID.AddInteger(BlockID);
-  }
-};
-
-}
-
-typedef llvm::ImmutableMap<CountKey, unsigned> CountMap;
+typedef llvm::ImmutableMap<unsigned,unsigned> CountMap;
 
 static inline CountMap GetMap(void* D) {
   return CountMap(static_cast<CountMap::TreeTy*>(D));
@@ -55,10 +28,9 @@ static inline CountMap::Factory& GetFactory(void* F) {
   return *static_cast<CountMap::Factory*>(F);
 }
 
-unsigned GRBlockCounter::getNumVisited(const StackFrameContext *CallSite, 
-                                       unsigned BlockID) const {
+unsigned GRBlockCounter::getNumVisited(unsigned BlockID) const {
   CountMap M = GetMap(Data);
-  CountMap::data_type* T = M.lookup(CountKey(CallSite, BlockID));
+  CountMap::data_type* T = M.lookup(BlockID);
   return T ? *T : 0;
 }
 
@@ -71,12 +43,9 @@ GRBlockCounter::Factory::~Factory() {
 }
 
 GRBlockCounter
-GRBlockCounter::Factory::IncrementCount(GRBlockCounter BC, 
-                                        const StackFrameContext *CallSite,
-                                        unsigned BlockID) {
-  return GRBlockCounter(GetFactory(F).Add(GetMap(BC.Data), 
-                                          CountKey(CallSite, BlockID),
-                             BC.getNumVisited(CallSite, BlockID)+1).getRoot());
+GRBlockCounter::Factory::IncrementCount(GRBlockCounter BC, unsigned BlockID) {
+  return GRBlockCounter(GetFactory(F).Add(GetMap(BC.Data), BlockID,
+                                        BC.getNumVisited(BlockID)+1).getRoot());
 }
 
 GRBlockCounter

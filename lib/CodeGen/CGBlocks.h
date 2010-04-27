@@ -17,6 +17,7 @@
 #include "CodeGenTypes.h"
 #include "clang/AST/Type.h"
 #include "llvm/Module.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/AST/CharUnits.h"
@@ -38,7 +39,6 @@ namespace llvm {
   class GlobalValue;
   class TargetData;
   class FunctionType;
-  class PointerType;
   class Value;
   class LLVMContext;
 }
@@ -128,7 +128,7 @@ protected:
   llvm::LLVMContext &VMContext;
 
 public:
-  const llvm::PointerType *PtrToInt8Ty;
+  const llvm::Type *PtrToInt8Ty;
   struct HelperInfo {
     int index;
     int flag;

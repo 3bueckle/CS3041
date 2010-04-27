@@ -18,25 +18,16 @@
 #include "clang/AST/TypeLoc.h"
 using namespace clang;
 
-
 //===----------------------------------------------------------------------===//
 //  Child Iterators for iterating over subexpressions/substatements
 //===----------------------------------------------------------------------===//
 
-QualType CXXTypeidExpr::getTypeOperand() const {
-  assert(isTypeOperand() && "Cannot call getTypeOperand for typeid(expr)");
-  return Operand.get<TypeSourceInfo *>()->getType().getNonReferenceType()
-                                                        .getUnqualifiedType();
-}
-
 // CXXTypeidExpr - has child iterators if the operand is an expression
 Stmt::child_iterator CXXTypeidExpr::child_begin() {
-  return isTypeOperand() ? child_iterator() 
-                         : reinterpret_cast<Stmt **>(&Operand);
+  return isTypeOperand() ? child_iterator() : &Operand.Ex;
 }
 Stmt::child_iterator CXXTypeidExpr::child_end() {
-  return isTypeOperand() ? child_iterator() 
-                         : reinterpret_cast<Stmt **>(&Operand) + 1;
+  return isTypeOperand() ? child_iterator() : &Operand.Ex+1;
 }
 
 // CXXBoolLiteralExpr
@@ -187,13 +178,6 @@ bool OverloadExpr::ComputeDependence(UnresolvedSetIterator Begin,
     return true;
 
   return false;
-}
-
-CXXRecordDecl *OverloadExpr::getNamingClass() const {
-  if (isa<UnresolvedLookupExpr>(this))
-    return cast<UnresolvedLookupExpr>(this)->getNamingClass();
-  else
-    return cast<UnresolvedMemberExpr>(this)->getNamingClass();
 }
 
 Stmt::child_iterator UnresolvedLookupExpr::child_begin() {

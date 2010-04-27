@@ -5,7 +5,7 @@ public:
   void f(T x); // expected-error{{argument may not have 'void' type}}
   void g(T*);
 
-  static int h(T, T); // expected-error {{argument may not have 'void' type}}
+  static int h(T, T); // expected-error 2{{argument may not have 'void' type}}
 };
 
 int identity(int x) { return x; }
@@ -20,7 +20,7 @@ void test(X<int> *xi, int *ip, X<int(int)> *xf) {
 }
 
 void test_bad() {
-  X<void> xv; // expected-note{{in instantiation of template class 'X<void>' requested here}}
+  X<void> xv; // expected-note{{in instantiation of template class 'class X<void>' requested here}}
 }
 
 template<typename T, typename U>
@@ -36,7 +36,7 @@ void test_ovl(Overloading<int, long> *oil, int i, long l) {
 }
 
 void test_ovl_bad() {
-  Overloading<float, float> off; // expected-note{{in instantiation of template class 'Overloading<float, float>' requested here}}
+  Overloading<float, float> off; // expected-note{{in instantiation of template class 'class Overloading<float, float>' requested here}}
 }
 
 template<typename T>
@@ -117,13 +117,3 @@ struct X3 {
 
 
 template struct X3<double>;
-
-// Don't try to instantiate this, it's invalid.
-namespace test1 {
-  template <class T> class A {};
-  template <class T> class B {
-    void foo(A<test1::Undeclared> &a) // expected-error {{no member named 'Undeclared' in namespace 'test1'}}
-    {}
-  };
-  template class B<int>;
-}

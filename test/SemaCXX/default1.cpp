@@ -14,8 +14,7 @@ void h(int i, int j = 2, int k = 3,
        int n);// expected-error {{missing default argument on parameter 'n'}}
 
 struct S { } s;
-void i(int = s) { } // expected-error {{no viable conversion}} \
-// expected-note{{passing argument to parameter here}}
+void i(int = s) { } // expected-error {{no viable conversion}}
 
 struct X { 
   X(int);
@@ -27,8 +26,6 @@ struct Y { // expected-note 2{{candidate}}
   explicit Y(int);
 };
 
-void k(Y y = 17); // expected-error{{no viable conversion}} \
-// expected-note{{passing argument to parameter 'y' here}}
+void k(Y y = 17); // expected-error{{no viable conversion}}
 
-void kk(Y = 17); // expected-error{{no viable conversion}} \
-// expected-note{{passing argument to parameter here}}
+void kk(Y = 17); // expected-error{{no viable conversion}}

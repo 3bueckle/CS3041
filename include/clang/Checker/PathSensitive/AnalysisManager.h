@@ -37,8 +37,6 @@ class AnalysisManager : public BugReporterData {
 
   enum AnalysisScope { ScopeTU, ScopeDecl } AScope;
 
-  unsigned MaxNodes;
-
   bool VisualizeEGDot;
   bool VisualizeEGUbi;
   bool PurgeDead;
@@ -57,12 +55,12 @@ public:
   AnalysisManager(ASTContext &ctx, Diagnostic &diags, 
                   const LangOptions &lang, PathDiagnosticClient *pd,
                   StoreManagerCreator storemgr,
-                  ConstraintManagerCreator constraintmgr, unsigned maxnodes,
+                  ConstraintManagerCreator constraintmgr,
                   bool vizdot, bool vizubi, bool purge, bool eager, bool trim)
 
     : Ctx(ctx), Diags(diags), LangInfo(lang), PD(pd),
       CreateStoreMgr(storemgr), CreateConstraintMgr(constraintmgr),
-      AScope(ScopeDecl), MaxNodes(maxnodes),
+      AScope(ScopeDecl),
       VisualizeEGDot(vizdot), VisualizeEGUbi(vizubi), PurgeDead(purge),
       EagerlyAssume(eager), TrimGraph(trim) {}
   
@@ -105,8 +103,6 @@ public:
     if (PD.get())
       PD->FlushDiagnostics();
   }
-
-  unsigned getMaxNodes() const { return MaxNodes; }
 
   bool shouldVisualizeGraphviz() const { return VisualizeEGDot; }
 

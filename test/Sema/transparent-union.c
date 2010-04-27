@@ -4,7 +4,7 @@ typedef union {
   float *fp;
 } TU __attribute__((transparent_union));
 
-void f(TU); // expected-note{{passing argument to parameter here}}
+void f(TU);
 
 void g(int *ip, float *fp, char *cp) {
   f(ip);

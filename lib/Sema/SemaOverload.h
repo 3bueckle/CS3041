@@ -18,7 +18,6 @@
 #include "clang/AST/Decl.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/Type.h"
-#include "clang/AST/UnresolvedSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/SmallVector.h"
 
@@ -34,7 +33,7 @@ namespace clang {
     OR_Success,             ///< Overload resolution succeeded.
     OR_No_Viable_Function,  ///< No viable function found.
     OR_Ambiguous,           ///< Ambiguous candidates found.
-    OR_Deleted              ///< Succeeded, but refers to a deleted function.
+    OR_Deleted              ///< Overload resoltuion refers to a deleted function.
   };
     
   /// ImplicitConversionKind - The kind of implicit conversion used to
@@ -381,33 +380,6 @@ namespace clang {
       assert(isInitialized() && "querying uninitialized conversion");
       return Kind(ConversionKind);
     }
-    
-    /// \brief Return a ranking of the implicit conversion sequence
-    /// kind, where smaller ranks represent better conversion
-    /// sequences.
-    ///
-    /// In particular, this routine gives user-defined conversion
-    /// sequences and ambiguous conversion sequences the same rank,
-    /// per C++ [over.best.ics]p10.
-    unsigned getKindRank() const {
-      switch (getKind()) {
-      case StandardConversion: 
-        return 0;
-
-      case UserDefinedConversion:
-      case AmbiguousConversion: 
-        return 1;
-
-      case EllipsisConversion:
-        return 2;
-
-      case BadConversion:
-        return 3;
-      }
-
-      return 3;
-    }
-
     bool isBad() const { return getKind() == BadConversion; }
     bool isStandard() const { return getKind() == StandardConversion; }
     bool isEllipsis() const { return getKind() == EllipsisConversion; }
@@ -467,11 +439,7 @@ namespace clang {
 
     /// This conversion candidate is not viable because its result
     /// type is not implicitly convertible to the desired type.
-    ovl_fail_bad_final_conversion,
-    
-    /// This conversion function template specialization candidate is not 
-    /// viable because the final conversion was not an exact match.
-    ovl_fail_final_conversion_not_exact
+    ovl_fail_bad_final_conversion
   };
 
   /// OverloadCandidate - A single candidate in an overload set (C++ 13.3).
@@ -481,11 +449,6 @@ namespace clang {
     /// (C++ [over.oper]) or a surrogate for a conversion to a
     /// function pointer or reference (C++ [over.call.object]).
     FunctionDecl *Function;
-
-    /// FoundDecl - The original declaration that was looked up /
-    /// invented / otherwise found, together with its access.
-    /// Might be a UsingShadowDecl or a FunctionTemplateDecl.
-    DeclAccessPair FoundDecl;
 
     // BuiltinTypes - Provides the return and parameter types of a
     // built-in overload candidate. Only valid when Function is NULL.
@@ -522,6 +485,14 @@ namespace clang {
     /// FailureKind - The reason why this candidate is not viable.
     /// Actually an OverloadFailureKind.
     unsigned char FailureKind;
+
+    /// PathAccess - The 'path access' to the given function/conversion.
+    /// Actually an AccessSpecifier.
+    unsigned Access;
+
+    AccessSpecifier getAccess() const {
+      return AccessSpecifier(Access);
+    }
 
     /// A structure used to record information about a failed
     /// template argument deduction.

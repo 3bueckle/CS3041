@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify -std=c++0x -Wsign-compare %s
+// RUN: %clang_cc1 -fsyntax-only -verify -faccess-control -std=c++0x -Wsign-compare %s
 
 // C++ rules for ?: are a lot stricter than C rules, and have to take into
 // account more conversion options.
@@ -85,7 +85,7 @@ void test()
   // these are ambiguous
   BadBase bb;
   BadDerived bd;
-  (void)(i1 ? bb : bd); // expected-error {{conditional expression is ambiguous; 'BadBase' can be converted to 'BadDerived' and vice versa}}
+  (void)(i1 ? bb : bd); // expected-error {{conditional expression is ambiguous; 'struct BadBase' can be converted to 'struct BadDerived' and vice versa}}
   (void)(i1 ? bd : bb); // expected-error {{conditional expression is ambiguous}}
   // curiously enough (and a defect?), these are not
   // for rvalues, hierarchy takes precedence over other conversions
@@ -106,19 +106,19 @@ void test()
   i1 = (i1 ? Base() : Derived()).trick();
   i1 = (i1 ? Derived() : Base()).trick();
   // should fail: const lost
-  (void)(i1 ? Base() : constder()); // expected-error {{incompatible operand types ('Base' and 'Derived const')}}
-  (void)(i1 ? constder() : Base()); // expected-error {{incompatible operand types ('Derived const' and 'Base')}}
+  (void)(i1 ? Base() : constder()); // expected-error {{incompatible operand types ('struct Base' and 'struct Derived const')}}
+  (void)(i1 ? constder() : Base()); // expected-error {{incompatible operand types ('struct Derived const' and 'struct Base')}}
 
   Priv priv;
   Fin fin;
   (void)(i1 ? Base() : Priv()); // expected-error{{private base class}}
   (void)(i1 ? Priv() : Base()); // expected-error{{private base class}}
-  (void)(i1 ? Base() : Fin()); // expected-error{{ambiguous conversion from derived class 'Fin' to base class 'Base':}}
-  (void)(i1 ? Fin() : Base()); // expected-error{{ambiguous conversion from derived class 'Fin' to base class 'Base':}}
+  (void)(i1 ? Base() : Fin()); // expected-error{{ambiguous conversion from derived class 'struct Fin' to base class 'struct Base'}}
+  (void)(i1 ? Fin() : Base()); // expected-error{{ambiguous conversion from derived class 'struct Fin' to base class 'struct Base'}}
   (void)(i1 ? base : priv); // expected-error {{private base class}}
   (void)(i1 ? priv : base); // expected-error {{private base class}}
-  (void)(i1 ? base : fin); // expected-error {{ambiguous conversion from derived class 'Fin' to base class 'Base':}}
-  (void)(i1 ? fin : base); // expected-error {{ambiguous conversion from derived class 'Fin' to base class 'Base':}}
+  (void)(i1 ? base : fin); // expected-error {{ambiguous conversion from derived class 'struct Fin' to base class 'struct Base'}}
+  (void)(i1 ? fin : base); // expected-error {{ambiguous conversion from derived class 'struct Fin' to base class 'struct Base'}}
 
   // b2.2 (non-hierarchy)
   i1 = i1 ? I() : i1;
@@ -128,10 +128,10 @@ void test()
   // "the type [it] woud have if E2 were converted to an rvalue"
   vfn pfn = i1 ? F() : test;
   pfn = i1 ? test : F();
-  (void)(i1 ? A() : B()); // expected-error {{conversion from 'B' to 'A' is ambiguous}}
-  (void)(i1 ? B() : A()); // expected-error {{conversion from 'B' to 'A' is ambiguous}}
-  (void)(i1 ? 1 : Ambig()); // expected-error {{conversion from 'Ambig' to 'int' is ambiguous}}
-  (void)(i1 ? Ambig() : 1); // expected-error {{conversion from 'Ambig' to 'int' is ambiguous}}
+  (void)(i1 ? A() : B()); // expected-error {{conversion from 'struct B' to 'struct A' is ambiguous}}
+  (void)(i1 ? B() : A()); // expected-error {{conversion from 'struct B' to 'struct A' is ambiguous}}
+  (void)(i1 ? 1 : Ambig()); // expected-error {{conversion from 'struct Ambig' to 'int' is ambiguous}}
+  (void)(i1 ? Ambig() : 1); // expected-error {{conversion from 'struct Ambig' to 'int' is ambiguous}}
   // By the way, this isn't an lvalue:
   &(i1 ? i1 : i2); // expected-error {{address expression must be an lvalue or a function designator}}
 
@@ -154,8 +154,8 @@ void test()
   i1 = i1 ? i1 : ir1;
   int *pi1 = i1 ? &i1 : 0;
   pi1 = i1 ? 0 : &i1;
-  i1 = i1 ? i1 : EVal;
-  i1 = i1 ? EVal : i1;
+  i1 = i1 ? i1 : EVal; // expected-warning {{operands of ? are integers of different signs}} ??
+  i1 = i1 ? EVal : i1; // expected-warning {{operands of ? are integers of different signs}} ??
   d1 = i1 ? 'c' : 4.0;
   d1 = i1 ? 4.0 : 'c';
   Base *pb = i1 ? (Base*)0 : (Derived*)0;
@@ -191,50 +191,9 @@ void test()
   test0 = test0 ? (short) 10 : test0;
 
   test0 = test0 ? EVal : test0;
-  test0 = test0 ? EVal : (int) test0;
+  test0 = test0 ? EVal : (int) test0; // expected-warning {{operands of ? are integers of different signs}}
 
   // Note the thing that this does not test: since DR446, various situations
   // *must* create a separate temporary copy of class objects. This can only
   // be properly tested at runtime, though.
-}
-
-namespace PR6595 {
-  struct String {
-    String(const char *);
-    operator const char*() const;
-  };
-
-  void f(bool Cond, String S) {
-    (void)(Cond? S : "");
-    (void)(Cond? "" : S);
-    const char a[1] = {'a'};
-    (void)(Cond? S : a);
-    (void)(Cond? a : S);
-  }
-}
-
-namespace PR6757 {
-  struct Foo1 {
-    Foo1();
-    Foo1(const Foo1&);
-  };
-
-  struct Foo2 { };
-
-  struct Foo3 {
-    Foo3();
-    Foo3(Foo3&); // expected-note{{would lose const qualifier}}
-  };
-
-  struct Bar {
-    operator const Foo1&() const;
-    operator const Foo2&() const;
-    operator const Foo3&() const;
-  };
-
-  void f() {
-    (void)(true ? Bar() : Foo1()); // okay
-    (void)(true ? Bar() : Foo2()); // okay
-    (void)(true ? Bar() : Foo3()); // expected-error{{no viable constructor copying temporary}}
-  }
 }

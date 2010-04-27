@@ -11,6 +11,3 @@
    return IP;
 }
 @end
-
-// rdar: // 7823675
-int f0(I *a) { return a->IP; } // expected-error {{instance variable 'IP' is protected}}

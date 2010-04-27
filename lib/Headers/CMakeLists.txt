@@ -1,5 +1,4 @@
 set(files
-  altivec.h
   emmintrin.h	
   float.h		
   iso646.h	

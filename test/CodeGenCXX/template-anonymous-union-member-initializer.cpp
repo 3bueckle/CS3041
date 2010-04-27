@@ -4,7 +4,6 @@ class A
 {
     union { void *d; };
 
-public:
     A() : d(0) { }
 };
 

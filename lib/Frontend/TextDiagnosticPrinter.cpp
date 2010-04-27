@@ -119,19 +119,19 @@ void TextDiagnosticPrinter::HighlightRange(const SourceRange &R,
   }
 
   assert(StartColNo <= EndColNo && "Invalid range!");
-
+  
   // Pick the first non-whitespace column.
   while (StartColNo < SourceLine.size() &&
          (SourceLine[StartColNo] == ' ' || SourceLine[StartColNo] == '\t'))
     ++StartColNo;
-
+  
   // Pick the last non-whitespace column.
   if (EndColNo > SourceLine.size())
     EndColNo = SourceLine.size();
   while (EndColNo-1 &&
          (SourceLine[EndColNo-1] == ' ' || SourceLine[EndColNo-1] == '\t'))
     --EndColNo;
-
+  
   // If the start/end passed each other, then we are trying to highlight a range
   // that just exists in whitespace, which must be some sort of other bug.
   assert(StartColNo <= EndColNo && "Trying to highlight whitespace??");
@@ -148,16 +148,9 @@ static void SelectInterestingSourceRegion(std::string &SourceLine,
                                           std::string &FixItInsertionLine,
                                           unsigned EndOfCaretToken,
                                           unsigned Columns) {
-  unsigned MaxSize = std::max(SourceLine.size(),
-                              std::max(CaretLine.size(), 
-                                       FixItInsertionLine.size()));
-  if (MaxSize > SourceLine.size())
-    SourceLine.resize(MaxSize, ' ');
-  if (MaxSize > CaretLine.size())
-    CaretLine.resize(MaxSize, ' ');
-  if (!FixItInsertionLine.empty() && MaxSize > FixItInsertionLine.size())
-    FixItInsertionLine.resize(MaxSize, ' ');
-    
+  if (CaretLine.size() > SourceLine.size())
+    SourceLine.resize(CaretLine.size(), ' ');
+
   // Find the slice that we need to display the full caret line
   // correctly.
   unsigned CaretStart = 0, CaretEnd = CaretLine.size();
@@ -282,8 +275,8 @@ static void SelectInterestingSourceRegion(std::string &SourceLine,
 void TextDiagnosticPrinter::EmitCaretDiagnostic(SourceLocation Loc,
                                                 SourceRange *Ranges,
                                                 unsigned NumRanges,
-                                                const SourceManager &SM,
-                                                const FixItHint *Hints,
+                                                SourceManager &SM,
+                                          const CodeModificationHint *Hints,
                                                 unsigned NumHints,
                                                 unsigned Columns) {
   assert(LangOpts && "Unexpected diagnostic outside source file processing");
@@ -307,10 +300,10 @@ void TextDiagnosticPrinter::EmitCaretDiagnostic(SourceLocation Loc,
       if (E.isMacroID()) E = SM.getImmediateSpellingLoc(E);
       Ranges[i] = SourceRange(S, E);
     }
-
+    
     // Get the pretty name, according to #line directives etc.
     PresumedLoc PLoc = SM.getPresumedLoc(Loc);
-
+    
     // If this diagnostic is not in the main file, print out the "included from"
     // lines.
     if (LastWarningLoc != PLoc.getIncludeLoc()) {
@@ -337,10 +330,8 @@ void TextDiagnosticPrinter::EmitCaretDiagnostic(SourceLocation Loc,
   unsigned FileOffset = LocInfo.second;
 
   // Get information about the buffer it points into.
-  bool Invalid = false;
-  const char *BufStart = SM.getBufferData(FID, &Invalid).data();
-  if (Invalid)
-    return;
+  std::pair<const char*, const char*> BufferInfo = SM.getBufferData(FID);
+  const char *BufStart = BufferInfo.first;
 
   unsigned ColNo = SM.getColumnNumber(FID, FileOffset);
   unsigned CaretEndColNo
@@ -416,7 +407,7 @@ void TextDiagnosticPrinter::EmitCaretDiagnostic(SourceLocation Loc,
 
   std::string FixItInsertionLine;
   if (NumHints && DiagOpts->ShowFixits) {
-    for (const FixItHint *Hint = Hints, *LastHint = Hints + NumHints;
+    for (const CodeModificationHint *Hint = Hints, *LastHint = Hints + NumHints;
          Hint != LastHint; ++Hint) {
       if (Hint->InsertionLoc.isValid()) {
         // We have an insertion hint. Determine whether the inserted
@@ -572,7 +563,7 @@ static unsigned findEndOfWord(unsigned Start,
 
   // We have the start of a balanced punctuation sequence (quotes,
   // parentheses, etc.). Determine the full sequence is.
-  llvm::SmallString<16> PunctuationEndStack;
+  llvm::SmallVector<char, 16> PunctuationEndStack;
   PunctuationEndStack.push_back(EndPunct);
   while (End < Length && !PunctuationEndStack.empty()) {
     if (Str[End] == PunctuationEndStack.back())
@@ -713,7 +704,7 @@ void TextDiagnosticPrinter::HandleDiagnostic(Diagnostic::Level Level,
     if (DiagOpts->ShowLocation) {
       if (DiagOpts->ShowColors)
         OS.changeColor(savedColor, true);
-
+      
       // Emit a Visual Studio compatible line number syntax.
       if (LangOpts && LangOpts->Microsoft) {
         OS << PLoc.getFilename() << '(' << LineNo << ')';
@@ -803,13 +794,8 @@ void TextDiagnosticPrinter::HandleDiagnostic(Diagnostic::Level Level,
       OutStr += " [-W";
       OutStr += Opt;
       OutStr += ']';
-    } else {
-      // If the diagnostic is an extension diagnostic and not enabled by default
-      // then it must have been turned on with -pedantic.
-      bool EnabledByDefault;
-      if (Diagnostic::isBuiltinExtensionDiag(Info.getID(), EnabledByDefault) &&
-          !EnabledByDefault)
-        OutStr += " [-pedantic]";
+    } else if (Diagnostic::isBuiltinExtensionDiag(Info.getID())) {
+      OutStr += " [-pedantic]";
     }
   }
 
@@ -845,7 +831,7 @@ void TextDiagnosticPrinter::HandleDiagnostic(Diagnostic::Level Level,
   if (DiagOpts->ShowCarets && Info.getLocation().isValid() &&
       ((LastLoc != Info.getLocation()) || Info.getNumRanges() ||
        (LastCaretDiagnosticWasNote && Level != Diagnostic::Note) ||
-       Info.getNumFixItHints())) {
+       Info.getNumCodeModificationHints())) {
     // Cache the LastLoc, it allows us to omit duplicate source/caret spewage.
     LastLoc = Info.getLocation();
     LastCaretDiagnosticWasNote = (Level == Diagnostic::Note);
@@ -857,9 +843,9 @@ void TextDiagnosticPrinter::HandleDiagnostic(Diagnostic::Level Level,
     for (unsigned i = 0; i != NumRanges; ++i)
       Ranges[i] = Info.getRange(i);
 
-    unsigned NumHints = Info.getNumFixItHints();
+    unsigned NumHints = Info.getNumCodeModificationHints();
     for (unsigned idx = 0; idx < NumHints; ++idx) {
-      const FixItHint &Hint = Info.getFixItHint(idx);
+      const CodeModificationHint &Hint = Info.getCodeModificationHint(idx);
       if (Hint.RemoveRange.isValid()) {
         assert(NumRanges < 20 && "Out of space");
         Ranges[NumRanges++] = Hint.RemoveRange;
@@ -867,8 +853,8 @@ void TextDiagnosticPrinter::HandleDiagnostic(Diagnostic::Level Level,
     }
 
     EmitCaretDiagnostic(LastLoc, Ranges, NumRanges, LastLoc.getManager(),
-                        Info.getFixItHints(),
-                        Info.getNumFixItHints(),
+                        Info.getCodeModificationHints(),
+                        Info.getNumCodeModificationHints(),
                         DiagOpts->MessageLength);
   }
 

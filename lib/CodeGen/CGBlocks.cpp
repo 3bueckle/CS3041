@@ -17,7 +17,6 @@
 #include "CodeGenModule.h"
 #include "clang/AST/DeclObjC.h"
 #include "llvm/Module.h"
-#include "llvm/ADT/SmallSet.h"
 #include "llvm/Target/TargetData.h"
 #include <algorithm>
 
@@ -193,7 +192,7 @@ llvm::Value *CodeGenFunction::BuildBlockLiteralTmp(const BlockExpr *BE) {
       CallArgList Args;
       CodeGenTypes &Types = CGM.getTypes();
       const CGFunctionInfo &FnInfo = Types.getFunctionInfo(ResultType, Args,
-                                                       FunctionType::ExtInfo());
+                                                       CC_Default, false);
       if (CGM.ReturnTypeUsesSret(FnInfo))
         flags |= BLOCK_USE_STRET;
     }
@@ -473,8 +472,8 @@ RValue CodeGenFunction::EmitBlockCallExpr(const CallExpr* E,
   QualType ResultType = FuncTy->getResultType();
 
   const CGFunctionInfo &FnInfo =
-    CGM.getTypes().getFunctionInfo(ResultType, Args,
-                                   FuncTy->getExtInfo());
+    CGM.getTypes().getFunctionInfo(ResultType, Args, FuncTy->getCallConv(),
+                                   FuncTy->getNoReturnAttr());
 
   // Cast the function pointer to the right type.
   const llvm::Type *BlockFTy =
@@ -679,7 +678,8 @@ CodeGenFunction::GenerateBlockFunction(const BlockExpr *BExpr,
 
   const FunctionType *BlockFunctionType = BExpr->getFunctionType();
   QualType ResultType;
-  FunctionType::ExtInfo EInfo = getFunctionExtInfo(*BlockFunctionType);
+  CallingConv CC = BlockFunctionType->getCallConv();
+  bool NoReturn = BlockFunctionType->getNoReturnAttr();
   bool IsVariadic;
   if (const FunctionProtoType *FTy =
       dyn_cast<FunctionProtoType>(BlockFunctionType)) {
@@ -718,7 +718,7 @@ CodeGenFunction::GenerateBlockFunction(const BlockExpr *BExpr,
     Args.push_back(std::make_pair(*i, (*i)->getType()));
 
   const CGFunctionInfo &FI =
-    CGM.getTypes().getFunctionInfo(ResultType, Args, EInfo);
+    CGM.getTypes().getFunctionInfo(ResultType, Args, CC, NoReturn);
 
   CodeGenTypes &Types = CGM.getTypes();
   const llvm::FunctionType *LTy = Types.GetFunctionType(FI, IsVariadic);
@@ -812,8 +812,7 @@ CharUnits BlockFunction::getBlockOffset(const BlockDeclRefExpr *BDRE) {
                                                          Pad.getQuantity()),
                                                        ArrayType::Normal, 0);
     ValueDecl *PadDecl = VarDecl::Create(getContext(), 0, SourceLocation(),
-                                         0, QualType(PadTy), 0,
-                                         VarDecl::None, VarDecl::None);
+                                         0, QualType(PadTy), 0, VarDecl::None);
     Expr *E;
     E = new (getContext()) DeclRefExpr(PadDecl, PadDecl->getType(),
                                        SourceLocation());
@@ -844,7 +843,7 @@ GenerateCopyHelperFunction(bool BlockHasCopyDispose, const llvm::StructType *T,
   Args.push_back(std::make_pair(Src, Src->getType()));
 
   const CGFunctionInfo &FI =
-      CGM.getTypes().getFunctionInfo(R, Args, FunctionType::ExtInfo());
+    CGM.getTypes().getFunctionInfo(R, Args, CC_Default, false);
 
   // FIXME: We'd like to put these into a mergable by content, with
   // internal linkage.
@@ -861,9 +860,7 @@ GenerateCopyHelperFunction(bool BlockHasCopyDispose, const llvm::StructType *T,
   FunctionDecl *FD = FunctionDecl::Create(getContext(),
                                           getContext().getTranslationUnitDecl(),
                                           SourceLocation(), II, R, 0,
-                                          FunctionDecl::Static,
-                                          FunctionDecl::None,
-                                          false,
+                                          FunctionDecl::Static, false,
                                           true);
   CGF.StartFunction(FD, R, Fn, Args, SourceLocation());
 
@@ -927,7 +924,7 @@ GenerateDestroyHelperFunction(bool BlockHasCopyDispose,
   Args.push_back(std::make_pair(Src, Src->getType()));
 
   const CGFunctionInfo &FI =
-      CGM.getTypes().getFunctionInfo(R, Args, FunctionType::ExtInfo());
+    CGM.getTypes().getFunctionInfo(R, Args, CC_Default, false);
 
   // FIXME: We'd like to put these into a mergable by content, with
   // internal linkage.
@@ -944,9 +941,8 @@ GenerateDestroyHelperFunction(bool BlockHasCopyDispose,
   FunctionDecl *FD = FunctionDecl::Create(getContext(),
                                           getContext().getTranslationUnitDecl(),
                                           SourceLocation(), II, R, 0,
-                                          FunctionDecl::Static,
-                                          FunctionDecl::None,
-                                          false, true);
+                                          FunctionDecl::Static, false,
+                                          true);
   CGF.StartFunction(FD, R, Fn, Args, SourceLocation());
 
   if (NoteForHelperp) {
@@ -1012,7 +1008,7 @@ GeneratebyrefCopyHelperFunction(const llvm::Type *T, int flag) {
   Args.push_back(std::make_pair(Src, Src->getType()));
 
   const CGFunctionInfo &FI =
-      CGM.getTypes().getFunctionInfo(R, Args, FunctionType::ExtInfo());
+    CGM.getTypes().getFunctionInfo(R, Args, CC_Default, false);
 
   CodeGenTypes &Types = CGM.getTypes();
   const llvm::FunctionType *LTy = Types.GetFunctionType(FI, false);
@@ -1029,9 +1025,8 @@ GeneratebyrefCopyHelperFunction(const llvm::Type *T, int flag) {
   FunctionDecl *FD = FunctionDecl::Create(getContext(),
                                           getContext().getTranslationUnitDecl(),
                                           SourceLocation(), II, R, 0,
-                                          FunctionDecl::Static,
-                                          FunctionDecl::None,
-                                          false, true);
+                                          FunctionDecl::Static, false,
+                                          true);
   CGF.StartFunction(FD, R, Fn, Args, SourceLocation());
 
   // dst->x
@@ -1076,7 +1071,7 @@ BlockFunction::GeneratebyrefDestroyHelperFunction(const llvm::Type *T,
   Args.push_back(std::make_pair(Src, Src->getType()));
 
   const CGFunctionInfo &FI =
-      CGM.getTypes().getFunctionInfo(R, Args, FunctionType::ExtInfo());
+    CGM.getTypes().getFunctionInfo(R, Args, CC_Default, false);
 
   CodeGenTypes &Types = CGM.getTypes();
   const llvm::FunctionType *LTy = Types.GetFunctionType(FI, false);
@@ -1094,9 +1089,8 @@ BlockFunction::GeneratebyrefDestroyHelperFunction(const llvm::Type *T,
   FunctionDecl *FD = FunctionDecl::Create(getContext(),
                                           getContext().getTranslationUnitDecl(),
                                           SourceLocation(), II, R, 0,
-                                          FunctionDecl::Static,
-                                          FunctionDecl::None,
-                                          false, true);
+                                          FunctionDecl::Static, false,
+                                          true);
   CGF.StartFunction(FD, R, Fn, Args, SourceLocation());
 
   llvm::Value *V = CGF.GetAddrOfLocalVar(Src);

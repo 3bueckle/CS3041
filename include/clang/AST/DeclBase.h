@@ -41,8 +41,6 @@ class LinkageSpecDecl;
 class BlockDecl;
 class DeclarationName;
 class CompoundStmt;
-class StoredDeclsMap;
-class DependentDiagnostic;
 }
 
 namespace llvm {
@@ -76,68 +74,26 @@ public:
 #include "clang/AST/DeclNodes.def"
   };
 
-  /// IdentifierNamespace - The different namespaces in which
-  /// declarations may appear.  According to C99 6.2.3, there are
-  /// four namespaces, labels, tags, members and ordinary
-  /// identifiers.  C++ describes lookup completely differently:
-  /// certain lookups merely "ignore" certain kinds of declarations,
-  /// usually based on whether the declaration is of a type, etc.
-  /// 
-  /// These are meant as bitmasks, so that searches in
-  /// C++ can look into the "tag" namespace during ordinary lookup.
-  ///
-  /// Decl currently provides 16 bits of IDNS bits.
+  /// IdentifierNamespace - According to C99 6.2.3, there are four
+  /// namespaces, labels, tags, members and ordinary
+  /// identifiers. These are meant as bitmasks, so that searches in
+  /// C++ can look into the "tag" namespace during ordinary lookup. We
+  /// use additional namespaces for Objective-C entities.  We also put
+  /// C++ friend declarations (of previously-undeclared entities) in
+  /// shadow namespaces, and 'using' declarations (as opposed to their
+  /// implicit shadow declarations) can be found in their own
+  /// namespace.
   enum IdentifierNamespace {
-    /// Labels, declared with 'x:' and referenced with 'goto x'.
-    IDNS_Label               = 0x0001,
-
-    /// Tags, declared with 'struct foo;' and referenced with
-    /// 'struct foo'.  All tags are also types.  This is what
-    /// elaborated-type-specifiers look for in C.
-    IDNS_Tag                 = 0x0002,
-
-    /// Types, declared with 'struct foo', typedefs, etc.
-    /// This is what elaborated-type-specifiers look for in C++,
-    /// but note that it's ill-formed to find a non-tag.
-    IDNS_Type                = 0x0004,
-
-    /// Members, declared with object declarations within tag
-    /// definitions.  In C, these can only be found by "qualified"
-    /// lookup in member expressions.  In C++, they're found by
-    /// normal lookup.
-    IDNS_Member              = 0x0008,
-
-    /// Namespaces, declared with 'namespace foo {}'.
-    /// Lookup for nested-name-specifiers find these.
-    IDNS_Namespace           = 0x0010,
-
-    /// Ordinary names.  In C, everything that's not a label, tag,
-    /// or member ends up here.
-    IDNS_Ordinary            = 0x0020,
-
-    /// Objective C @protocol.
-    IDNS_ObjCProtocol        = 0x0040,
-
-    /// This declaration is a friend function.  A friend function
-    /// declaration is always in this namespace but may also be in
-    /// IDNS_Ordinary if it was previously declared.
-    IDNS_OrdinaryFriend      = 0x0080,
-
-    /// This declaration is a friend class.  A friend class
-    /// declaration is always in this namespace but may also be in
-    /// IDNS_Tag|IDNS_Type if it was previously declared.
-    IDNS_TagFriend           = 0x0100,
-
-    /// This declaration is a using declaration.  A using declaration
-    /// *introduces* a number of other declarations into the current
-    /// scope, and those declarations use the IDNS of their targets,
-    /// but the actual using declarations go in this namespace.
-    IDNS_Using               = 0x0200,
-
-    /// This declaration is a C++ operator declared in a non-class
-    /// context.  All such operators are also in IDNS_Ordinary.
-    /// C++ lexical operator lookup looks for these.
-    IDNS_NonMemberOperator   = 0x0400
+    IDNS_Label = 0x1,
+    IDNS_Tag = 0x2,
+    IDNS_Member = 0x4,
+    IDNS_Ordinary = 0x8,
+    IDNS_ObjCProtocol = 0x10,
+    IDNS_ObjCImplementation = 0x20,
+    IDNS_ObjCCategoryName = 0x40,
+    IDNS_OrdinaryFriend = 0x80,
+    IDNS_TagFriend = 0x100,
+    IDNS_Using = 0x200
   };
 
   /// ObjCDeclQualifier - Qualifier used on types in method declarations
@@ -355,13 +311,6 @@ public:
   }
   static unsigned getIdentifierNamespaceForKind(Kind DK);
 
-  bool hasTagIdentifierNamespace() const {
-    return isTagIdentifierNamespace(getIdentifierNamespace());
-  }
-  static bool isTagIdentifierNamespace(unsigned NS) {
-    // TagDecls have Tag and Type set and may also have TagFriend.
-    return (NS & ~IDNS_TagFriend) == (IDNS_Tag | IDNS_Type);
-  }
 
   /// getLexicalDeclContext - The declaration context where this Decl was
   /// lexically declared (LexicalDC). May be different from
@@ -501,23 +450,15 @@ public:
   /// same entity may not (and probably don't) share this property.
   void setObjectOfFriendDecl(bool PreviouslyDeclared) {
     unsigned OldNS = IdentifierNamespace;
-    assert((OldNS & (IDNS_Tag | IDNS_Ordinary |
-                     IDNS_TagFriend | IDNS_OrdinaryFriend)) &&
-           "namespace includes neither ordinary nor tag");
-    assert(!(OldNS & ~(IDNS_Tag | IDNS_Ordinary | IDNS_Type |
-                       IDNS_TagFriend | IDNS_OrdinaryFriend)) &&
-           "namespace includes other than ordinary or tag");
+    assert((OldNS == IDNS_Tag || OldNS == IDNS_Ordinary ||
+            OldNS == (IDNS_Tag | IDNS_Ordinary))
+           && "unsupported namespace for undeclared friend");
+    if (!PreviouslyDeclared) IdentifierNamespace = 0;
 
-    IdentifierNamespace = 0;
-    if (OldNS & (IDNS_Tag | IDNS_TagFriend)) {
+    if (OldNS == IDNS_Tag)
       IdentifierNamespace |= IDNS_TagFriend;
-      if (PreviouslyDeclared) IdentifierNamespace |= IDNS_Tag | IDNS_Type;
-    }
-
-    if (OldNS & (IDNS_Ordinary | IDNS_OrdinaryFriend)) {
+    else
       IdentifierNamespace |= IDNS_OrdinaryFriend;
-      if (PreviouslyDeclared) IdentifierNamespace |= IDNS_Ordinary;
-    }
   }
 
   enum FriendObjectKind {
@@ -536,14 +477,6 @@ public:
     if (!mask) return FOK_None;
     return (IdentifierNamespace & (IDNS_Tag | IDNS_Ordinary) ? 
               FOK_Declared : FOK_Undeclared);
-  }
-
-  /// Specifies that this declaration is a C++ overloaded non-member.
-  void setNonMemberOperator() {
-    assert(getKind() == Function || getKind() == FunctionTemplate);
-    assert((IdentifierNamespace & IDNS_Ordinary) &&
-           "visible non-member operators should be in ordinary namespace");
-    IdentifierNamespace |= IDNS_NonMemberOperator;
   }
 
   // Implement isa/cast/dyncast/etc.
@@ -612,9 +545,9 @@ class DeclContext {
   mutable bool ExternalVisibleStorage : 1;
 
   /// \brief Pointer to the data structure used to lookup declarations
-  /// within this context (or a DependentStoredDeclsMap if this is a
-  /// dependent context).
-  mutable StoredDeclsMap *LookupPtr;
+  /// within this context, which is a DenseMap<DeclarationName,
+  /// StoredDeclsList>.
+  mutable void* LookupPtr;
 
   /// FirstDecl - The first declaration stored within this declaration
   /// context.
@@ -727,7 +660,7 @@ public:
   /// \brief Determine whether this declaration context is equivalent
   /// to the declaration context DC.
   bool Equals(DeclContext *DC) {
-    return DC && this->getPrimaryContext() == DC->getPrimaryContext();
+    return this->getPrimaryContext() == DC->getPrimaryContext();
   }
 
   /// \brief Determine whether this declaration context encloses the
@@ -741,9 +674,6 @@ public:
   /// "primary" DeclContext structure, which will contain the
   /// information needed to perform name lookup into this context.
   DeclContext *getPrimaryContext();
-  const DeclContext *getPrimaryContext() const {
-    return const_cast<DeclContext*>(this)->getPrimaryContext();
-  }
 
   /// getLookupContext - Retrieve the innermost non-transparent
   /// context of this context, which corresponds to the innermost
@@ -1046,15 +976,10 @@ public:
     return getUsingDirectives().second;
   }
 
-  // These are all defined in DependentDiagnostic.h.
-  class ddiag_iterator;
-  inline ddiag_iterator ddiag_begin() const;
-  inline ddiag_iterator ddiag_end() const;
-
   // Low-level accessors
 
   /// \brief Retrieve the internal representation of the lookup structure.
-  StoredDeclsMap* getLookupPtr() const { return LookupPtr; }
+  void* getLookupPtr() const { return LookupPtr; }
 
   /// \brief Whether this DeclContext has external storage containing
   /// additional declarations that are lexically in this context.
@@ -1087,9 +1012,6 @@ public:
 private:
   void LoadLexicalDeclsFromExternalStorage() const;
   void LoadVisibleDeclsFromExternalStorage() const;
-
-  friend class DependentDiagnostic;
-  StoredDeclsMap *CreateStoredDeclsMap(ASTContext &C) const;
 
   void buildLookup(DeclContext *DCtx);
   void makeDeclVisibleInContextImpl(NamedDecl *D);

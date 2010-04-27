@@ -14,7 +14,6 @@
 #include "CIndexer.h"
 #include "CXSourceLocation.h"
 
-#include "clang/Frontend/ASTUnit.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/Twine.h"
@@ -33,15 +32,15 @@ extern "C" {
 
 unsigned clang_getNumDiagnostics(CXTranslationUnit Unit) {
   ASTUnit *CXXUnit = static_cast<ASTUnit *>(Unit);
-  return CXXUnit? CXXUnit->stored_diag_size() : 0;
+  return CXXUnit? CXXUnit->diag_size() : 0;
 }
 
 CXDiagnostic clang_getDiagnostic(CXTranslationUnit Unit, unsigned Index) {
   ASTUnit *CXXUnit = static_cast<ASTUnit *>(Unit);
-  if (!CXXUnit || Index >= CXXUnit->stored_diag_size())
+  if (!CXXUnit || Index >= CXXUnit->diag_size())
     return 0;
 
-  return new CXStoredDiagnostic(CXXUnit->stored_diag_begin()[Index],
+  return new CXStoredDiagnostic(CXXUnit->diag_begin()[Index],
                                 CXXUnit->getASTContext().getLangOptions());
 }
 
@@ -202,7 +201,7 @@ CXString clang_getDiagnosticFixIt(CXDiagnostic Diagnostic, unsigned FixIt,
     return createCXString("");
   }
 
-  const FixItHint &Hint = StoredDiag->Diag.fixit_begin()[FixIt];
+  const CodeModificationHint &Hint = StoredDiag->Diag.fixit_begin()[FixIt];
   if (ReplacementRange) {
     if (Hint.RemoveRange.isInvalid())  {
       // Create an empty range that refers to a single source
@@ -266,7 +265,6 @@ void clang::LoadSerializedDiagnostics(const llvm::sys::Path &DiagnosticsPath,
     }
     
     SourceMgr.overrideFileContents(File, Buffer);
-    SourceMgr.createFileID(File, SourceLocation(), SrcMgr::C_User);
   }
 
   // Parse the diagnostics, emitting them one by one until we've

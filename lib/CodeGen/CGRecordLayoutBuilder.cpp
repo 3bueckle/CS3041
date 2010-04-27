@@ -1,4 +1,4 @@
-//===--- CGRecordLayoutBuilder.cpp - CGRecordLayout builder  ----*- C++ -*-===//
+//===--- CGRecordLayoutBuilder.cpp - Record builder helper ------*- C++ -*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -7,11 +7,12 @@
 //
 //===----------------------------------------------------------------------===//
 //
-// Builder implementation for CGRecordLayout objects.
+// This is a helper class used to build CGRecordLayout objects and LLVM types.
 //
 //===----------------------------------------------------------------------===//
 
-#include "CGRecordLayout.h"
+#include "CGRecordLayoutBuilder.h"
+
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/DeclCXX.h"
@@ -19,110 +20,11 @@
 #include "clang/AST/RecordLayout.h"
 #include "CodeGenTypes.h"
 #include "llvm/DerivedTypes.h"
-#include "llvm/Type.h"
-#include "llvm/Support/Debug.h"
-#include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetData.h"
+
+
 using namespace clang;
 using namespace CodeGen;
-
-namespace clang {
-namespace CodeGen {
-
-class CGRecordLayoutBuilder {
-public:
-  /// FieldTypes - Holds the LLVM types that the struct is created from.
-  std::vector<const llvm::Type *> FieldTypes;
-
-  /// LLVMFieldInfo - Holds a field and its corresponding LLVM field number.
-  typedef std::pair<const FieldDecl *, unsigned> LLVMFieldInfo;
-  llvm::SmallVector<LLVMFieldInfo, 16> LLVMFields;
-
-  /// LLVMBitFieldInfo - Holds location and size information about a bit field.
-  typedef std::pair<const FieldDecl *, CGBitFieldInfo> LLVMBitFieldInfo;
-  llvm::SmallVector<LLVMBitFieldInfo, 16> LLVMBitFields;
-
-  /// ContainsPointerToDataMember - Whether one of the fields in this record
-  /// layout is a pointer to data member, or a struct that contains pointer to
-  /// data member.
-  bool ContainsPointerToDataMember;
-
-  /// Packed - Whether the resulting LLVM struct will be packed or not.
-  bool Packed;
-
-private:
-  CodeGenTypes &Types;
-
-  /// Alignment - Contains the alignment of the RecordDecl.
-  //
-  // FIXME: This is not needed and should be removed.
-  unsigned Alignment;
-
-  /// AlignmentAsLLVMStruct - Will contain the maximum alignment of all the
-  /// LLVM types.
-  unsigned AlignmentAsLLVMStruct;
-
-  /// BitsAvailableInLastField - If a bit field spans only part of a LLVM field,
-  /// this will have the number of bits still available in the field.
-  char BitsAvailableInLastField;
-
-  /// NextFieldOffsetInBytes - Holds the next field offset in bytes.
-  uint64_t NextFieldOffsetInBytes;
-
-  /// LayoutUnionField - Will layout a field in an union and return the type
-  /// that the field will have.
-  const llvm::Type *LayoutUnionField(const FieldDecl *Field,
-                                     const ASTRecordLayout &Layout);
-  
-  /// LayoutUnion - Will layout a union RecordDecl.
-  void LayoutUnion(const RecordDecl *D);
-
-  /// LayoutField - try to layout all fields in the record decl.
-  /// Returns false if the operation failed because the struct is not packed.
-  bool LayoutFields(const RecordDecl *D);
-
-  /// LayoutBases - layout the bases and vtable pointer of a record decl.
-  void LayoutBases(const CXXRecordDecl *RD, const ASTRecordLayout &Layout);
-
-  /// LayoutField - layout a single field. Returns false if the operation failed
-  /// because the current struct is not packed.
-  bool LayoutField(const FieldDecl *D, uint64_t FieldOffset);
-
-  /// LayoutBitField - layout a single bit field.
-  void LayoutBitField(const FieldDecl *D, uint64_t FieldOffset);
-
-  /// AppendField - Appends a field with the given offset and type.
-  void AppendField(uint64_t FieldOffsetInBytes, const llvm::Type *FieldTy);
-
-  /// AppendPadding - Appends enough padding bytes so that the total
-  /// struct size is a multiple of the field alignment.
-  void AppendPadding(uint64_t FieldOffsetInBytes, unsigned FieldAlignment);
-
-  /// AppendBytes - Append a given number of bytes to the record.
-  void AppendBytes(uint64_t NumBytes);
-
-  /// AppendTailPadding - Append enough tail padding so that the type will have
-  /// the passed size.
-  void AppendTailPadding(uint64_t RecordSize);
-
-  unsigned getTypeAlignment(const llvm::Type *Ty) const;
-
-  /// CheckForPointerToDataMember - Check if the given type contains a pointer
-  /// to data member.
-  void CheckForPointerToDataMember(QualType T);
-
-public:
-  CGRecordLayoutBuilder(CodeGenTypes &Types)
-    : ContainsPointerToDataMember(false), Packed(false), Types(Types),
-      Alignment(0), AlignmentAsLLVMStruct(1),
-      BitsAvailableInLastField(0), NextFieldOffsetInBytes(0) { }
-
-  /// Layout - Will layout a RecordDecl.
-  void Layout(const RecordDecl *D);
-};
-
-}
-}
 
 void CGRecordLayoutBuilder::Layout(const RecordDecl *D) {
   Alignment = Types.getContext().getASTRecordLayout(D).getAlignment() / 8;
@@ -145,104 +47,6 @@ void CGRecordLayoutBuilder::Layout(const RecordDecl *D) {
   LLVMBitFields.clear();
 
   LayoutFields(D);
-}
-
-static CGBitFieldInfo ComputeBitFieldInfo(CodeGenTypes &Types,
-                                          const FieldDecl *FD,
-                                          uint64_t FieldOffset,
-                                          uint64_t FieldSize) {
-  const RecordDecl *RD = FD->getParent();
-  const ASTRecordLayout &RL = Types.getContext().getASTRecordLayout(RD);
-  uint64_t ContainingTypeSizeInBits = RL.getSize();
-  unsigned ContainingTypeAlign = RL.getAlignment();
-
-  const llvm::Type *Ty = Types.ConvertTypeForMemRecursive(FD->getType());
-  uint64_t TypeSizeInBytes = Types.getTargetData().getTypeAllocSize(Ty);
-  uint64_t TypeSizeInBits = TypeSizeInBytes * 8;
-
-  bool IsSigned = FD->getType()->isSignedIntegerType();
-
-  if (FieldSize > TypeSizeInBits) {
-    // We have a wide bit-field. The extra bits are only used for padding, so
-    // if we have a bitfield of type T, with size N:
-    //
-    // T t : N;
-    //
-    // We can just assume that it's:
-    //
-    // T t : sizeof(T);
-    //
-    FieldSize = TypeSizeInBits;
-  }
-
-  // Compute the access components. The policy we use is to start by attempting
-  // to access using the width of the bit-field type itself and to always access
-  // at aligned indices of that type. If such an access would fail because it
-  // extends past the bound of the type, then we reduce size to the next smaller
-  // power of two and retry. The current algorithm assumes pow2 sized types,
-  // although this is easy to fix.
-  //
-  // FIXME: This algorithm is wrong on big-endian systems, I think.
-  assert(llvm::isPowerOf2_32(TypeSizeInBits) && "Unexpected type size!");
-  CGBitFieldInfo::AccessInfo Components[3];
-  unsigned NumComponents = 0;
-  unsigned AccessedTargetBits = 0;       // The tumber of target bits accessed.
-  unsigned AccessWidth = TypeSizeInBits; // The current access width to attempt.
-
-  // Round down from the field offset to find the first access position that is
-  // at an aligned offset of the initial access type.
-  uint64_t AccessStart = FieldOffset - (FieldOffset % AccessWidth);
-
-  // Adjust initial access size to fit within record.
-  while (AccessWidth > 8 &&
-         AccessStart + AccessWidth > ContainingTypeSizeInBits) {
-    AccessWidth >>= 1;
-    AccessStart = FieldOffset - (FieldOffset % AccessWidth);
-  }
-
-  while (AccessedTargetBits < FieldSize) {
-    // Check that we can access using a type of this size, without reading off
-    // the end of the structure. This can occur with packed structures and
-    // -fno-bitfield-type-align, for example.
-    if (AccessStart + AccessWidth > ContainingTypeSizeInBits) {
-      // If so, reduce access size to the next smaller power-of-two and retry.
-      AccessWidth >>= 1;
-      assert(AccessWidth >= 8 && "Cannot access under byte size!");
-      continue;
-    }
-
-    // Otherwise, add an access component.
-
-    // First, compute the bits inside this access which are part of the
-    // target. We are reading bits [AccessStart, AccessStart + AccessWidth); the
-    // intersection with [FieldOffset, FieldOffset + FieldSize) gives the bits
-    // in the target that we are reading.
-    assert(FieldOffset < AccessStart + AccessWidth && "Invalid access start!");
-    assert(AccessStart < FieldOffset + FieldSize && "Invalid access start!");
-    uint64_t AccessBitsInFieldStart = std::max(AccessStart, FieldOffset);
-    uint64_t AccessBitsInFieldSize =
-      std::min(AccessWidth + AccessStart,
-               FieldOffset + FieldSize) - AccessBitsInFieldStart;
-
-    assert(NumComponents < 3 && "Unexpected number of components!");
-    CGBitFieldInfo::AccessInfo &AI = Components[NumComponents++];
-    AI.FieldIndex = 0;
-    // FIXME: We still follow the old access pattern of only using the field
-    // byte offset. We should switch this once we fix the struct layout to be
-    // pretty.
-    AI.FieldByteOffset = AccessStart / 8;
-    AI.FieldBitStart = AccessBitsInFieldStart - AccessStart;
-    AI.AccessWidth = AccessWidth;
-    AI.AccessAlignment = llvm::MinAlign(ContainingTypeAlign, AccessStart) / 8;
-    AI.TargetBitOffset = AccessedTargetBits;
-    AI.TargetBitWidth = AccessBitsInFieldSize;
-
-    AccessStart += AccessWidth;
-    AccessedTargetBits += AI.TargetBitWidth;
-  }
-
-  assert(AccessedTargetBits == FieldSize && "Invalid bit-field access!");
-  return CGBitFieldInfo(FieldSize, NumComponents, Components, IsSigned);
 }
 
 void CGRecordLayoutBuilder::LayoutBitField(const FieldDecl *D,
@@ -275,9 +79,12 @@ void CGRecordLayoutBuilder::LayoutBitField(const FieldDecl *D,
     assert(NumBytesToAppend && "No bytes to append!");
   }
 
-  // Add the bit field info.
-  LLVMBitFields.push_back(
-    LLVMBitFieldInfo(D, ComputeBitFieldInfo(Types, D, FieldOffset, FieldSize)));
+  const llvm::Type *Ty = Types.ConvertTypeForMemRecursive(D->getType());
+  uint64_t TypeSizeInBits = getTypeSizeInBytes(Ty) * 8;
+
+  LLVMBitFields.push_back(LLVMBitFieldInfo(D, FieldOffset / TypeSizeInBits,
+                                           FieldOffset % TypeSizeInBits,
+                                           FieldSize));
 
   AppendBytes(NumBytesToAppend);
 
@@ -303,7 +110,7 @@ bool CGRecordLayoutBuilder::LayoutField(const FieldDecl *D,
 
   // Check if we have a pointer to data member in this field.
   CheckForPointerToDataMember(D->getType());
-
+  
   assert(FieldOffset % 8 == 0 && "FieldOffset is not on a byte boundary!");
   uint64_t FieldOffsetInBytes = FieldOffset / 8;
 
@@ -349,35 +156,6 @@ bool CGRecordLayoutBuilder::LayoutField(const FieldDecl *D,
   return true;
 }
 
-const llvm::Type *
-CGRecordLayoutBuilder::LayoutUnionField(const FieldDecl *Field,
-                                        const ASTRecordLayout &Layout) {
-  if (Field->isBitField()) {
-    uint64_t FieldSize =
-      Field->getBitWidth()->EvaluateAsInt(Types.getContext()).getZExtValue();
-
-    // Ignore zero sized bit fields.
-    if (FieldSize == 0)
-      return 0;
-
-    const llvm::Type *FieldTy = llvm::Type::getInt8Ty(Types.getLLVMContext());
-    unsigned NumBytesToAppend =
-      llvm::RoundUpToAlignment(FieldSize, 8) / 8;
-
-    if (NumBytesToAppend > 1)
-      FieldTy = llvm::ArrayType::get(FieldTy, NumBytesToAppend);
-
-    // Add the bit field info.
-    LLVMBitFields.push_back(
-      LLVMBitFieldInfo(Field, ComputeBitFieldInfo(Types, Field, 0, FieldSize)));
-    return FieldTy;
-  }
-
-  // This is a regular union field.
-  LLVMFields.push_back(LLVMFieldInfo(Field, 0));
-  return Types.ConvertTypeForMemRecursive(Field->getType());
-}
-
 void CGRecordLayoutBuilder::LayoutUnion(const RecordDecl *D) {
   assert(D->isUnion() && "Can't call LayoutUnion on a non-union record!");
 
@@ -388,19 +166,30 @@ void CGRecordLayoutBuilder::LayoutUnion(const RecordDecl *D) {
   unsigned Align = 0;
 
   bool HasOnlyZeroSizedBitFields = true;
-
+  
   unsigned FieldNo = 0;
   for (RecordDecl::field_iterator Field = D->field_begin(),
        FieldEnd = D->field_end(); Field != FieldEnd; ++Field, ++FieldNo) {
     assert(Layout.getFieldOffset(FieldNo) == 0 &&
           "Union field offset did not start at the beginning of record!");
-    const llvm::Type *FieldTy = LayoutUnionField(*Field, Layout);
 
-    if (!FieldTy)
-      continue;
+    if (Field->isBitField()) {
+      uint64_t FieldSize =
+        Field->getBitWidth()->EvaluateAsInt(Types.getContext()).getZExtValue();
+
+      // Ignore zero sized bit fields.
+      if (FieldSize == 0)
+        continue;
+
+      // Add the bit field info.
+      Types.addBitFieldInfo(*Field, 0, 0, FieldSize);
+    } else
+      Types.addFieldInfo(*Field, 0);
 
     HasOnlyZeroSizedBitFields = false;
-
+    
+    const llvm::Type *FieldTy =
+      Types.ConvertTypeForMemRecursive(Field->getType());
     unsigned FieldAlign = Types.getTargetData().getABITypeAlignment(FieldTy);
     uint64_t FieldSize = Types.getTargetData().getTypeAllocSize(FieldTy);
 
@@ -429,7 +218,7 @@ void CGRecordLayoutBuilder::LayoutUnion(const RecordDecl *D) {
            "0-align record did not have all zero-sized bit-fields!");
     Align = 1;
   }
-
+  
   // Append tail padding.
   if (Layout.getSize() / 8 > Size)
     AppendPadding(Layout.getSize() / 8, Align);
@@ -439,11 +228,11 @@ void CGRecordLayoutBuilder::LayoutBases(const CXXRecordDecl *RD,
                                         const ASTRecordLayout &Layout) {
   // Check if we need to add a vtable pointer.
   if (RD->isDynamicClass() && !Layout.getPrimaryBase()) {
-    const llvm::Type *Int8PtrTy =
+    const llvm::Type *Int8PtrTy = 
       llvm::Type::getInt8PtrTy(Types.getLLVMContext());
-
+    
     assert(NextFieldOffsetInBytes == 0 &&
-           "VTable pointer must come first!");
+           "Vtable pointer must come first!");
     AppendField(NextFieldOffsetInBytes, Int8PtrTy->getPointerTo());
   }
 }
@@ -456,7 +245,7 @@ bool CGRecordLayoutBuilder::LayoutFields(const RecordDecl *D) {
 
   if (const CXXRecordDecl *RD = dyn_cast<CXXRecordDecl>(D))
     LayoutBases(RD, Layout);
-
+  
   unsigned FieldNo = 0;
 
   for (RecordDecl::field_iterator Field = D->field_begin(),
@@ -480,14 +269,14 @@ void CGRecordLayoutBuilder::AppendTailPadding(uint64_t RecordSize) {
   uint64_t RecordSizeInBytes = RecordSize / 8;
   assert(NextFieldOffsetInBytes <= RecordSizeInBytes && "Size mismatch!");
 
-  uint64_t AlignedNextFieldOffset =
+  uint64_t AlignedNextFieldOffset = 
     llvm::RoundUpToAlignment(NextFieldOffsetInBytes, AlignmentAsLLVMStruct);
 
   if (AlignedNextFieldOffset == RecordSizeInBytes) {
     // We don't need any padding.
     return;
   }
-
+  
   unsigned NumPadBytes = RecordSizeInBytes - NextFieldOffsetInBytes;
   AppendBytes(NumPadBytes);
 }
@@ -497,12 +286,18 @@ void CGRecordLayoutBuilder::AppendField(uint64_t FieldOffsetInBytes,
   AlignmentAsLLVMStruct = std::max(AlignmentAsLLVMStruct,
                                    getTypeAlignment(FieldTy));
 
-  uint64_t FieldSizeInBytes = Types.getTargetData().getTypeAllocSize(FieldTy);
+  uint64_t FieldSizeInBytes = getTypeSizeInBytes(FieldTy);
 
   FieldTypes.push_back(FieldTy);
 
   NextFieldOffsetInBytes = FieldOffsetInBytes + FieldSizeInBytes;
   BitsAvailableInLastField = 0;
+}
+
+void
+CGRecordLayoutBuilder::AppendPadding(uint64_t FieldOffsetInBytes,
+                                     const llvm::Type *FieldTy) {
+  AppendPadding(FieldOffsetInBytes, getTypeAlignment(FieldTy));
 }
 
 void CGRecordLayoutBuilder::AppendPadding(uint64_t FieldOffsetInBytes,
@@ -542,6 +337,10 @@ unsigned CGRecordLayoutBuilder::getTypeAlignment(const llvm::Type *Ty) const {
   return Types.getTargetData().getABITypeAlignment(Ty);
 }
 
+uint64_t CGRecordLayoutBuilder::getTypeSizeInBytes(const llvm::Type *Ty) const {
+  return Types.getTargetData().getTypeAllocSize(Ty);
+}
+
 void CGRecordLayoutBuilder::CheckForPointerToDataMember(QualType T) {
   // This record already contains a member pointer.
   if (ContainsPointerToDataMember)
@@ -560,153 +359,46 @@ void CGRecordLayoutBuilder::CheckForPointerToDataMember(QualType T) {
     }
   } else if (const RecordType *RT = T->getAs<RecordType>()) {
     const CXXRecordDecl *RD = cast<CXXRecordDecl>(RT->getDecl());
-
+    
     // FIXME: It would be better if there was a way to explicitly compute the
     // record layout instead of converting to a type.
     Types.ConvertTagDeclType(RD);
-
+    
     const CGRecordLayout &Layout = Types.getCGRecordLayout(RD);
-
+    
     if (Layout.containsPointerToDataMember())
       ContainsPointerToDataMember = true;
-  }
+  }    
 }
 
-CGRecordLayout *CodeGenTypes::ComputeRecordLayout(const RecordDecl *D) {
-  CGRecordLayoutBuilder Builder(*this);
+CGRecordLayout *
+CGRecordLayoutBuilder::ComputeLayout(CodeGenTypes &Types,
+                                     const RecordDecl *D) {
+  CGRecordLayoutBuilder Builder(Types);
 
   Builder.Layout(D);
 
-  const llvm::Type *Ty = llvm::StructType::get(getLLVMContext(),
+  const llvm::Type *Ty = llvm::StructType::get(Types.getLLVMContext(),
                                                Builder.FieldTypes,
                                                Builder.Packed);
-
-  CGRecordLayout *RL =
-    new CGRecordLayout(Ty, Builder.ContainsPointerToDataMember);
-
-  // Add all the field numbers.
-  for (unsigned i = 0, e = Builder.LLVMFields.size(); i != e; ++i)
-    RL->FieldInfo.insert(Builder.LLVMFields[i]);
-
-  // Add bitfield info.
-  for (unsigned i = 0, e = Builder.LLVMBitFields.size(); i != e; ++i)
-    RL->BitFields.insert(Builder.LLVMBitFields[i]);
-
-  // Dump the layout, if requested.
-  if (getContext().getLangOptions().DumpRecordLayouts) {
-    llvm::errs() << "\n*** Dumping IRgen Record Layout\n";
-    llvm::errs() << "Record: ";
-    D->dump();
-    llvm::errs() << "\nLayout: ";
-    RL->dump();
-  }
-
-#ifndef NDEBUG
-  // Verify that the computed LLVM struct size matches the AST layout size.
-  uint64_t TypeSizeInBits = getContext().getASTRecordLayout(D).getSize();
-  assert(TypeSizeInBits == getTargetData().getTypeAllocSizeInBits(Ty) &&
+  assert(Types.getContext().getASTRecordLayout(D).getSize() / 8 ==
+         Types.getTargetData().getTypeAllocSize(Ty) &&
          "Type size mismatch!");
 
-  // Verify that the LLVM and AST field offsets agree.
-  const llvm::StructType *ST =
-    dyn_cast<llvm::StructType>(RL->getLLVMType());
-  const llvm::StructLayout *SL = getTargetData().getStructLayout(ST);
+  // Add all the field numbers.
+  for (unsigned i = 0, e = Builder.LLVMFields.size(); i != e; ++i) {
+    const FieldDecl *FD = Builder.LLVMFields[i].first;
+    unsigned FieldNo = Builder.LLVMFields[i].second;
 
-  const ASTRecordLayout &AST_RL = getContext().getASTRecordLayout(D);
-  RecordDecl::field_iterator it = D->field_begin();
-  for (unsigned i = 0, e = AST_RL.getFieldCount(); i != e; ++i, ++it) {
-    const FieldDecl *FD = *it;
-
-    // For non-bit-fields, just check that the LLVM struct offset matches the
-    // AST offset.
-    if (!FD->isBitField()) {
-      unsigned FieldNo = RL->getLLVMFieldNo(FD);
-      assert(AST_RL.getFieldOffset(i) == SL->getElementOffsetInBits(FieldNo) &&
-             "Invalid field offset!");
-      continue;
-    }
-
-    // Ignore unnamed bit-fields.
-    if (!FD->getDeclName())
-      continue;
-
-    const CGBitFieldInfo &Info = RL->getBitFieldInfo(FD);
-    for (unsigned i = 0, e = Info.getNumComponents(); i != e; ++i) {
-      const CGBitFieldInfo::AccessInfo &AI = Info.getComponent(i);
-
-      // Verify that every component access is within the structure.
-      uint64_t FieldOffset = SL->getElementOffsetInBits(AI.FieldIndex);
-      uint64_t AccessBitOffset = FieldOffset + AI.FieldByteOffset * 8;
-      assert(AccessBitOffset + AI.AccessWidth <= TypeSizeInBits &&
-             "Invalid bit-field access (out of range)!");
-    }
-  }
-#endif
-
-  return RL;
-}
-
-void CGRecordLayout::print(llvm::raw_ostream &OS) const {
-  OS << "<CGRecordLayout\n";
-  OS << "  LLVMType:" << *LLVMType << "\n";
-  OS << "  ContainsPointerToDataMember:" << ContainsPointerToDataMember << "\n";
-  OS << "  BitFields:[\n";
-
-  // Print bit-field infos in declaration order.
-  std::vector<std::pair<unsigned, const CGBitFieldInfo*> > BFIs;
-  for (llvm::DenseMap<const FieldDecl*, CGBitFieldInfo>::const_iterator
-         it = BitFields.begin(), ie = BitFields.end();
-       it != ie; ++it) {
-    const RecordDecl *RD = it->first->getParent();
-    unsigned Index = 0;
-    for (RecordDecl::field_iterator
-           it2 = RD->field_begin(); *it2 != it->first; ++it2)
-      ++Index;
-    BFIs.push_back(std::make_pair(Index, &it->second));
-  }
-  llvm::array_pod_sort(BFIs.begin(), BFIs.end());
-  for (unsigned i = 0, e = BFIs.size(); i != e; ++i) {
-    OS.indent(4);
-    BFIs[i].second->print(OS);
-    OS << "\n";
+    Types.addFieldInfo(FD, FieldNo);
   }
 
-  OS << "]>\n";
-}
+  // Add bitfield info.
+  for (unsigned i = 0, e = Builder.LLVMBitFields.size(); i != e; ++i) {
+    const LLVMBitFieldInfo &Info = Builder.LLVMBitFields[i];
 
-void CGRecordLayout::dump() const {
-  print(llvm::errs());
-}
-
-void CGBitFieldInfo::print(llvm::raw_ostream &OS) const {
-  OS << "<CGBitFieldInfo";
-  OS << " Size:" << Size;
-  OS << " IsSigned:" << IsSigned << "\n";
-
-  OS.indent(4 + strlen("<CGBitFieldInfo"));
-  OS << " NumComponents:" << getNumComponents();
-  OS << " Components: [";
-  if (getNumComponents()) {
-    OS << "\n";
-    for (unsigned i = 0, e = getNumComponents(); i != e; ++i) {
-      const AccessInfo &AI = getComponent(i);
-      OS.indent(8);
-      OS << "<AccessInfo"
-         << " FieldIndex:" << AI.FieldIndex
-         << " FieldByteOffset:" << AI.FieldByteOffset
-         << " FieldBitStart:" << AI.FieldBitStart
-         << " AccessWidth:" << AI.AccessWidth << "\n";
-      OS.indent(8 + strlen("<AccessInfo"));
-      OS << " AccessAlignment:" << AI.AccessAlignment
-         << " TargetBitOffset:" << AI.TargetBitOffset
-         << " TargetBitWidth:" << AI.TargetBitWidth
-         << ">\n";
-    }
-    OS.indent(4);
+    Types.addBitFieldInfo(Info.FD, Info.FieldNo, Info.Start, Info.Size);
   }
-  OS << "]>";
-}
 
-void CGBitFieldInfo::dump() const {
-  print(llvm::errs());
+  return new CGRecordLayout(Ty, Builder.ContainsPointerToDataMember);
 }

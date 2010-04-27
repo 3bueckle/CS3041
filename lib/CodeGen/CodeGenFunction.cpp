@@ -199,8 +199,8 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
 
   QualType FnType = getContext().getFunctionType(RetTy, 0, 0, false, 0,
                                                  false, false, 0, 0,
-                                                 /*FIXME?*/
-                                                 FunctionType::ExtInfo());
+                                                 /*FIXME?*/false,
+                                                 /*FIXME?*/CC_Default);
 
   // Emit subprogram debug descriptor.
   if (CGDebugInfo *DI = getDebugInfo()) {
@@ -211,7 +211,7 @@ void CodeGenFunction::StartFunction(GlobalDecl GD, QualType RetTy,
   // FIXME: Leaked.
   // CC info is ignored, hopefully?
   CurFnInfo = &CGM.getTypes().getFunctionInfo(FnRetTy, Args,
-                                              FunctionType::ExtInfo());
+                                              CC_Default, false);
 
   if (RetTy->isVoidType()) {
     // Void type; nothing to return.
@@ -279,7 +279,7 @@ void CodeGenFunction::GenerateCode(GlobalDecl GD, llvm::Function *Fn) {
       Args.push_back(std::make_pair(CXXThisDecl, CXXThisDecl->getType()));
       
       // Check if we need a VTT parameter as well.
-      if (CodeGenVTables::needsVTTParameter(GD)) {
+      if (CGVtableInfo::needsVTTParameter(GD)) {
         // FIXME: The comment about using a fake decl above applies here too.
         QualType T = getContext().getPointerType(getContext().VoidPtrTy);
         CXXVTTDecl = 
@@ -495,14 +495,12 @@ void CodeGenFunction::EmitMemSetToZero(llvm::Value *DestPtr, QualType Ty) {
   const llvm::Type *IntPtr = llvm::IntegerType::get(VMContext,
                                                     LLVMPointerWidth);
 
-  Builder.CreateCall5(CGM.getMemSetFn(BP, IntPtr), DestPtr,
+  Builder.CreateCall4(CGM.getMemSetFn(), DestPtr,
                  llvm::Constant::getNullValue(llvm::Type::getInt8Ty(VMContext)),
                       // TypeInfo.first describes size in bits.
                       llvm::ConstantInt::get(IntPtr, TypeInfo.first/8),
                       llvm::ConstantInt::get(llvm::Type::getInt32Ty(VMContext),
-                                             TypeInfo.second/8),
-                      llvm::ConstantInt::get(llvm::Type::getInt1Ty(VMContext),
-                                             0));
+                                             TypeInfo.second/8));
 }
 
 llvm::BlockAddress *CodeGenFunction::GetAddrOfLabel(const LabelStmt *L) {
@@ -748,11 +746,6 @@ void CodeGenFunction::EmitCleanupBlock() {
       delete Info.CleanupBlock;
     return;
   }
-
-  //  Scrub debug location info.
-  for (llvm::BasicBlock::iterator LBI = Info.CleanupBlock->begin(),
-         LBE = Info.CleanupBlock->end(); LBI != LBE; ++LBI)
-    Builder.SetInstDebugLocation(LBI);
 
   llvm::BasicBlock *CurBB = Builder.GetInsertBlock();
   if (CurBB && !CurBB->getTerminator() &&

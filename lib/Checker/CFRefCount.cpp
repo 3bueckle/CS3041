@@ -16,7 +16,8 @@
 #include "clang/AST/StmtVisitor.h"
 #include "clang/Basic/LangOptions.h"
 #include "clang/Basic/SourceManager.h"
-#include "clang/Checker/BugReporter/BugType.h"
+#include "clang/Checker/BugReporter/BugReporter.h"
+#include "clang/Checker/BugReporter/PathDiagnostic.h"
 #include "clang/Checker/BugReporter/PathDiagnostic.h"
 #include "clang/Checker/Checkers/LocalCheckers.h"
 #include "clang/Checker/DomainSpecific/CocoaConventions.h"
@@ -603,33 +604,12 @@ public:
 
     Selector S = ME->getSelector();
 
-    const ObjCInterfaceDecl* OD = 0;
-    bool IsInstanceMessage = false;
-    switch (ME->getReceiverKind()) {
-    case ObjCMessageExpr::Instance:
-      OD = getReceiverDecl(ME->getInstanceReceiver());
-      IsInstanceMessage = true;
-      break;
-
-    case ObjCMessageExpr::SuperInstance:
-      IsInstanceMessage = true;
-      OD = ME->getSuperType()->getAs<ObjCObjectPointerType>()
-                                                        ->getInterfaceDecl();
-      break;
-
-    case ObjCMessageExpr::Class:
-      OD = ME->getClassReceiver()->getAs<ObjCInterfaceType>()->getDecl();
-      break;
-
-    case ObjCMessageExpr::SuperClass:
-      OD = ME->getSuperType()->getAs<ObjCInterfaceType>()->getDecl();
-      break;
+    if (Expr* Receiver = ME->getReceiver()) {
+      const ObjCInterfaceDecl* OD = getReceiverDecl(Receiver);
+      return OD ? M[ObjCSummaryKey(OD->getIdentifier(), S)] : M[S];
     }
 
-    if (IsInstanceMessage)
-      return OD ? M[ObjCSummaryKey(OD->getIdentifier(), S)] : M[S];
-
-    return M[ObjCSummaryKey(OD->getIdentifier(), S)];
+    return M[ObjCSummaryKey(ME->getClassName(), S)];
   }
 
   RetainSummary*& operator[](ObjCSummaryKey K) {
@@ -857,7 +837,7 @@ public:
   
   RetainSummary* getInstanceMethodSummary(const ObjCMessageExpr* ME,
                                           const ObjCInterfaceDecl* ID) {
-    return getInstanceMethodSummary(ME->getSelector(), 0,
+    return getInstanceMethodSummary(ME->getSelector(), ME->getClassName(),
                             ID, ME->getMethodDecl(), ME->getType());
   }
 
@@ -872,21 +852,8 @@ public:
                                        QualType RetTy);
 
   RetainSummary *getClassMethodSummary(const ObjCMessageExpr *ME) {
-    ObjCInterfaceDecl *Class = 0;
-    switch (ME->getReceiverKind()) {
-    case ObjCMessageExpr::Class:
-    case ObjCMessageExpr::SuperClass:
-      Class = ME->getReceiverInterface();
-      break;
-
-    case ObjCMessageExpr::Instance:
-    case ObjCMessageExpr::SuperInstance:
-      break;
-    }
-
-    return getClassMethodSummary(ME->getSelector(), 
-                                 Class? Class->getIdentifier() : 0,
-                                 Class,
+    return getClassMethodSummary(ME->getSelector(), ME->getClassName(),
+                                 ME->getClassInfo().first,
                                  ME->getMethodDecl(), ME->getType());
   }
 
@@ -1367,44 +1334,37 @@ RetainSummaryManager::getInstanceMethodSummary(const ObjCMessageExpr *ME,
 
   // We need the type-information of the tracked receiver object
   // Retrieve it from the state.
-  const Expr *Receiver = ME->getInstanceReceiver();
+  const Expr *Receiver = ME->getReceiver();
   const ObjCInterfaceDecl* ID = 0;
 
   // FIXME: Is this really working as expected?  There are cases where
   //  we just use the 'ID' from the message expression.
-  SVal receiverV;
-
-  if (const Expr *Receiver = ME->getInstanceReceiver()) {
-    receiverV = state->getSValAsScalarOrLoc(Receiver);
+  SVal receiverV = state->getSValAsScalarOrLoc(Receiver);
   
-    // FIXME: Eventually replace the use of state->get<RefBindings> with
-    // a generic API for reasoning about the Objective-C types of symbolic
-    // objects.
-    if (SymbolRef Sym = receiverV.getAsLocSymbol())
-      if (const RefVal *T = state->get<RefBindings>(Sym))
-        if (const ObjCObjectPointerType* PT = 
+  // FIXME: Eventually replace the use of state->get<RefBindings> with
+  // a generic API for reasoning about the Objective-C types of symbolic
+  // objects.
+  if (SymbolRef Sym = receiverV.getAsLocSymbol())
+    if (const RefVal *T = state->get<RefBindings>(Sym))
+      if (const ObjCObjectPointerType* PT = 
             T->getType()->getAs<ObjCObjectPointerType>())
-          ID = PT->getInterfaceDecl();
-  
-    // FIXME: this is a hack.  This may or may not be the actual method
-    //  that is called.
-    if (!ID) {
-      if (const ObjCObjectPointerType *PT =
-          Receiver->getType()->getAs<ObjCObjectPointerType>())
         ID = PT->getInterfaceDecl();
-    }
-  } else {
-    // FIXME: Hack for 'super'.
-    ID = ME->getReceiverInterface();
+  
+  // FIXME: this is a hack.  This may or may not be the actual method
+  //  that is called.
+  if (!ID) {
+    if (const ObjCObjectPointerType *PT =
+        Receiver->getType()->getAs<ObjCObjectPointerType>())
+      ID = PT->getInterfaceDecl();
   }
-
+  
   // FIXME: The receiver could be a reference to a class, meaning that
   //  we should use the class method.
   RetainSummary *Summ = getInstanceMethodSummary(ME, ID);
   
   // Special-case: are we sending a mesage to "self"?
   //  This is a hack.  When we have full-IP this should be removed.
-  if (isa<ObjCMethodDecl>(LC->getDecl()) && Receiver) {
+  if (isa<ObjCMethodDecl>(LC->getDecl())) {
     if (const loc::MemRegionVal *L = dyn_cast<loc::MemRegionVal>(&receiverV)) {
       // Get the region associated with 'self'.
       if (const ImplicitParamDecl *SelfDecl = LC->getSelfDecl()) {
@@ -2122,7 +2082,7 @@ PathDiagnosticPiece* CFRefReport::VisitNode(const ExplodedNode* N,
       // Get the name of the callee (if it is available).
       SVal X = CurrSt->getSValAsScalarOrLoc(CE->getCallee());
       if (const FunctionDecl* FD = X.getAsFunctionDecl())
-        os << "Call to function '" << FD << '\'';
+        os << "Call to function '" << FD->getNameAsString() <<'\'';
       else
         os << "function call";
     }
@@ -2185,7 +2145,7 @@ PathDiagnosticPiece* CFRefReport::VisitNode(const ExplodedNode* N,
       }
     }
     else if (const ObjCMessageExpr *ME = dyn_cast<ObjCMessageExpr>(S)) {
-      if (const Expr *receiver = ME->getInstanceReceiver())
+      if (const Expr *receiver = ME->getReceiver())
         if (CurrSt->getSValAsScalarOrLoc(receiver).getAsLocSymbol() == Sym) {
           // The symbol we are tracking is the receiver.
           AEffects.push_back(Summ->getReceiverEffect());
@@ -2551,7 +2511,7 @@ static QualType GetReturnType(const Expr* RetE, ASTContext& Ctx) {
         // id, id<...>, or Class. If we have an ObjCInterfaceDecl, we know this
         // is a call to a class method whose type we can resolve.  In such
         // cases, promote the return type to XXX* (where XXX is the class).
-        const ObjCInterfaceDecl *D = ME->getReceiverInterface();
+        const ObjCInterfaceDecl *D = ME->getClassInfo().first;
         return !D ? RetTy : Ctx.getPointerType(Ctx.getObjCInterfaceType(D));
       }
 
@@ -2701,15 +2661,15 @@ void CFRefCount::EvalSummary(ExplodedNodeSet& Dst,
   RetEffect RE = Summ.getRetEffect();
 
   if (RE.getKind() == RetEffect::OwnedWhenTrackedReceiver) {
+    assert(Receiver);
+    SVal V = state->getSValAsScalarOrLoc(Receiver);
     bool found = false;
-    if (Receiver) {
-      SVal V = state->getSValAsScalarOrLoc(Receiver);
-      if (SymbolRef Sym = V.getAsLocSymbol())
-        if (state->get<RefBindings>(Sym)) {
-          found = true;
-          RE = Summaries.getObjAllocRetEffect();
-        }
-    } // FIXME: Otherwise, this is a send-to-super instance message.
+    if (SymbolRef Sym = V.getAsLocSymbol())
+      if (state->get<RefBindings>(Sym)) {
+        found = true;
+        RE = Summaries.getObjAllocRetEffect();
+      }
+
     if (!found)
       RE = RetEffect::MakeNoRet();
   }
@@ -2843,12 +2803,12 @@ void CFRefCount::EvalObjCMessageExpr(ExplodedNodeSet& Dst,
                                      ExplodedNode* Pred,
                                      const GRState *state) {
   RetainSummary *Summ =
-    ME->isInstanceMessage()
+    ME->getReceiver()
       ? Summaries.getInstanceMethodSummary(ME, state,Pred->getLocationContext())
       : Summaries.getClassMethodSummary(ME);
 
   assert(Summ && "RetainSummary is null");
-  EvalSummary(Dst, Eng, Builder, ME, ME->getInstanceReceiver(), *Summ, NULL,
+  EvalSummary(Dst, Eng, Builder, ME, ME->getReceiver(), *Summ, NULL,
               ME->arg_begin(), ME->arg_end(), Pred, state);
 }
 

@@ -135,36 +135,3 @@ int t18(unsigned data) {
 // CHECK-NEXT: extractvalue
 // CHECK-NEXT: extractvalue
 }
-
-
-// PR6780
-int t19(unsigned data) {
-  int a, b;
-  
-  asm("x{abc|def|ghi}z" :"=r"(a): "r"(data));
-  return a + b;
-  // CHECK: t19(i32
-  // CHECK: = call {{.*}}asm "x$(abc$|def$|ghi$)z"
-}
-
-
-// PR6845 - Mismatching source/dest fp types.
-double t20(double x) {
-  register long double result;
-  __asm __volatile ("frndint"  : "=t" (result) : "0" (x));
-  return result;
-  
-  // CHECK: @t20
-  // CHECK: fpext double {{.*}} to x86_fp80
-  // CHECK-NEXT: call x86_fp80 asm sideeffect "frndint"
-  // CHECK: fptrunc x86_fp80 {{.*}} to double
-}
-
-float t21(long double x) {
-  register float result;
-  __asm __volatile ("frndint"  : "=t" (result) : "0" (x));
-  return result;
-  // CHECK: @t21
-  // CHECK: call x86_fp80 asm sideeffect "frndint"
-  // CHECK-NEXT: fptrunc x86_fp80 {{.*}} to float
-}

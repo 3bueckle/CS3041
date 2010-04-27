@@ -97,8 +97,6 @@ def analyzer_viz_egraph_graphviz : Flag<"-analyzer-viz-egraph-graphviz">,
   HelpText<"Display exploded graph using GraphViz">;
 def analyzer_viz_egraph_ubigraph : Flag<"-analyzer-viz-egraph-ubigraph">,
   HelpText<"Display exploded graph using Ubigraph">;
-def analyzer_max_nodes : Separate<"-analyzer-max-nodes">,
-  HelpText<"The maximum number of nodes the analyzer can generate">;
 
 //===----------------------------------------------------------------------===//
 // CodeGen Options
@@ -125,10 +123,6 @@ def fno_threadsafe_statics : Flag<"-fno-threadsafe-statics">,
   HelpText<"Do not emit code to make initialization of local statics thread safe">;
 def fdump_vtable_layouts : Flag<"-fdump-vtable-layouts">,
   HelpText<"Dump the layouts of all vtables that will be emitted in a translation unit">;
-def ffunction_sections : Flag<"-ffunction-sections">,
-  HelpText<"Place each function in its own section (ELF Only)">;
-def fdata_sections : Flag<"-fdata-sections">,
-  HelpText<"Place each data in its own section (ELF Only)">;
 def masm_verbose : Flag<"-masm-verbose">,
   HelpText<"Generate verbose assembly output">;
 def mcode_model : Separate<"-mcode-model">,
@@ -162,7 +156,6 @@ def dependency_file : Separate<"-dependency-file">,
   HelpText<"Filename (or -) to write dependency output to">;
 def sys_header_deps : Flag<"-sys-header-deps">,
   HelpText<"Include system headers in dependency output">;
-def MQ : Separate<"-MQ">, HelpText<"Specify target to quote for dependency">;
 def MT : Separate<"-MT">, HelpText<"Specify target for dependency">;
 def MP : Flag<"-MP">,
   HelpText<"Create phony target for each dependency (other than main file)">;
@@ -198,18 +191,12 @@ def fdiagnostics_show_option : Flag<"-fdiagnostics-show-option">,
   HelpText<"Print diagnostic name with mappable diagnostics">;
 def ftabstop : Separate<"-ftabstop">, MetaVarName<"<N>">,
   HelpText<"Set the tab stop distance.">;
-def ferror_limit : Separate<"-ferror-limit">, MetaVarName<"<N>">,
-  HelpText<"Set the maximum number of errors to emit before stopping (0 = no limit).">;
-def ftemplate_backtrace_limit : Separate<"-ftemplate-backtrace-limit">, MetaVarName<"<N>">,
-  HelpText<"Set the maximum number of entries to print in a template instantiation backtrace (0 = no limit).">;
 def fmessage_length : Separate<"-fmessage-length">, MetaVarName<"<N>">,
   HelpText<"Format message diagnostics so that they fit within N columns or fewer, when possible.">;
 def fcolor_diagnostics : Flag<"-fcolor-diagnostics">,
   HelpText<"Use colors in diagnostics">;
 def Wno_rewrite_macros : Flag<"-Wno-rewrite-macros">,
   HelpText<"Silence ObjC rewriting warnings">;
-def Wwrite_strings : Flag<"-Wwrite-strings">,
-  HelpText<"Add const qualifier to string literals">;
 def verify : Flag<"-verify">,
   HelpText<"Verify emitted diagnostics and warnings">;
 
@@ -238,6 +225,8 @@ def code_completion_macros : Flag<"-code-completion-macros">,
   HelpText<"Include macros in code-completion results">;
 def disable_free : Flag<"-disable-free">,
   HelpText<"Disable freeing of memory on exit">;
+def empty_input_only : Flag<"-empty-input-only">,
+  HelpText<"Force running on an empty input file">;
 def help : Flag<"-help">,
   HelpText<"Print this help text">;
 def _help : Flag<"--help">, Alias<help>;
@@ -245,6 +234,8 @@ def x : Separate<"-x">, HelpText<"Input language type">;
 def cxx_inheritance_view : Separate<"-cxx-inheritance-view">,
   MetaVarName<"<class name>">,
   HelpText<"View C++ inheritance for a specified class">;
+def fixit_at : Separate<"-fixit-at">, MetaVarName<"<source location>">,
+  HelpText<"Perform Fix-It modifications at the given source location">;
 def o : Separate<"-o">, MetaVarName<"<path>">, HelpText<"Specify output file">;
 def load : Separate<"-load">, MetaVarName<"<dsopath>">,
   HelpText<"Load the named plugin (dynamic shared object)">;
@@ -269,16 +260,12 @@ def analyze : Flag<"-analyze">,
   HelpText<"Run static analysis engine">;
 def dump_tokens : Flag<"-dump-tokens">,
   HelpText<"Run preprocessor, dump internal rep of tokens">;
-def init_only : Flag<"-init-only">,
-  HelpText<"Only execute frontend initialization">;
 def parse_noop : Flag<"-parse-noop">,
   HelpText<"Run parser with noop callbacks (for timings)">;
 def fsyntax_only : Flag<"-fsyntax-only">,
   HelpText<"Run parser and perform semantic analysis">;
 def fixit : Flag<"-fixit">,
   HelpText<"Apply fix-it advice to the input source">;
-def fixit_EQ : Joined<"-fixit=">,
-  HelpText<"Apply fix-it advice creating a file with the given suffix">;
 def parse_print_callbacks : Flag<"-parse-print-callbacks">,
   HelpText<"Run parser and print each callback invoked">;
 def emit_html : Flag<"-emit-html">,
@@ -293,6 +280,8 @@ def ast_view : Flag<"-ast-view">,
   HelpText<"Build ASTs and view them with GraphViz">;
 def print_decl_contexts : Flag<"-print-decl-contexts">,
   HelpText<"Print DeclContexts and their Decls">;
+def dump_record_layouts : Flag<"-dump-record-layouts">,
+  HelpText<"Dump record layout information">;
 def emit_pth : Flag<"-emit-pth">,
   HelpText<"Generate pre-tokenized header file">;
 def emit_pch : Flag<"-emit-pch">,
@@ -323,14 +312,6 @@ def print_stats : Flag<"-print-stats">,
 def ftime_report : Flag<"-ftime-report">,
   HelpText<"Print the amount of time each phase of compilation takes">;
 
-def fdump_record_layouts : Flag<"-fdump-record-layouts">,
-  HelpText<"Dump record layout information">;
-
-// Generic forwarding to LLVM options. This should only be used for debugging
-// and experimental features.
-def mllvm : Separate<"-mllvm">,
-  HelpText<"Additional arguments to forward to LLVM's option processing">;
-
 //===----------------------------------------------------------------------===//
 // Language Options
 //===----------------------------------------------------------------------===//
@@ -339,14 +320,10 @@ def fno_builtin : Flag<"-fno-builtin">,
   HelpText<"Disable implicit builtin knowledge of functions">;
 def faltivec : Flag<"-faltivec">,
   HelpText<"Enable AltiVec vector initializer syntax">;
-def fno_access_control : Flag<"-fno-access-control">,
-  HelpText<"Disable C++ access control">;
+def faccess_control : Flag<"-faccess-control">,
+  HelpText<"Enable C++ access control">;
 def fno_assume_sane_operator_new : Flag<"-fno-assume-sane-operator-new">,
   HelpText<"Don't assume that C++'s global operator new can't alias any pointer">;
-def fgnu_keywords : Flag<"-fgnu-keywords">,
-  HelpText<"Allow GNU-extension keywords regardless of language standard">;
-def fno_gnu_keywords : Flag<"-fno-gnu-keywords">,
-  HelpText<"Disallow GNU-extension keywords regardless of language standard">;
 def fdollars_in_identifiers : Flag<"-fdollars-in-identifiers">,
   HelpText<"Allow '$' in identifiers">;
 def fno_dollars_in_identifiers : Flag<"-fno-dollars-in-identifiers">,
@@ -376,23 +353,19 @@ def fno_elide_constructors : Flag<"-fno-elide-constructors">,
   HelpText<"Disable C++ copy constructor elision">;
 def fno_lax_vector_conversions : Flag<"-fno-lax-vector-conversions">,
   HelpText<"Disallow implicit conversions between vectors with a different number of elements or different element types">;
-def fno_operator_names : Flag<"-fno-operator-names">,
-  HelpText<"Do not treat C++ operator name keywords as synonyms for operators">;
 def fno_signed_char : Flag<"-fno-signed-char">,
   HelpText<"Char is unsigned">;
-def fno_use_cxa_atexit : Flag<"-fno-use-cxa-atexit">,
-  HelpText<"Don't use __cxa_atexit for calling destructors">;
+def fno_operator_names : Flag<"-fno-operator-names">,
+  HelpText<"Do not treat C++ operator name keywords as synonyms for operators">;
 def fconstant_string_class : Separate<"-fconstant-string-class">,
   MetaVarName<"<class name>">,
   HelpText<"Specify the class to use for constant Objective-C string objects.">;
-def fno_constant_cfstrings : Flag<"-fno-constant-cfstrings">,
-  HelpText<"Enable creation of CodeFoundation-type constant strings">;
 def fobjc_gc : Flag<"-fobjc-gc">,
   HelpText<"Enable Objective-C garbage collection">;
 def fobjc_gc_only : Flag<"-fobjc-gc-only">,
   HelpText<"Use GC exclusively for Objective-C related memory management">;
-def fobjc_dispatch_method_EQ : Joined<"-fobjc-dispatch-method=">,
-  HelpText<"Objective-C dispatch method to use">;
+def fobjc_legacy_dispatch : Flag<"-fobjc-legacy-dispatch">,
+  HelpText<"Use legacy dispatch with the Objective-C non-fragile ABI">;
 def print_ivar_layout : Flag<"-print-ivar-layout">,
   HelpText<"Enable Objective-C Ivar layout bitmap print trace">;
 def fobjc_nonfragile_abi : Flag<"-fobjc-nonfragile-abi">,
@@ -423,8 +396,6 @@ def trigraphs : Flag<"-trigraphs">,
   HelpText<"Process trigraph sequences">;
 def fwritable_strings : Flag<"-fwritable-strings">,
   HelpText<"Store string literals as writable data">;
-def fno_bitfield_type_align : Flag<"-fno-bitfield-type-align">,
-  HelpText<"Ignore bit-field types when aligning structures">;
 
 //===----------------------------------------------------------------------===//
 // Header Search Options
@@ -432,8 +403,6 @@ def fno_bitfield_type_align : Flag<"-fno-bitfield-type-align">,
 
 def nostdinc : Flag<"-nostdinc">,
   HelpText<"Disable standard #include directories">;
-def nostdincxx : Flag<"-nostdinc++">,
-  HelpText<"Disable standard #include directories for the C++ standard library">;
 def nobuiltininc : Flag<"-nobuiltininc">,
   HelpText<"Disable builtin #include directories">;
 def F : JoinedOrSeparate<"-F">, MetaVarName<"<directory>">,
@@ -477,9 +446,7 @@ def U : JoinedOrSeparate<"-U">, MetaVarName<"<macro>">,
   HelpText<"Undefine the specified macro">;
 def undef : Flag<"-undef">, MetaVarName<"<macro>">,
   HelpText<"undef all system defines">;
-def detailed_preprocessing_record : Flag<"-detailed-preprocessing-record">,
-  HelpText<"include a detailed record of preprocessing actions">;
-  
+
 //===----------------------------------------------------------------------===//
 // Preprocessed Output Options
 //===----------------------------------------------------------------------===//

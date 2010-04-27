@@ -91,19 +91,18 @@ public:
   }
 
   void test_Z(const Z& z) {
-    Z z2(z); // expected-error{{no matching constructor for initialization of 'Z'}}
+    Z z2(z); // expected-error{{no matching constructor for initialization of 'class Z'}}
   }
 };
 
 void test_Z(const Z& z) {
-  Z z2(z); // expected-error{{no matching constructor for initialization of 'Z'}}
+  Z z2(z); // expected-error{{no matching constructor for initialization of 'class Z'}}
 }
 
 struct ZZ {
   static ZZ g(int = 17);
 
-  void f(ZZ z = g()); // expected-error{{no matching constructor for initialization}} \
-  // expected-note{{passing argument to parameter 'z' here}}
+  void f(ZZ z = g()); // expected-error{{no matching constructor for initialization}}
 
   ZZ(ZZ&, int = 17); // expected-note{{candidate constructor}}
 };

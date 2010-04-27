@@ -198,11 +198,8 @@ public:
   /// callee in a call expression with dependent arguments.
   bool isDependentName() const;
   
-  /// getNameAsString - Retrieve the human-readable string for this name.
+  /// getName - Retrieve the human-readable string for this name.
   std::string getAsString() const;
-
-  /// printName - Print the human-readable name to a stream.
-  void printName(llvm::raw_ostream &OS) const;
 
   /// getAsIdentifierInfo - Retrieve the IdentifierInfo * stored in
   /// this declaration name, or NULL if this declaration name isn't a
@@ -334,15 +331,13 @@ public:
   /// getCXXConstructorName - Returns the name of a C++ constructor
   /// for the given Type.
   DeclarationName getCXXConstructorName(CanQualType Ty) {
-    return getCXXSpecialName(DeclarationName::CXXConstructorName, 
-                             Ty.getUnqualifiedType());
+    return getCXXSpecialName(DeclarationName::CXXConstructorName, Ty);
   }
 
   /// getCXXDestructorName - Returns the name of a C++ destructor
   /// for the given Type.
   DeclarationName getCXXDestructorName(CanQualType Ty) {
-    return getCXXSpecialName(DeclarationName::CXXDestructorName, 
-                             Ty.getUnqualifiedType());
+    return getCXXSpecialName(DeclarationName::CXXDestructorName, Ty);
   }
 
   /// getCXXConversionFunctionName - Returns the name of a C++
@@ -383,7 +378,7 @@ inline const PartialDiagnostic &operator<<(const PartialDiagnostic &PD,
                   Diagnostic::ak_declarationname);
   return PD;
 }
-
+  
 }  // end namespace clang
 
 namespace llvm {

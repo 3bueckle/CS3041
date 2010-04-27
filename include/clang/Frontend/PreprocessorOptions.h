@@ -36,10 +36,6 @@ public:
   unsigned UsePredefines : 1; /// Initialize the preprocessor with the compiler
                               /// and target specific predefines.
 
-  unsigned DetailedRecord : 1; /// Whether we should maintain a detailed
-                               /// record of all macro definitions and
-                               /// instantiations.
-  
   /// The implicit PCH included at the start of the translation unit, or empty.
   std::string ImplicitPCHInclude;
 
@@ -81,7 +77,7 @@ public:
   }
   
 public:
-  PreprocessorOptions() : UsePredefines(true), DetailedRecord(false) {}
+  PreprocessorOptions() : UsePredefines(true) {}
 
   void addMacroDef(llvm::StringRef Name) {
     Macros.push_back(std::make_pair(Name, false));

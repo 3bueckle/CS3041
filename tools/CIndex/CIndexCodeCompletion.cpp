@@ -14,25 +14,11 @@
 
 #include "CIndexer.h"
 #include "CIndexDiagnostic.h"
-#include "clang/Basic/SourceManager.h"
-#include "clang/Basic/FileManager.h"
-#include "clang/Frontend/CompilerInstance.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
 #include "clang/Sema/CodeCompleteConsumer.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/System/Program.h"
-
-#ifdef UDP_CODE_COMPLETION_LOGGER
-#include "clang/Basic/Version.h"
-#include "llvm/ADT/SmallString.h"
-#include "llvm/Support/Timer.h"
-#include "llvm/Support/raw_ostream.h"
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
-#endif
 
 using namespace clang;
 using namespace clang::cxstring;
@@ -201,9 +187,6 @@ struct AllocatedCXCodeCompleteResults : public CXCodeCompleteResults {
   /// \brief Diagnostics produced while performing code completion.
   llvm::SmallVector<StoredDiagnostic, 8> Diagnostics;
 
-  /// \brief Diag object
-  Diagnostic Diag;
-  
   /// \brief Language options used to adjust source locations.
   LangOptions LangOpts;
 
@@ -219,7 +202,7 @@ struct AllocatedCXCodeCompleteResults : public CXCodeCompleteResults {
 };
 
 AllocatedCXCodeCompleteResults::AllocatedCXCodeCompleteResults() 
-  : CXCodeCompleteResults(), Buffer(0), SourceMgr(Diag) { }
+  : CXCodeCompleteResults(), Buffer(0) { }
   
 AllocatedCXCodeCompleteResults::~AllocatedCXCodeCompleteResults() {
   for (unsigned I = 0, N = NumResults; I != N; ++I)
@@ -240,19 +223,13 @@ CXCodeCompleteResults *clang_codeComplete(CXIndex CIdx,
                                           const char *complete_filename,
                                           unsigned complete_line,
                                           unsigned complete_column) {
-#ifdef UDP_CODE_COMPLETION_LOGGER
-#ifdef UDP_CODE_COMPLETION_LOGGER_PORT
-  const llvm::TimeRecord &StartTime =  llvm::TimeRecord::getCurrentTime();
-#endif
-#endif
-
   // The indexer, which is mainly used to determine where diagnostics go.
   CIndexer *CXXIdx = static_cast<CIndexer *>(CIdx);
 
   // Configure the diagnostics.
   DiagnosticOptions DiagOpts;
-  llvm::IntrusiveRefCntPtr<Diagnostic> Diags;
-  Diags = CompilerInstance::createDiagnostics(DiagOpts, 0, 0);
+  llvm::OwningPtr<Diagnostic> Diags;
+  Diags.reset(CompilerInstance::createDiagnostics(DiagOpts, 0, 0));
   
   // The set of temporary files that we've built.
   std::vector<llvm::sys::Path> TemporaryFiles;
@@ -403,78 +380,6 @@ CXCodeCompleteResults *clang_codeComplete(CXIndex CIdx,
   // destroyed.
   Results->TemporaryFiles.swap(TemporaryFiles);
 
-#ifdef UDP_CODE_COMPLETION_LOGGER
-#ifdef UDP_CODE_COMPLETION_LOGGER_PORT
-  const llvm::TimeRecord &EndTime =  llvm::TimeRecord::getCurrentTime();
-  llvm::SmallString<256> LogResult;
-  llvm::raw_svector_ostream os(LogResult);
-
-  // Figure out the language and whether or not it uses PCH.
-  const char *lang = 0;
-  bool usesPCH = false;
-
-  for (std::vector<const char*>::iterator I = argv.begin(), E = argv.end();
-       I != E; ++I) {
-    if (*I == 0)
-      continue;
-    if (strcmp(*I, "-x") == 0) {
-      if (I + 1 != E) {
-        lang = *(++I);
-        continue;
-      }
-    }
-    else if (strcmp(*I, "-include") == 0) {
-      if (I+1 != E) {
-        const char *arg = *(++I);
-        llvm::SmallString<512> pchName;
-        {
-          llvm::raw_svector_ostream os(pchName);
-          os << arg << ".pth";
-        }
-        pchName.push_back('\0');
-        struct stat stat_results;
-        if (stat(pchName.data(), &stat_results) == 0)
-          usesPCH = true;
-        continue;
-      }
-    }
-  }
-
-  os << "{ ";
-  os << "\"wall\": " << (EndTime.getWallTime() - StartTime.getWallTime());
-  os << ", \"numRes\": " << Results->NumResults;
-  os << ", \"diags\": " << Results->Diagnostics.size();
-  os << ", \"pch\": " << (usesPCH ? "true" : "false");
-  os << ", \"lang\": \"" << (lang ? lang : "<unknown>") << '"';
-  const char *name = getlogin();
-  os << ", \"user\": \"" << (name ? name : "unknown") << '"';
-  os << ", \"clangVer\": \"" << getClangFullVersion() << '"';
-  os << " }";
-
-  llvm::StringRef res = os.str();
-  if (res.size() > 0) {
-    do {
-      // Setup the UDP socket.
-      struct sockaddr_in servaddr;
-      bzero(&servaddr, sizeof(servaddr));
-      servaddr.sin_family = AF_INET;
-      servaddr.sin_port = htons(UDP_CODE_COMPLETION_LOGGER_PORT);
-      if (inet_pton(AF_INET, UDP_CODE_COMPLETION_LOGGER,
-                    &servaddr.sin_addr) <= 0)
-        break;
-
-      int sockfd = socket(AF_INET, SOCK_DGRAM, 0);
-      if (sockfd < 0)
-        break;
-
-      sendto(sockfd, res.data(), res.size(), 0,
-             (struct sockaddr *)&servaddr, sizeof(servaddr));
-      close(sockfd);
-    }
-    while (false);
-  }
-#endif
-#endif
   return Results;
 }
 

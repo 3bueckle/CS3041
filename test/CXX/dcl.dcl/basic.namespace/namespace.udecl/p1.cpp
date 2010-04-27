@@ -12,8 +12,7 @@ namespace Test0 {
   test<1> foo(class foo);
 
   namespace A {
-    test<2> foo(class ::foo); // expected-note {{candidate}} \
-    // expected-note{{passing argument to parameter here}}
+    test<2> foo(class ::foo); // expected-note {{candidate}}
 
     void test0() {
       using ::foo;
@@ -39,7 +38,7 @@ namespace Test0 {
       test<2> _1 = (foo)(a);
 
       class Test0::foo b;
-      test<2> _2 = (foo)(b); // expected-error {{no viable conversion from 'class Test0::foo' to 'class ::foo' is possible}}
+      test<2> _2 = (foo)(b); // expected-error {{no viable conversion from 'class Test0::foo' to 'class foo' is possible}}
     }
   }
 }
@@ -64,46 +63,5 @@ namespace Test1 {
 
     a _1 = A::a();
     b _2 = B::b();
-  }
-}
-
-namespace test2 {
-  class A {
-  protected:
-    operator int();
-    operator bool();
-  };
-
-  class B : private A {
-  protected:
-    using A::operator int; // expected-note {{'declared protected here'}}
-  public:
-    using A::operator bool;
-  };
-
-  int test() {
-    bool b = B();
-    return B(); // expected-error {{'operator int' is a protected member of 'test2::B'}}
-  }
-}
-
-namespace test3 {
-  class A {
-    ~A();
-  };
-
-  class B {
-    friend class C;
-  private:
-    operator A*();
-  };
-
-  class C : public B {
-  public:
-    using B::operator A*;
-  };
-
-  void test() {
-    delete C();
   }
 }

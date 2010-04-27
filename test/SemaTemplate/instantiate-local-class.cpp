@@ -13,11 +13,11 @@ template void f0<int>();
 
 // PR5764
 namespace PR5764 {
-  struct X {
+  class X {
     template <typename T>
     void Bar() {
       typedef T ValueType;
-      struct Y {
+      class Y {
         Y() { V = ValueType(); }
 
         ValueType V;

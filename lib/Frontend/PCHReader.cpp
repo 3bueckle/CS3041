@@ -21,7 +21,6 @@
 #include "clang/AST/Type.h"
 #include "clang/AST/TypeLocVisitor.h"
 #include "clang/Lex/MacroInfo.h"
-#include "clang/Lex/PreprocessingRecord.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Lex/HeaderSearch.h"
 #include "clang/Basic/OnDiskHashTable.h"
@@ -62,7 +61,6 @@ PCHValidator::ReadLanguageOptions(const LangOptions &LangOpts) {
   PARSE_LANGOPT_BENIGN(DollarIdents);
   PARSE_LANGOPT_BENIGN(AsmPreprocessor);
   PARSE_LANGOPT_IMPORTANT(GNUMode, diag::warn_pch_gnu_extensions);
-  PARSE_LANGOPT_IMPORTANT(GNUKeywords, diag::warn_pch_gnu_keywords);
   PARSE_LANGOPT_BENIGN(ImplicitInt);
   PARSE_LANGOPT_BENIGN(Digraphs);
   PARSE_LANGOPT_BENIGN(HexFloats);
@@ -75,8 +73,6 @@ PCHValidator::ReadLanguageOptions(const LangOptions &LangOpts) {
   PARSE_LANGOPT_IMPORTANT(ObjC2, diag::warn_pch_objective_c2);
   PARSE_LANGOPT_IMPORTANT(ObjCNonFragileABI, diag::warn_pch_nonfragile_abi);
   PARSE_LANGOPT_IMPORTANT(ObjCNonFragileABI2, diag::warn_pch_nonfragile_abi2);
-  PARSE_LANGOPT_IMPORTANT(NoConstantCFStrings, 
-                          diag::warn_pch_no_constant_cfstrings);
   PARSE_LANGOPT_BENIGN(PascalStrings);
   PARSE_LANGOPT_BENIGN(WritableStrings);
   PARSE_LANGOPT_IMPORTANT(LaxVectorConversions,
@@ -154,10 +150,7 @@ bool PCHValidator::ReadPredefinesBuffer(llvm::StringRef PCHPredef,
   std::pair<llvm::StringRef,llvm::StringRef> Split =
     llvm::StringRef(PP.getPredefines()).split(PCHInclude.str());
   llvm::StringRef Left =  Split.first, Right = Split.second;
-  if (Left == PP.getPredefines()) {
-    Error("Missing PCH include entry!");
-    return true;
-  }
+  assert(Left != PP.getPredefines() && "Missing PCH include entry!");
 
   // If the predefines is equal to the joined left and right halves, we're done!
   if (Left.size() + Right.size() == PCHPredef.size() &&
@@ -307,10 +300,8 @@ bool PCHValidator::ReadPredefinesBuffer(llvm::StringRef PCHPredef,
   return false;
 }
 
-void PCHValidator::ReadHeaderFileInfo(const HeaderFileInfo &HFI,
-                                      unsigned ID) {
-  PP.getHeaderSearchInfo().setHeaderFileInfoForUID(HFI, ID);
-  ++NumHeaderInfos;
+void PCHValidator::ReadHeaderFileInfo(const HeaderFileInfo &HFI) {
+  PP.getHeaderSearchInfo().setHeaderFileInfoForUID(HFI, NumHeaderInfos++);
 }
 
 void PCHValidator::ReadCounter(unsigned Value) {
@@ -330,9 +321,8 @@ PCHReader::PCHReader(Preprocessor &PP, ASTContext *Context,
     IdentifierOffsets(0),
     MethodPoolLookupTable(0), MethodPoolLookupTableData(0),
     TotalSelectorsInMethodPool(0), SelectorOffsets(0),
-    TotalNumSelectors(0), MacroDefinitionOffsets(0), 
-    NumPreallocatedPreprocessingEntities(0),  
-    isysroot(isysroot), NumStatHits(0), NumStatMisses(0),
+    TotalNumSelectors(0), Comments(0), NumComments(0), isysroot(isysroot),
+    NumStatHits(0), NumStatMisses(0),
     NumSLocEntriesRead(0), NumStatementsRead(0),
     NumMacrosRead(0), NumMethodPoolSelectorsRead(0), NumMethodPoolMisses(0),
     NumLexicalDeclContextsRead(0), NumVisibleDeclContextsRead(0),
@@ -348,9 +338,8 @@ PCHReader::PCHReader(SourceManager &SourceMgr, FileManager &FileMgr,
     IdentifierOffsets(0),
     MethodPoolLookupTable(0), MethodPoolLookupTableData(0),
     TotalSelectorsInMethodPool(0), SelectorOffsets(0),
-    TotalNumSelectors(0), MacroDefinitionOffsets(0), 
-    NumPreallocatedPreprocessingEntities(0),  
-    isysroot(isysroot), NumStatHits(0), NumStatMisses(0),
+    TotalNumSelectors(0), Comments(0), NumComments(0), isysroot(isysroot),
+    NumStatHits(0), NumStatMisses(0),
     NumSLocEntriesRead(0), NumStatementsRead(0),
     NumMacrosRead(0), NumMethodPoolSelectorsRead(0), NumMethodPoolMisses(0),
     NumLexicalDeclContextsRead(0), NumVisibleDeclContextsRead(0),
@@ -612,8 +601,10 @@ public:
 typedef OnDiskChainedHashTable<PCHIdentifierLookupTrait>
   PCHIdentifierLookupTable;
 
-void PCHReader::Error(const char *Msg) {
-  Diag(diag::err_fe_pch_malformed) << Msg;
+bool PCHReader::Error(const char *Msg) {
+  unsigned DiagID = Diags.getCustomDiagID(Diagnostic::Fatal, Msg);
+  Diag(DiagID);
+  return true;
 }
 
 /// \brief Check the contents of the predefines buffer against the
@@ -859,6 +850,17 @@ PCHReader::PCHReadResult PCHReader::ReadSourceManagerBlock() {
         return Failure;
       break;
 
+    case pch::SM_HEADER_FILE_INFO: {
+      HeaderFileInfo HFI;
+      HFI.isImport = Record[0];
+      HFI.DirInfo = Record[1];
+      HFI.NumIncludes = Record[2];
+      HFI.ControllingMacroID = Record[3];
+      if (Listener)
+        Listener->ReadHeaderFileInfo(HFI);
+      break;
+    }
+
     case pch::SM_SLOC_FILE_ENTRY:
     case pch::SM_SLOC_BUFFER_ENTRY:
     case pch::SM_SLOC_INSTANTIATION_ENTRY:
@@ -908,24 +910,6 @@ PCHReader::PCHReadResult PCHReader::ReadSLocEntryRecord(unsigned ID) {
       return Failure;
     }
 
-    if (Record.size() < 10) {
-      Error("source location entry is incorrect");
-      return Failure;
-    }
-
-    if ((off_t)Record[4] != File->getSize()
-#if !defined(LLVM_ON_WIN32)
-        // In our regression testing, the Windows file system seems to
-        // have inconsistent modification times that sometimes
-        // erroneously trigger this error-handling path.
-        || (time_t)Record[5] != File->getModificationTime()
-#endif
-        ) {
-      Diag(diag::err_fe_pch_file_modified)
-        << Filename;
-      return Failure;
-    }
-
     FileID FID = SourceMgr.createFileID(File,
                                 SourceLocation::getFromRawEncoding(Record[1]),
                                        (SrcMgr::CharacteristicKind)Record[2],
@@ -934,14 +918,6 @@ PCHReader::PCHReadResult PCHReader::ReadSLocEntryRecord(unsigned ID) {
       const_cast<SrcMgr::FileInfo&>(SourceMgr.getSLocEntry(FID).getFile())
         .setHasLineDirectives();
 
-    // Reconstruct header-search information for this file.
-    HeaderFileInfo HFI;
-    HFI.isImport = Record[6];
-    HFI.DirInfo = Record[7];
-    HFI.NumIncludes = Record[8];
-    HFI.ControllingMacroID = Record[9];
-    if (Listener)
-      Listener->ReadHeaderFileInfo(HFI, File->getUID());
     break;
   }
 
@@ -952,15 +928,12 @@ PCHReader::PCHReadResult PCHReader::ReadSLocEntryRecord(unsigned ID) {
     Record.clear();
     unsigned RecCode
       = SLocEntryCursor.ReadRecord(Code, Record, &BlobStart, &BlobLen);
-
-    if (RecCode != pch::SM_SLOC_BUFFER_BLOB) {
-      Error("PCH record has invalid code");
-      return Failure;
-    }
-
+    assert(RecCode == pch::SM_SLOC_BUFFER_BLOB && "Ill-formed PCH file");
+    (void)RecCode;
     llvm::MemoryBuffer *Buffer
-    = llvm::MemoryBuffer::getMemBuffer(llvm::StringRef(BlobStart, BlobLen - 1),
-                                       Name);
+      = llvm::MemoryBuffer::getMemBuffer(BlobStart,
+                                         BlobStart + BlobLen - 1,
+                                         Name);
     FileID BufferID = SourceMgr.createFileIDForMemBuffer(Buffer, ID, Offset);
 
     if (strcmp(Name, "<built-in>") == 0) {
@@ -1065,14 +1038,12 @@ void PCHReader::ReadMacroRecord(uint64_t Offset) {
       MacroInfo *MI = PP->AllocateMacroInfo(Loc);
       MI->setIsUsed(isUsed);
 
-      unsigned NextIndex = 3;
       if (RecType == pch::PP_MACRO_FUNCTION_LIKE) {
         // Decode function-like macro info.
         bool isC99VarArgs = Record[3];
         bool isGNUVarArgs = Record[4];
         MacroArgs.clear();
         unsigned NumArgs = Record[5];
-        NextIndex = 6 + NumArgs;
         for (unsigned i = 0; i != NumArgs; ++i)
           MacroArgs.push_back(DecodeIdentifierInfo(Record[6+i]));
 
@@ -1090,13 +1061,6 @@ void PCHReader::ReadMacroRecord(uint64_t Offset) {
       // Remember that we saw this macro last so that we add the tokens that
       // form its body to it.
       Macro = MI;
-      
-      if (NextIndex + 1 == Record.size() && PP->getPreprocessingRecord()) {
-        // We have a macro definition. Load it now.
-        PP->getPreprocessingRecord()->RegisterMacroDefinition(Macro,
-                                        getMacroDefinition(Record[NextIndex]));
-      }
-      
       ++NumMacrosRead;
       break;
     }
@@ -1116,64 +1080,6 @@ void PCHReader::ReadMacroRecord(uint64_t Offset) {
       Tok.setFlag((Token::TokenFlags)Record[4]);
       Macro->AddTokenToBody(Tok);
       break;
-    }
-        
-    case pch::PP_MACRO_INSTANTIATION: {
-      // If we already have a macro, that means that we've hit the end
-      // of the definition of the macro we were looking for. We're
-      // done.
-      if (Macro)
-        return;
-      
-      if (!PP->getPreprocessingRecord()) {
-        Error("missing preprocessing record in PCH file");
-        return;
-      }
-        
-      PreprocessingRecord &PPRec = *PP->getPreprocessingRecord();
-      if (PPRec.getPreprocessedEntity(Record[0]))
-        return;
-
-      MacroInstantiation *MI
-        = new (PPRec) MacroInstantiation(DecodeIdentifierInfo(Record[3]),
-                               SourceRange(
-                                 SourceLocation::getFromRawEncoding(Record[1]),
-                                 SourceLocation::getFromRawEncoding(Record[2])),
-                                         getMacroDefinition(Record[4]));
-      PPRec.SetPreallocatedEntity(Record[0], MI);
-      return;
-    }
-
-    case pch::PP_MACRO_DEFINITION: {
-      // If we already have a macro, that means that we've hit the end
-      // of the definition of the macro we were looking for. We're
-      // done.
-      if (Macro)
-        return;
-      
-      if (!PP->getPreprocessingRecord()) {
-        Error("missing preprocessing record in PCH file");
-        return;
-      }
-      
-      PreprocessingRecord &PPRec = *PP->getPreprocessingRecord();
-      if (PPRec.getPreprocessedEntity(Record[0]))
-        return;
-        
-      if (Record[1] >= MacroDefinitionsLoaded.size()) {
-        Error("out-of-bounds macro definition record");
-        return;
-      }
-
-      MacroDefinition *MD
-        = new (PPRec) MacroDefinition(DecodeIdentifierInfo(Record[4]),
-                                SourceLocation::getFromRawEncoding(Record[5]),
-                              SourceRange(
-                                SourceLocation::getFromRawEncoding(Record[2]),
-                                SourceLocation::getFromRawEncoding(Record[3])));
-      PPRec.SetPreallocatedEntity(Record[0], MD);
-      MacroDefinitionsLoaded[Record[1]] = MD;
-      return;
     }
   }
   }
@@ -1224,30 +1130,14 @@ void PCHReader::ReadDefinedMacros() {
 
     case pch::PP_MACRO_OBJECT_LIKE:
     case pch::PP_MACRO_FUNCTION_LIKE:
-      DecodeIdentifierInfo(Record[0]);
+        DecodeIdentifierInfo(Record[0]);
       break;
 
     case pch::PP_TOKEN:
       // Ignore tokens.
       break;
-        
-    case pch::PP_MACRO_INSTANTIATION:
-    case pch::PP_MACRO_DEFINITION:
-      // Read the macro record.
-      ReadMacroRecord(Cursor.GetCurrentBitNo());
-      break;
     }
   }
-}
-
-MacroDefinition *PCHReader::getMacroDefinition(pch::IdentID ID) {
-  if (ID == 0 || ID >= MacroDefinitionsLoaded.size())
-    return 0;
-  
-  if (!MacroDefinitionsLoaded[ID])
-    ReadMacroRecord(MacroDefinitionOffsets[ID]);
-    
-  return MacroDefinitionsLoaded[ID];
 }
 
 /// \brief If we are loading a relocatable PCH file, and the filename is
@@ -1518,6 +1408,11 @@ PCHReader::ReadPCHBlock() {
       MaybeAddSystemRootToFilename(OriginalFileName);
       break;
 
+    case pch::COMMENT_RANGES:
+      Comments = (SourceRange *)BlobStart;
+      NumComments = BlobLen / sizeof(SourceRange);
+      break;
+
     case pch::VERSION_CONTROL_BRANCH_REVISION: {
       const std::string &CurBranch = getClangFullRepositoryVersion();
       llvm::StringRef PCHBranch(BlobStart, BlobLen);
@@ -1527,19 +1422,6 @@ PCHReader::ReadPCHBlock() {
       }
       break;
     }
-        
-    case pch::MACRO_DEFINITION_OFFSETS:
-      MacroDefinitionOffsets = (const uint32_t *)BlobStart;
-      if (PP) {
-        if (!PP->getPreprocessingRecord())
-          PP->createPreprocessingRecord();
-        PP->getPreprocessingRecord()->SetExternalSource(*this, Record[0]);
-      } else {
-        NumPreallocatedPreprocessingEntities = Record[0];
-      }
-       
-      MacroDefinitionsLoaded.resize(Record[1]);
-      break;
     }
   }
   Error("premature end of bitstream in PCH file");
@@ -1671,18 +1553,6 @@ PCHReader::PCHReadResult PCHReader::ReadPCH(const std::string &FileName) {
   return Success;
 }
 
-void PCHReader::setPreprocessor(Preprocessor &pp) {
-  PP = &pp;
-  
-  if (NumPreallocatedPreprocessingEntities) {
-    if (!PP->getPreprocessingRecord())
-      PP->createPreprocessingRecord();
-    PP->getPreprocessingRecord()->SetExternalSource(*this, 
-                                          NumPreallocatedPreprocessingEntities);
-    NumPreallocatedPreprocessingEntities = 0;
-  }
-}
-
 void PCHReader::InitializeContext(ASTContext &Ctx) {
   Context = &Ctx;
   assert(Context && "Passed null context!");
@@ -1714,44 +1584,29 @@ void PCHReader::InitializeContext(ASTContext &Ctx) {
     Context->setObjCFastEnumerationStateType(GetType(FastEnum));
   if (unsigned File = SpecialTypes[pch::SPECIAL_TYPE_FILE]) {
     QualType FileType = GetType(File);
-    if (FileType.isNull()) {
-      Error("FILE type is NULL");
-      return;
-    }
+    assert(!FileType.isNull() && "FILE type is NULL");
     if (const TypedefType *Typedef = FileType->getAs<TypedefType>())
       Context->setFILEDecl(Typedef->getDecl());
     else {
       const TagType *Tag = FileType->getAs<TagType>();
-      if (!Tag) {
-        Error("Invalid FILE type in PCH file");
-        return;
-      }
+      assert(Tag && "Invalid FILE type in PCH file");
       Context->setFILEDecl(Tag->getDecl());
     }
   }
   if (unsigned Jmp_buf = SpecialTypes[pch::SPECIAL_TYPE_jmp_buf]) {
     QualType Jmp_bufType = GetType(Jmp_buf);
-    if (Jmp_bufType.isNull()) {
-      Error("jmp_bug type is NULL");
-      return;
-    }
+    assert(!Jmp_bufType.isNull() && "jmp_bug type is NULL");
     if (const TypedefType *Typedef = Jmp_bufType->getAs<TypedefType>())
       Context->setjmp_bufDecl(Typedef->getDecl());
     else {
       const TagType *Tag = Jmp_bufType->getAs<TagType>();
-      if (!Tag) {
-        Error("Invalid jmp_bug type in PCH file");
-        return;
-      }
+      assert(Tag && "Invalid jmp_bug type in PCH file");
       Context->setjmp_bufDecl(Tag->getDecl());
     }
   }
   if (unsigned Sigjmp_buf = SpecialTypes[pch::SPECIAL_TYPE_sigjmp_buf]) {
     QualType Sigjmp_bufType = GetType(Sigjmp_buf);
-    if (Sigjmp_bufType.isNull()) {
-      Error("sigjmp_buf type is NULL");
-      return;
-    }
+    assert(!Sigjmp_bufType.isNull() && "sigjmp_buf type is NULL");
     if (const TypedefType *Typedef = Sigjmp_bufType->getAs<TypedefType>())
       Context->setsigjmp_bufDecl(Typedef->getDecl());
     else {
@@ -1766,16 +1621,17 @@ void PCHReader::InitializeContext(ASTContext &Ctx) {
   if (unsigned ObjCClassRedef
       = SpecialTypes[pch::SPECIAL_TYPE_OBJC_CLASS_REDEFINITION])
     Context->ObjCClassRedefinitionType = GetType(ObjCClassRedef);
+#if 0
+  // FIXME. Accommodate for this in several PCH/Index tests
+  if (unsigned ObjCSelRedef
+      = SpecialTypes[pch::SPECIAL_TYPE_OBJC_SEL_REDEFINITION])
+    Context->ObjCSelRedefinitionType = GetType(ObjCSelRedef);
+#endif
   if (unsigned String = SpecialTypes[pch::SPECIAL_TYPE_BLOCK_DESCRIPTOR])
     Context->setBlockDescriptorType(GetType(String));
   if (unsigned String
       = SpecialTypes[pch::SPECIAL_TYPE_BLOCK_EXTENDED_DESCRIPTOR])
     Context->setBlockDescriptorExtendedType(GetType(String));
-  if (unsigned ObjCSelRedef
-      = SpecialTypes[pch::SPECIAL_TYPE_OBJC_SEL_REDEFINITION])
-    Context->ObjCSelRedefinitionType = GetType(ObjCSelRedef);
-  if (unsigned String = SpecialTypes[pch::SPECIAL_TYPE_NS_CONSTANT_STRING])
-    Context->setNSConstantStringType(GetType(String));
 }
 
 /// \brief Retrieve the name of the original source file name
@@ -1887,7 +1743,6 @@ bool PCHReader::ParseLanguageOptions(
     PARSE_LANGOPT(DollarIdents);
     PARSE_LANGOPT(AsmPreprocessor);
     PARSE_LANGOPT(GNUMode);
-    PARSE_LANGOPT(GNUKeywords);
     PARSE_LANGOPT(ImplicitInt);
     PARSE_LANGOPT(Digraphs);
     PARSE_LANGOPT(HexFloats);
@@ -1900,7 +1755,6 @@ bool PCHReader::ParseLanguageOptions(
     PARSE_LANGOPT(ObjC2);
     PARSE_LANGOPT(ObjCNonFragileABI);
     PARSE_LANGOPT(ObjCNonFragileABI2);
-    PARSE_LANGOPT(NoConstantCFStrings);
     PARSE_LANGOPT(PascalStrings);
     PARSE_LANGOPT(WritableStrings);
     PARSE_LANGOPT(LaxVectorConversions);
@@ -1945,8 +1799,10 @@ bool PCHReader::ParseLanguageOptions(
   return false;
 }
 
-void PCHReader::ReadPreprocessedEntities() {
-  ReadDefinedMacros();
+void PCHReader::ReadComments(std::vector<SourceRange> &Comments) {
+  Comments.resize(NumComments);
+  std::copy(this->Comments, this->Comments + NumComments,
+            Comments.begin());
 }
 
 /// \brief Read and return the type at the given offset.
@@ -1967,65 +1823,45 @@ QualType PCHReader::ReadTypeRecord(uint64_t Offset) {
   unsigned Code = DeclsCursor.ReadCode();
   switch ((pch::TypeCode)DeclsCursor.ReadRecord(Code, Record)) {
   case pch::TYPE_EXT_QUAL: {
-    if (Record.size() != 2) {
-      Error("Incorrect encoding of extended qualifier type");
-      return QualType();
-    }
+    assert(Record.size() == 2 &&
+           "Incorrect encoding of extended qualifier type");
     QualType Base = GetType(Record[0]);
     Qualifiers Quals = Qualifiers::fromOpaqueValue(Record[1]);
     return Context->getQualifiedType(Base, Quals);
   }
 
   case pch::TYPE_COMPLEX: {
-    if (Record.size() != 1) {
-      Error("Incorrect encoding of complex type");
-      return QualType();
-    }
+    assert(Record.size() == 1 && "Incorrect encoding of complex type");
     QualType ElemType = GetType(Record[0]);
     return Context->getComplexType(ElemType);
   }
 
   case pch::TYPE_POINTER: {
-    if (Record.size() != 1) {
-      Error("Incorrect encoding of pointer type");
-      return QualType();
-    }
+    assert(Record.size() == 1 && "Incorrect encoding of pointer type");
     QualType PointeeType = GetType(Record[0]);
     return Context->getPointerType(PointeeType);
   }
 
   case pch::TYPE_BLOCK_POINTER: {
-    if (Record.size() != 1) {
-      Error("Incorrect encoding of block pointer type");
-      return QualType();
-    }
+    assert(Record.size() == 1 && "Incorrect encoding of block pointer type");
     QualType PointeeType = GetType(Record[0]);
     return Context->getBlockPointerType(PointeeType);
   }
 
   case pch::TYPE_LVALUE_REFERENCE: {
-    if (Record.size() != 1) {
-      Error("Incorrect encoding of lvalue reference type");
-      return QualType();
-    }
+    assert(Record.size() == 1 && "Incorrect encoding of lvalue reference type");
     QualType PointeeType = GetType(Record[0]);
     return Context->getLValueReferenceType(PointeeType);
   }
 
   case pch::TYPE_RVALUE_REFERENCE: {
-    if (Record.size() != 1) {
-      Error("Incorrect encoding of rvalue reference type");
-      return QualType();
-    }
+    assert(Record.size() == 1 && "Incorrect encoding of rvalue reference type");
     QualType PointeeType = GetType(Record[0]);
     return Context->getRValueReferenceType(PointeeType);
   }
 
   case pch::TYPE_MEMBER_POINTER: {
-    if (Record.size() != 1) {
-      Error("Incorrect encoding of member pointer type");
-      return QualType();
-    }
+    assert(Record.size() == 1 && "Incorrect encoding of member pointer type");
     QualType PointeeType = GetType(Record[0]);
     QualType ClassType = GetType(Record[1]);
     return Context->getMemberPointerType(PointeeType, ClassType.getTypePtr());
@@ -2084,21 +1920,20 @@ QualType PCHReader::ReadTypeRecord(uint64_t Offset) {
   }
 
   case pch::TYPE_FUNCTION_NO_PROTO: {
-    if (Record.size() != 4) {
+    if (Record.size() != 3) {
       Error("incorrect encoding of no-proto function type");
       return QualType();
     }
     QualType ResultType = GetType(Record[0]);
-    FunctionType::ExtInfo Info(Record[1], Record[2], (CallingConv)Record[3]);
-    return Context->getFunctionNoProtoType(ResultType, Info);
+    return Context->getFunctionNoProtoType(ResultType, Record[1],
+                                           (CallingConv)Record[2]);
   }
 
   case pch::TYPE_FUNCTION_PROTO: {
     QualType ResultType = GetType(Record[0]);
     bool NoReturn = Record[1];
-    unsigned RegParm = Record[2];
-    CallingConv CallConv = (CallingConv)Record[3];
-    unsigned Idx = 4;
+    CallingConv CallConv = (CallingConv)Record[2];
+    unsigned Idx = 3;
     unsigned NumParams = Record[Idx++];
     llvm::SmallVector<QualType, 16> ParamTypes;
     for (unsigned I = 0; I != NumParams; ++I)
@@ -2114,9 +1949,7 @@ QualType PCHReader::ReadTypeRecord(uint64_t Offset) {
     return Context->getFunctionType(ResultType, ParamTypes.data(), NumParams,
                                     isVariadic, Quals, hasExceptionSpec,
                                     hasAnyExceptionSpec, NumExceptions,
-                                    Exceptions.data(),
-                                    FunctionType::ExtInfo(NoReturn, RegParm,
-                                                          CallConv));
+                                    Exceptions.data(), NoReturn, CallConv);
   }
 
   case pch::TYPE_UNRESOLVED_USING:
@@ -2124,10 +1957,7 @@ QualType PCHReader::ReadTypeRecord(uint64_t Offset) {
              cast<UnresolvedUsingTypenameDecl>(GetDecl(Record[0])));
 
   case pch::TYPE_TYPEDEF:
-    if (Record.size() != 1) {
-      Error("incorrect encoding of typedef type");
-      return QualType();
-    }
+    assert(Record.size() == 1 && "incorrect encoding of typedef type");
     return Context->getTypeDeclType(cast<TypedefDecl>(GetDecl(Record[0])));
 
   case pch::TYPE_TYPEOF_EXPR:
@@ -2146,24 +1976,15 @@ QualType PCHReader::ReadTypeRecord(uint64_t Offset) {
     return Context->getDecltypeType(ReadTypeExpr());
 
   case pch::TYPE_RECORD:
-    if (Record.size() != 1) {
-      Error("incorrect encoding of record type");
-      return QualType();
-    }
+    assert(Record.size() == 1 && "incorrect encoding of record type");
     return Context->getTypeDeclType(cast<RecordDecl>(GetDecl(Record[0])));
 
   case pch::TYPE_ENUM:
-    if (Record.size() != 1) {
-      Error("incorrect encoding of enum type");
-      return QualType();
-    }
+    assert(Record.size() == 1 && "incorrect encoding of enum type");
     return Context->getTypeDeclType(cast<EnumDecl>(GetDecl(Record[0])));
 
   case pch::TYPE_ELABORATED: {
-    if (Record.size() != 2) {
-      Error("incorrect encoding of elaborated type");
-      return QualType();
-    }
+    assert(Record.size() == 2 && "incorrect encoding of elaborated type");
     unsigned Tag = Record[1];
     return Context->getElaboratedType(GetType(Record[0]),
                                       (ElaboratedType::TagKind) Tag);
@@ -2196,12 +2017,6 @@ QualType PCHReader::ReadTypeRecord(uint64_t Offset) {
     return
       Context->getSubstTemplateTypeParmType(cast<TemplateTypeParmType>(Parm),
                                             Replacement);
-  }
-
-  case pch::TYPE_INJECTED_CLASS_NAME: {
-    CXXRecordDecl *D = cast<CXXRecordDecl>(GetDecl(Record[0]));
-    QualType TST = GetType(Record[1]); // probably derivable
-    return Context->getInjectedClassNameType(D, TST);
   }
   }
   // Suppress a GCC warning
@@ -2357,10 +2172,7 @@ void TypeLocReader::VisitTemplateSpecializationTypeLoc(
 void TypeLocReader::VisitQualifiedNameTypeLoc(QualifiedNameTypeLoc TL) {
   TL.setNameLoc(SourceLocation::getFromRawEncoding(Record[Idx++]));
 }
-void TypeLocReader::VisitInjectedClassNameTypeLoc(InjectedClassNameTypeLoc TL) {
-  TL.setNameLoc(SourceLocation::getFromRawEncoding(Record[Idx++]));
-}
-void TypeLocReader::VisitDependentNameTypeLoc(DependentNameTypeLoc TL) {
+void TypeLocReader::VisitTypenameTypeLoc(TypenameTypeLoc TL) {
   TL.setNameLoc(SourceLocation::getFromRawEncoding(Record[Idx++]));
 }
 void TypeLocReader::VisitObjCInterfaceTypeLoc(ObjCInterfaceTypeLoc TL) {
@@ -2508,12 +2320,8 @@ bool PCHReader::ReadDeclsLexicallyInContext(DeclContext *DC,
                                   llvm::SmallVectorImpl<pch::DeclID> &Decls) {
   assert(DC->hasExternalLexicalStorage() &&
          "DeclContext has no lexical decls in storage");
-
   uint64_t Offset = DeclContextOffsets[DC].first;
-  if (Offset == 0) {
-    Error("DeclContext has no lexical decls in storage");
-    return true;
-  }
+  assert(Offset && "DeclContext has no lexical decls in storage");
 
   // Keep track of where we are in the stream, then jump back there
   // after reading this context.
@@ -2525,10 +2333,8 @@ bool PCHReader::ReadDeclsLexicallyInContext(DeclContext *DC,
   RecordData Record;
   unsigned Code = DeclsCursor.ReadCode();
   unsigned RecCode = DeclsCursor.ReadRecord(Code, Record);
-  if (RecCode != pch::DECL_CONTEXT_LEXICAL) {
-    Error("Expected lexical block");
-    return true;
-  }
+  (void)RecCode;
+  assert(RecCode == pch::DECL_CONTEXT_LEXICAL && "Expected lexical block");
 
   // Load all of the declaration IDs
   Decls.clear();
@@ -2542,10 +2348,7 @@ bool PCHReader::ReadDeclsVisibleInContext(DeclContext *DC,
   assert(DC->hasExternalVisibleStorage() &&
          "DeclContext has no visible decls in storage");
   uint64_t Offset = DeclContextOffsets[DC].second;
-  if (Offset == 0) {
-    Error("DeclContext has no visible decls in storage");
-    return true;
-  }
+  assert(Offset && "DeclContext has no visible decls in storage");
 
   // Keep track of where we are in the stream, then jump back there
   // after reading this context.
@@ -2557,11 +2360,8 @@ bool PCHReader::ReadDeclsVisibleInContext(DeclContext *DC,
   RecordData Record;
   unsigned Code = DeclsCursor.ReadCode();
   unsigned RecCode = DeclsCursor.ReadRecord(Code, Record);
-  if (RecCode != pch::DECL_CONTEXT_VISIBLE) {
-    Error("Expected visible block");
-    return true;
-  }
-
+  (void)RecCode;
+  assert(RecCode == pch::DECL_CONTEXT_VISIBLE && "Expected visible block");
   if (Record.size() == 0)
     return false;
 
@@ -2819,7 +2619,7 @@ IdentifierInfo *PCHReader::DecodeIdentifierInfo(unsigned ID) {
     unsigned StrLen = (((unsigned) StrLenPtr[0])
                        | (((unsigned) StrLenPtr[1]) << 8)) - 1;
     IdentifiersLoaded[ID - 1]
-      = &PP->getIdentifierTable().get(Str, StrLen);
+      = &PP->getIdentifierTable().get(Str, Str + StrLen);
   }
 
   return IdentifiersLoaded[ID - 1];
@@ -2851,14 +2651,6 @@ Selector PCHReader::DecodeSelector(unsigned ID) {
   }
 
   return SelectorsLoaded[Index];
-}
-
-Selector PCHReader::GetSelector(uint32_t ID) { 
-  return DecodeSelector(ID);
-}
-
-uint32_t PCHReader::GetNumKnownSelectors() {
-  return TotalNumSelectors + 1;
 }
 
 DeclarationName

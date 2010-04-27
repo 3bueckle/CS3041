@@ -18,6 +18,9 @@
 #include "clang/Checker/PathSensitive/SVals.h"
 #include "clang/Checker/PathSensitive/ValueManager.h"
 #include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallSet.h"
+#include "llvm/ADT/SmallVector.h"
 
 namespace clang {
 
@@ -129,13 +132,10 @@ public:
     CastResult(const GRState *s, const MemRegion* r = 0) : state(s), region(r){}
   };
 
-  const ElementRegion *GetElementZeroRegion(const MemRegion *R, QualType T);
-
   /// CastRegion - Used by GRExprEngine::VisitCast to handle casts from
   ///  a MemRegion* to a specific location type.  'R' is the region being
   ///  casted and 'CastToTy' the result type of the cast.
   const MemRegion *CastRegion(const MemRegion *region, QualType CastToTy);
-
 
   /// EvalBinOp - Perform pointer arithmetic.
   virtual SVal EvalBinOp(BinaryOperator::Opcode Op,
@@ -144,7 +144,6 @@ public:
   }
 
   virtual Store RemoveDeadBindings(Store store, Stmt* Loc,
-                                   const StackFrameContext *LCtx,
                                    SymbolReaper& SymReaper,
                       llvm::SmallVectorImpl<const MemRegion*>& RegionRoots) = 0;
 

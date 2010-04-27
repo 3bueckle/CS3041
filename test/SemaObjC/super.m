@@ -1,7 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify -fblocks %s
-
-void takevoidptr(void*);
-
+// RUN: %clang_cc1 -fsyntax-only -verify %s
 
 @interface Foo
 - iMethod;
@@ -9,8 +6,6 @@ void takevoidptr(void*);
 @end
 
 @interface A
-+ superClassMethod;
-- (void)instanceMethod;
 @end
 
 @interface B : A
@@ -21,24 +16,11 @@ void takevoidptr(void*);
 @implementation B
 
 - (void)instanceMethod {
-  [super iMethod]; // expected-warning{{'A' may not respond to 'iMethod')}}
-  
-  // Use of super in a block is ok and does codegen to the right thing.
-  // rdar://7852959
-  takevoidptr(^{
-    [super instanceMethod];
-  });
+  [super iMethod]; // expected-warning{{method '-iMethod' not found (return type defaults to 'id')}}
 }
 
 + classMethod {
   [super cMethod]; // expected-warning{{method '+cMethod' not found (return type defaults to 'id')}}
-  
-  id X[] = { [ super superClassMethod] };
-  id Y[] = {
-    [ super.superClassMethod iMethod],
-    super.superClassMethod,
-    (id)super.superClassMethod  // not a cast of super: rdar://7853261
-  };
   return 0;
 }
 @end
@@ -54,34 +36,13 @@ void f0(int super) {
   [super m]; // expected-warning{{receiver type 'int' is not 'id'}} \
                 expected-warning {{method '-m' not found (return type defaults to 'id')}}
 }
-void f1(id puper) {  // expected-note {{'puper' declared here}}
-  [super m]; // expected-error{{use of undeclared identifier 'super'; did you mean 'puper'?}}
+void f1(int puper) {
+  [super m]; // expected-error{{use of undeclared identifier 'super'}}
 }
 
 // radar 7400691
 typedef Foo super;
 
-typedef Foo FooTD;
-
 void test() {
-  [FooTD cMethod];
   [super cMethod];
-}
-
-struct SomeStruct {
-  int X;
-};
-
-int test2() {
-  struct SomeStruct super = { 0 };
-  return super.X;
-}
-
-int test3() {
-  id super = 0;
-  [(B*)super instanceMethod];
-  int *s1 = (int*)super;
-  
-  id X[] = { [ super superClassMethod] };
-  return 0;
 }

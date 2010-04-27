@@ -38,13 +38,6 @@ static bool IsCompleteType(ASTContext &Ctx, QualType Ty) {
   return true;
 }
 
-const ElementRegion *StoreManager::GetElementZeroRegion(const MemRegion *R, 
-                                                        QualType T) {
-  SVal idx = ValMgr.makeZeroArrayIndex();
-  assert(!T.isNull());
-  return MRMgr.getElementRegion(T, idx, R, Ctx);
-}
-
 const MemRegion *StoreManager::CastRegion(const MemRegion *R, QualType CastToTy) {
 
   ASTContext& Ctx = StateMgr.getContext();
@@ -177,14 +170,13 @@ const MemRegion *StoreManager::CastRegion(const MemRegion *R, QualType CastToTy)
       if (IsCompleteType(Ctx, PointeeTy)) {
         // Compute the size in **bytes**.
         CharUnits pointeeTySize = Ctx.getTypeSizeInChars(PointeeTy);
-        if (!pointeeTySize.isZero()) {
-          // Is the offset a multiple of the size?  If so, we can layer the
-          // ElementRegion (with elementType == PointeeTy) directly on top of
-          // the base region.
-          if (off % pointeeTySize == 0) {
-            newIndex = off / pointeeTySize;
-            newSuperR = baseR;
-          }
+
+        // Is the offset a multiple of the size?  If so, we can layer the
+        // ElementRegion (with elementType == PointeeTy) directly on top of
+        // the base region.
+        if (off % pointeeTySize == 0) {
+          newIndex = off / pointeeTySize;
+          newSuperR = baseR;
         }
       }
 

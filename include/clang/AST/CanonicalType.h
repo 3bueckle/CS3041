@@ -165,8 +165,6 @@ public:
   // (dynamic) type.
   static CanQual<T> CreateUnsafe(QualType Other);
 
-  void dump() const { Stored.dump(); }
-
   void Profile(llvm::FoldingSetNodeID &ID) const {
     ID.AddPointer(getAsOpaquePtr());
   }
@@ -263,7 +261,6 @@ public:
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isMemberFunctionPointerType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isClassType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isStructureType)
-  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isStructureOrClassType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isUnionType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isComplexIntegerType)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, isNullPtrType)
@@ -565,21 +562,24 @@ struct CanProxyAdaptor<ExtVectorType> : public CanProxyBase<ExtVectorType> {
 template<>
 struct CanProxyAdaptor<FunctionType> : public CanProxyBase<FunctionType> {
   LLVM_CLANG_CANPROXY_TYPE_ACCESSOR(getResultType)
-  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(FunctionType::ExtInfo, getExtInfo)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, getNoReturnAttr)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(CallingConv, getCallConv)
 };
 
 template<>
 struct CanProxyAdaptor<FunctionNoProtoType>
   : public CanProxyBase<FunctionNoProtoType> {
   LLVM_CLANG_CANPROXY_TYPE_ACCESSOR(getResultType)
-  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(FunctionType::ExtInfo, getExtInfo)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, getNoReturnAttr)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(CallingConv, getCallConv)
 };
 
 template<>
 struct CanProxyAdaptor<FunctionProtoType>
   : public CanProxyBase<FunctionProtoType> {
   LLVM_CLANG_CANPROXY_TYPE_ACCESSOR(getResultType)
-  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(FunctionType::ExtInfo, getExtInfo)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(bool, getNoReturnAttr)
+  LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(CallingConv, getCallConv)
   LLVM_CLANG_CANPROXY_SIMPLE_ACCESSOR(unsigned, getNumArgs)
   CanQualType getArgType(unsigned i) const {
     return CanQualType::CreateUnsafe(this->getTypePtr()->getArgType(i));

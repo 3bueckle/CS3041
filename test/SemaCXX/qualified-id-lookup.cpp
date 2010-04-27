@@ -96,12 +96,12 @@ void test_a() {
   a::a::a::i = 4;
 }
   
-struct Undef { // expected-note{{definition of 'Undef' is not complete until the closing '}'}}
+struct Undef { // expected-note{{definition of 'struct Undef' is not complete until the closing '}'}}
   typedef int type;
 
   Undef::type member;
 
-  static int size = sizeof(Undef); // expected-error{{invalid application of 'sizeof' to an incomplete type 'Undef'}}
+  static int size = sizeof(Undef); // expected-error{{invalid application of 'sizeof' to an incomplete type 'struct Undef'}}
 
   int f();
 };
@@ -123,26 +123,4 @@ namespace test1 {
   };
 
   template class ClassChecker<int>;  
-}
-
-namespace PR6830 {
-  namespace foo {
-
-    class X {
-    public:
-      X() {}
-    };
-
-  }  // namespace foo
-
-  class Z {
-  public:
-    explicit Z(const foo::X& x) {}
-
-    void Work() {}
-  };
-
-  void Test() {
-    Z(foo::X()).Work();
-  }
 }

@@ -132,8 +132,7 @@ Sema::Sema(Preprocessor &pp, ASTContext &ctxt, ASTConsumer &consumer,
     GlobalNewDeleteDeclared(false), 
     CompleteTranslationUnit(CompleteTranslationUnit),
     NumSFINAEErrors(0), NonInstantiationEntries(0), 
-    CurrentInstantiationScope(0), TyposCorrected(0),
-    AnalysisWarnings(*this)
+    CurrentInstantiationScope(0), TyposCorrected(0)
 {
   TUScope = 0;
   if (getLangOptions().CPlusPlus)
@@ -158,8 +157,7 @@ Sema::~Sema() {
 /// If there is already an implicit cast, merge into the existing one.
 /// If isLvalue, the result of the cast is an lvalue.
 void Sema::ImpCastExprToType(Expr *&Expr, QualType Ty,
-                             CastExpr::CastKind Kind, 
-                             bool isLvalue, CXXBaseSpecifierArray BasePath) {
+                             CastExpr::CastKind Kind, bool isLvalue) {
   QualType ExprTy = Context.getCanonicalType(Expr->getType());
   QualType TypeTy = Context.getCanonicalType(Ty);
 
@@ -178,14 +176,14 @@ void Sema::ImpCastExprToType(Expr *&Expr, QualType Ty,
   CheckImplicitConversion(Expr, Ty);
 
   if (ImplicitCastExpr *ImpCast = dyn_cast<ImplicitCastExpr>(Expr)) {
-    if (ImpCast->getCastKind() == Kind && BasePath.empty()) {
+    if (ImpCast->getCastKind() == Kind) {
       ImpCast->setType(Ty);
       ImpCast->setLvalueCast(isLvalue);
       return;
     }
   }
 
-  Expr = new (Context) ImplicitCastExpr(Ty, Kind, Expr, BasePath, isLvalue);
+  Expr = new (Context) ImplicitCastExpr(Ty, Kind, Expr, isLvalue);
 }
 
 void Sema::DeleteExpr(ExprTy *E) {
@@ -198,7 +196,14 @@ void Sema::DeleteStmt(StmtTy *S) {
 /// ActOnEndOfTranslationUnit - This is called at the very end of the
 /// translation unit when EOF is reached and all but the top-level scope is
 /// popped.
-void Sema::ActOnEndOfTranslationUnit() {  
+void Sema::ActOnEndOfTranslationUnit() {
+  
+  // Remove functions that turned out to be used.
+  UnusedStaticFuncs.erase(std::remove_if(UnusedStaticFuncs.begin(), 
+                                         UnusedStaticFuncs.end(), 
+                                         std::mem_fun(&FunctionDecl::isUsed)), 
+                          UnusedStaticFuncs.end());
+  
   while (1) {
     // C++: Perform implicit template instantiations.
     //
@@ -219,12 +224,6 @@ void Sema::ActOnEndOfTranslationUnit() {
       break;
   }
   
-  // Remove functions that turned out to be used.
-  UnusedStaticFuncs.erase(std::remove_if(UnusedStaticFuncs.begin(), 
-                                         UnusedStaticFuncs.end(), 
-                                         std::mem_fun(&FunctionDecl::isUsed)), 
-                          UnusedStaticFuncs.end());
-
   // Check for #pragma weak identifiers that were never declared
   // FIXME: This will cause diagnostics to be emitted in a non-determinstic
   // order!  Iterating over a densemap like this is bad.
@@ -348,30 +347,6 @@ Sema::SemaDiagnosticBuilder::~SemaDiagnosticBuilder() {
   }
 }
 
-Sema::SemaDiagnosticBuilder Sema::Diag(SourceLocation Loc, unsigned DiagID) {
-  if (isSFINAEContext()) {
-    switch (Diagnostic::getDiagnosticSFINAEResponse(DiagID)) {
-    case Diagnostic::SFINAE_Report:
-      // Fall through; we'll report the diagnostic below.
-      break;
-
-    case Diagnostic::SFINAE_SubstitutionFailure:
-      // Count this failure so that we know that template argument deduction
-      // has failed.
-      ++NumSFINAEErrors;
-      // Fall through
-        
-    case Diagnostic::SFINAE_Suppress:
-      // Suppress this diagnostic.
-      Diags.setLastDiagnosticIgnored();
-      return SemaDiagnosticBuilder(*this);
-    }
-  }
-  
-  DiagnosticBuilder DB = Diags.Report(FullSourceLoc(Loc, SourceMgr), DiagID);
-  return SemaDiagnosticBuilder(DB, *this, DiagID);
-}
-
 Sema::SemaDiagnosticBuilder
 Sema::Diag(SourceLocation Loc, const PartialDiagnostic& PD) {
   SemaDiagnosticBuilder Builder(Diag(Loc, PD.getDiagID()));
@@ -424,3 +399,8 @@ BlockScopeInfo *Sema::getCurBlock() {
   
   return dyn_cast<BlockScopeInfo>(FunctionScopes.back());  
 }
+
+void Sema::ActOnComment(SourceRange Comment) {
+  Context.Comments.push_back(Comment);
+}
+

@@ -225,11 +225,6 @@ bool Type::isStructureType() const {
     return RT->getDecl()->isStruct();
   return false;
 }
-bool Type::isStructureOrClassType() const {
-  if (const RecordType *RT = getAs<RecordType>())
-    return RT->getDecl()->isStruct() || RT->getDecl()->isClass();
-  return false;
-}
 bool Type::isVoidPointerType() const {
   if (const PointerType *PT = getAs<PointerType>())
     return PT->getPointeeType()->isVoidType();
@@ -655,7 +650,6 @@ bool Type::isPODType() const {
   case Vector:
   case ExtVector:
   case ObjCObjectPointer:
-  case BlockPointer:
     return true;
 
   case Enum:
@@ -755,7 +749,7 @@ bool Type::isSpecifierType() const {
   case SubstTemplateTypeParm:
   case TemplateSpecialization:
   case QualifiedName:
-  case DependentName:
+  case Typename:
   case ObjCInterface:
   case ObjCObjectPointer:
   case Elaborated:
@@ -763,27 +757,6 @@ bool Type::isSpecifierType() const {
   default:
     return false;
   }
-}
-
-bool Type::isElaboratedTypeSpecifier() const {
-  if (getTypeClass() == Elaborated)
-    return true;
-  
-  if (const DependentNameType *Dependent = dyn_cast<DependentNameType>(this)) {
-    switch (Dependent->getKeyword()) {
-    case ETK_None:
-    case ETK_Typename:
-      return false;
-        
-    case ETK_Class:
-    case ETK_Struct:
-    case ETK_Union:
-    case ETK_Enum:
-      return true;
-    }
-  }
-  
-  return false;
 }
 
 const char *Type::getTypeClassName() const {
@@ -846,8 +819,8 @@ void FunctionProtoType::Profile(llvm::FoldingSetNodeID &ID, QualType Result,
                                 unsigned NumArgs, bool isVariadic,
                                 unsigned TypeQuals, bool hasExceptionSpec,
                                 bool anyExceptionSpec, unsigned NumExceptions,
-                                exception_iterator Exs,
-                                const FunctionType::ExtInfo &Info) {
+                                exception_iterator Exs, bool NoReturn,
+                                CallingConv CallConv) {
   ID.AddPointer(Result.getAsOpaquePtr());
   for (unsigned i = 0; i != NumArgs; ++i)
     ID.AddPointer(ArgTys[i].getAsOpaquePtr());
@@ -859,16 +832,15 @@ void FunctionProtoType::Profile(llvm::FoldingSetNodeID &ID, QualType Result,
     for (unsigned i = 0; i != NumExceptions; ++i)
       ID.AddPointer(Exs[i].getAsOpaquePtr());
   }
-  ID.AddInteger(Info.getNoReturn());
-  ID.AddInteger(Info.getRegParm());
-  ID.AddInteger(Info.getCC());
+  ID.AddInteger(NoReturn);
+  ID.AddInteger(CallConv);
 }
 
 void FunctionProtoType::Profile(llvm::FoldingSetNodeID &ID) {
   Profile(ID, getResultType(), arg_type_begin(), NumArgs, isVariadic(),
           getTypeQuals(), hasExceptionSpec(), hasAnyExceptionSpec(),
-          getNumExceptions(), exception_begin(),
-          getExtInfo());
+          getNumExceptions(), exception_begin(), getNoReturnAttr(),
+          getCallConv());
 }
 
 void ObjCObjectPointerType::Profile(llvm::FoldingSetNodeID &ID,
@@ -1004,13 +976,12 @@ anyDependentTemplateArguments(const TemplateArgument *Args, unsigned N) {
 
 TemplateSpecializationType::
 TemplateSpecializationType(ASTContext &Context, TemplateName T,
-                           bool IsCurrentInstantiation,
                            const TemplateArgument *Args,
                            unsigned NumArgs, QualType Canon)
   : Type(TemplateSpecialization,
          Canon.isNull()? QualType(this, 0) : Canon,
          T.isDependent() || anyDependentTemplateArguments(Args, NumArgs)),
-    ContextAndCurrentInstantiation(&Context, IsCurrentInstantiation),
+    Context(Context),
     Template(T), NumArgs(NumArgs) {
   assert((!Canon.isNull() ||
           T.isDependent() || anyDependentTemplateArguments(Args, NumArgs)) &&
@@ -1045,11 +1016,9 @@ TemplateSpecializationType::getArg(unsigned Idx) const {
 void
 TemplateSpecializationType::Profile(llvm::FoldingSetNodeID &ID,
                                     TemplateName T,
-                                    bool IsCurrentInstantiation,
                                     const TemplateArgument *Args,
                                     unsigned NumArgs,
                                     ASTContext &Context) {
-  ID.AddBoolean(IsCurrentInstantiation);
   T.Profile(ID);
   for (unsigned Idx = 0; Idx < NumArgs; ++Idx)
     Args[Idx].Profile(ID, Context);

@@ -139,7 +139,12 @@ sub GetCCArgs {
   # Strip the newline and initial whitspace
   chomp $line;  
   $line =~ s/^\s+//;
-  my @items = quotewords('\s+', 0, $line);
+  
+  my @items = quotewords('\s+', 1, $line);
+  for (my $i = 0 ; $ i < scalar(@items); ++$i) {
+    $items[$i] =~ s/^\"//;
+    $items[$i] =~ s/\"$//;
+  }
   my $cmd = shift @items;
   die "cannot find 'clang' in 'clang' command\n" if (!($cmd =~ /clang/));
   return \@items;
@@ -375,19 +380,10 @@ my %UniqueOptions = (
   '-isysroot' => 0  
 );
 
-##----------------------------------------------------------------------------##
-# Languages accepted.
-##----------------------------------------------------------------------------##
-
 my %LangsAccepted = (
   "objective-c" => 1,
   "c" => 1
 );
-
-if (defined $ENV{'CCC_ANALYZER_CPLUSPLUS'}) {
-  $LangsAccepted{"c++"} = 1;
-  $LangsAccepted{"objective-c++"} = 1;
-}
 
 ##----------------------------------------------------------------------------##
 #  Main Logic.

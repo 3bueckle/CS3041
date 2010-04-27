@@ -36,7 +36,7 @@ namespace Numbers {
     double d;
   };
   Number zero(0.0f);
-  void g(Number); // expected-note 2{{passing argument to parameter here}}
+  void g(Number);
 }
 
 void test2() {
@@ -57,9 +57,9 @@ void test3() {
 
   int i = Ints::zero;
   Numbers2::f(i);
-  Numbers2::g(i); // expected-error {{no viable conversion from 'int' to 'Numbers::Number'}}
+  Numbers2::g(i); // expected-error {{no viable conversion from 'int' to 'struct Numbers::Number' is possible}}
 
   float f = Floats::zero;
   Numbers2::f(f);
-  Numbers2::g(f); // expected-error {{no viable conversion from 'float' to 'Numbers::Number'}}
+  Numbers2::g(f); // expected-error {{no viable conversion from 'float' to 'struct Numbers::Number' is possible}}
 }

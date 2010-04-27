@@ -7,8 +7,7 @@
 //
 //===----------------------------------------------------------------------===//
 //
-//  This file defines the C++ Decl subclasses, other than those for
-//  templates (in DeclTemplate.h) and friends (in DeclFriend.h).
+//  This file defines the C++ Decl subclasses.
 //
 //===----------------------------------------------------------------------===//
 
@@ -33,8 +32,6 @@ class CXXDestructorDecl;
 class CXXMethodDecl;
 class CXXRecordDecl;
 class CXXMemberLookupCriteria;
-class CXXFinalOverriderMap;
-class FriendDecl;
   
 /// \brief Represents any kind of function declaration, whether it is a
 /// concrete function or a function template.
@@ -301,11 +298,6 @@ class CXXRecordDecl : public RecordDecl {
     /// Definition - The declaration which defines this record.
     CXXRecordDecl *Definition;
 
-    /// FirstFriend - The first friend declaration in this class, or
-    /// null if there aren't any.  This is actually currently stored
-    /// in reverse order.
-    FriendDecl *FirstFriend;
-
   } *DefinitionData;
 
   struct DefinitionData &data() {
@@ -329,10 +321,12 @@ class CXXRecordDecl : public RecordDecl {
   /// instantiated or specialized.
   llvm::PointerUnion<ClassTemplateDecl*, MemberSpecializationInfo*>
     TemplateOrInstantiation;
-
-#ifndef NDEBUG
-  void CheckConversionFunction(NamedDecl *D);
-#endif
+  
+  void getNestedVisibleConversionFunctions(CXXRecordDecl *RD,
+          const llvm::SmallPtrSet<CanQualType, 8> &TopConversionsTypeSet,
+          const llvm::SmallPtrSet<CanQualType, 8> &HiddenConversionTypes);
+  void collectConversionFunctions(
+    llvm::SmallPtrSet<CanQualType, 8>& ConversionsTypeSet) const;
   
 protected:
   CXXRecordDecl(Kind K, TagKind TK, DeclContext *DC,
@@ -464,18 +458,6 @@ public:
     return ctor_iterator(decls_end());
   }
 
-  /// An iterator over friend declarations.  All of these are defined
-  /// in DeclFriend.h.
-  class friend_iterator;
-  friend_iterator friend_begin() const;
-  friend_iterator friend_end() const;
-  void pushFriendDecl(FriendDecl *FD);
-
-  /// Determines whether this record has any friends.
-  bool hasFriends() const {
-    return data().FirstFriend != 0;
-  }
-
   /// hasConstCopyConstructor - Determines whether this class has a
   /// copy constructor that accepts a const-qualified argument.
   bool hasConstCopyConstructor(ASTContext &Context) const;
@@ -559,26 +541,25 @@ public:
     return getConversionFunctions()->replace(Old, New);
   }
 
-  /// Removes a conversion function from this class.  The conversion
-  /// function must currently be a member of this class.  Furthermore,
-  /// this class must currently be in the process of being defined.
-  void removeConversion(const NamedDecl *Old);
-
   /// getVisibleConversionFunctions - get all conversion functions visible
   /// in current class; including conversion function templates.
   const UnresolvedSetImpl *getVisibleConversionFunctions();
 
-  /// addConversionFunction - Registers a conversion function which
-  /// this class declares directly.
-  void addConversionFunction(NamedDecl *Decl) {
-#ifndef NDEBUG
-    CheckConversionFunction(Decl);
-#endif
+  /// addVisibleConversionFunction - Add a new conversion function to the
+  /// list of visible conversion functions.
+  void addVisibleConversionFunction(CXXConversionDecl *ConvDecl);
+  
+  /// \brief Add a new conversion function template to the list of visible
+  /// conversion functions.
+  void addVisibleConversionFunction(FunctionTemplateDecl *ConvDecl);
+  
+  /// addConversionFunction - Add a new conversion function to the
+  /// list of conversion functions.
+  void addConversionFunction(CXXConversionDecl *ConvDecl);
 
-    // We intentionally don't use the decl's access here because it
-    // hasn't been set yet.  That's really just a misdesign in Sema.
-    data().Conversions.addDecl(Decl);
-  }
+  /// \brief Add a new conversion function template to the list of conversion
+  /// functions.
+  void addConversionFunction(FunctionTemplateDecl *ConvDecl);
 
   /// isAggregate - Whether this class is an aggregate (C++
   /// [dcl.init.aggr]), which is a class with no user-declared
@@ -898,12 +879,7 @@ public:
   static bool FindNestedNameSpecifierMember(const CXXBaseSpecifier *Specifier,
                                             CXXBasePath &Path,
                                             void *UserData);
-
-  /// \brief Retrieve the final overriders for each virtual member
-  /// function in the class hierarchy where this class is the
-  /// most-derived class in the class hierarchy.
-  void getFinalOverriders(CXXFinalOverriderMap &FinaOverriders) const;
-
+  
   /// viewInheritance - Renders and displays an inheritance diagram
   /// for this C++ class and all of its base classes (transitively) using
   /// GraphViz.
@@ -936,16 +912,15 @@ class CXXMethodDecl : public FunctionDecl {
 protected:
   CXXMethodDecl(Kind DK, CXXRecordDecl *RD, SourceLocation L,
                 DeclarationName N, QualType T, TypeSourceInfo *TInfo,
-                bool isStatic, StorageClass SCAsWritten, bool isInline)
+                bool isStatic, bool isInline)
     : FunctionDecl(DK, RD, L, N, T, TInfo, (isStatic ? Static : None),
-                   SCAsWritten, isInline) {}
+                   isInline) {}
 
 public:
   static CXXMethodDecl *Create(ASTContext &C, CXXRecordDecl *RD,
                               SourceLocation L, DeclarationName N,
                               QualType T, TypeSourceInfo *TInfo,
                               bool isStatic = false,
-                              StorageClass SCAsWritten = FunctionDecl::None,
                               bool isInline = false);
 
   bool isStatic() const { return getStorageClass() == Static; }
@@ -960,7 +935,7 @@ public:
     
     return (CD->begin_overridden_methods() != CD->end_overridden_methods());
   }
-
+  
   /// \brief Determine whether this is a usual deallocation function
   /// (C++ [basic.stc.dynamic.deallocation]p2), which is an overloaded
   /// delete or delete[] operator with a particular signature.
@@ -1058,10 +1033,6 @@ class CXXBaseOrMemberInitializer {
   /// and AnonUnionMember holds field decl for au_i1.
   FieldDecl *AnonUnionMember;
 
-  /// IsVirtual - If the initializer is a base initializer, this keeps track
-  /// of whether the base is virtual or not.
-  bool IsVirtual;
-  
   /// LParenLoc - Location of the left paren of the ctor-initializer.
   SourceLocation LParenLoc;
 
@@ -1072,7 +1043,7 @@ public:
   /// CXXBaseOrMemberInitializer - Creates a new base-class initializer.
   explicit
   CXXBaseOrMemberInitializer(ASTContext &Context,
-                             TypeSourceInfo *TInfo, bool IsVirtual,
+                             TypeSourceInfo *TInfo,
                              SourceLocation L, 
                              Expr *Init,
                              SourceLocation R);
@@ -1105,14 +1076,7 @@ public:
   /// Otherwise, returns NULL.
   const Type *getBaseClass() const;
   Type *getBaseClass();
-
-  /// Returns whether the base is virtual or not.
-  bool isBaseVirtual() const {
-    assert(isBaseInitializer() && "Must call this on base initializer!");
-    
-    return IsVirtual;
-  }
-
+  
   /// \brief Returns the declarator information for a base class initializer.
   TypeSourceInfo *getBaseClassInfo() const {
     return BaseOrMember.dyn_cast<TypeSourceInfo *>();
@@ -1188,8 +1152,7 @@ class CXXConstructorDecl : public CXXMethodDecl {
                      DeclarationName N, QualType T, TypeSourceInfo *TInfo,
                      bool isExplicitSpecified, bool isInline, 
                      bool isImplicitlyDeclared)
-    : CXXMethodDecl(CXXConstructor, RD, L, N, T, TInfo, false,
-                    FunctionDecl::None, isInline),
+    : CXXMethodDecl(CXXConstructor, RD, L, N, T, TInfo, false, isInline),
       IsExplicitSpecified(isExplicitSpecified), ImplicitlyDefined(false),
       BaseOrMemberInitializers(0), NumBaseOrMemberInitializers(0) {
     setImplicit(isImplicitlyDeclared);
@@ -1217,7 +1180,7 @@ public:
   /// defined. If false, then this constructor was defined by the
   /// user. This operation can only be invoked if the constructor has
   /// already been defined.
-  bool isImplicitlyDefined() const {
+  bool isImplicitlyDefined(ASTContext &C) const {
     assert(isThisDeclarationADefinition() &&
            "Can only get the implicit-definition flag once the "
            "constructor has been defined");
@@ -1332,8 +1295,7 @@ class CXXDestructorDecl : public CXXMethodDecl {
   CXXDestructorDecl(CXXRecordDecl *RD, SourceLocation L,
                     DeclarationName N, QualType T,
                     bool isInline, bool isImplicitlyDeclared)
-    : CXXMethodDecl(CXXDestructor, RD, L, N, T, /*TInfo=*/0, false,
-                    FunctionDecl::None, isInline),
+    : CXXMethodDecl(CXXDestructor, RD, L, N, T, /*TInfo=*/0, false, isInline),
       ImplicitlyDefined(false), OperatorDelete(0) {
     setImplicit(isImplicitlyDeclared);
   }
@@ -1389,8 +1351,7 @@ class CXXConversionDecl : public CXXMethodDecl {
   CXXConversionDecl(CXXRecordDecl *RD, SourceLocation L,
                     DeclarationName N, QualType T, TypeSourceInfo *TInfo,
                     bool isInline, bool isExplicitSpecified)
-    : CXXMethodDecl(CXXConversion, RD, L, N, T, TInfo, false,
-                    FunctionDecl::None, isInline),
+    : CXXMethodDecl(CXXConversion, RD, L, N, T, TInfo, false, isInline),
       IsExplicitSpecified(isExplicitSpecified) { }
 
 public:
@@ -1422,6 +1383,77 @@ public:
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
   static bool classof(const CXXConversionDecl *D) { return true; }
   static bool classofKind(Kind K) { return K == CXXConversion; }
+};
+
+/// FriendDecl - Represents the declaration of a friend entity,
+/// which can be a function, a type, or a templated function or type.
+//  For example:
+///
+/// @code
+/// template <typename T> class A {
+///   friend int foo(T);
+///   friend class B;
+///   friend T; // only in C++0x
+///   template <typename U> friend class C;
+///   template <typename U> friend A& operator+=(A&, const U&) { ... }
+/// };
+/// @endcode
+///
+/// The semantic context of a friend decl is its declaring class.
+class FriendDecl : public Decl {
+public:
+  typedef llvm::PointerUnion<NamedDecl*,Type*> FriendUnion;
+
+private:
+  // The declaration that's a friend of this class.
+  FriendUnion Friend;
+
+  // Location of the 'friend' specifier.
+  SourceLocation FriendLoc;
+
+  // FIXME: Hack to keep track of whether this was a friend function
+  // template specialization.
+  bool WasSpecialization;
+
+  FriendDecl(DeclContext *DC, SourceLocation L, FriendUnion Friend,
+             SourceLocation FriendL)
+    : Decl(Decl::Friend, DC, L),
+      Friend(Friend),
+      FriendLoc(FriendL),
+      WasSpecialization(false) {
+  }
+
+public:
+  static FriendDecl *Create(ASTContext &C, DeclContext *DC,
+                            SourceLocation L, FriendUnion Friend_,
+                            SourceLocation FriendL);
+
+  /// If this friend declaration names an (untemplated but
+  /// possibly dependent) type, return the type;  otherwise
+  /// return null.  This is used only for C++0x's unelaborated
+  /// friend type declarations.
+  Type *getFriendType() const {
+    return Friend.dyn_cast<Type*>();
+  }
+
+  /// If this friend declaration doesn't name an unelaborated
+  /// type, return the inner declaration.
+  NamedDecl *getFriendDecl() const {
+    return Friend.dyn_cast<NamedDecl*>();
+  }
+
+  /// Retrieves the location of the 'friend' keyword.
+  SourceLocation getFriendLoc() const {
+    return FriendLoc;
+  }
+
+  bool wasSpecialization() const { return WasSpecialization; }
+  void setSpecialization(bool WS) { WasSpecialization = WS; }
+
+  // Implement isa/cast/dyncast/etc.
+  static bool classof(const Decl *D) { return classofKind(D->getKind()); }
+  static bool classof(const FriendDecl *D) { return true; }
+  static bool classofKind(Kind K) { return K == Decl::Friend; }
 };
 
 /// LinkageSpecDecl - This represents a linkage specification.  For example:

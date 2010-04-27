@@ -170,7 +170,6 @@ public:
   virtual llvm::Function *ModuleInitFunction();
   virtual llvm::Function *GetPropertyGetFunction();
   virtual llvm::Function *GetPropertySetFunction();
-  virtual llvm::Function *GetCopyStructFunction();
   virtual llvm::Constant *EnumerationMutationFunction();
 
   virtual void EmitTryOrSynchronizedStmt(CodeGen::CodeGenFunction &CGF,
@@ -466,7 +465,7 @@ CGObjCGNU::GenerateMessageSendSuper(CodeGen::CodeGenFunction &CGF,
 
   CodeGenTypes &Types = CGM.getTypes();
   const CGFunctionInfo &FnInfo = Types.getFunctionInfo(ResultType, ActualArgs,
-                                                       FunctionType::ExtInfo());
+                                                       CC_Default, false);
   const llvm::FunctionType *impType =
     Types.GetFunctionType(FnInfo, Method ? Method->isVariadic() : false);
 
@@ -574,7 +573,7 @@ CGObjCGNU::GenerateMessageSend(CodeGen::CodeGenFunction &CGF,
 
   CodeGenTypes &Types = CGM.getTypes();
   const CGFunctionInfo &FnInfo = Types.getFunctionInfo(ResultType, ActualArgs,
-                                                       FunctionType::ExtInfo());
+                                                       CC_Default, false);
   const llvm::FunctionType *impType =
     Types.GetFunctionType(FnInfo, Method ? Method->isVariadic() : false);
 
@@ -1290,21 +1289,16 @@ void CGObjCGNU::GenerateClass(const ObjCImplementationDecl *OID) {
   if (CGM.getContext().getLangOptions().ObjCNonFragileABI) {
     instanceSize = 0 - (instanceSize - superInstanceSize);
   }
-
-  // Collect declared and synthesized ivars.
-  llvm::SmallVector<ObjCIvarDecl*, 16> OIvars;
-  CGM.getContext().ShallowCollectObjCIvars(ClassDecl, OIvars);
-
-  for (unsigned i = 0, e = OIvars.size(); i != e; ++i) {
-      ObjCIvarDecl *IVD = OIvars[i];
+  for (ObjCInterfaceDecl::ivar_iterator iter = ClassDecl->ivar_begin(),
+      endIter = ClassDecl->ivar_end() ; iter != endIter ; iter++) {
       // Store the name
-      IvarNames.push_back(MakeConstantString(IVD->getNameAsString()));
+      IvarNames.push_back(MakeConstantString((*iter)->getNameAsString()));
       // Get the type encoding for this ivar
       std::string TypeStr;
-      Context.getObjCEncodingForType(IVD->getType(), TypeStr);
+      Context.getObjCEncodingForType((*iter)->getType(), TypeStr);
       IvarTypes.push_back(MakeConstantString(TypeStr));
       // Get the offset
-      uint64_t BaseOffset = ComputeIvarBaseOffset(CGM, OID, IVD);
+      uint64_t BaseOffset = ComputeIvarBaseOffset(CGM, ClassDecl, *iter);
       uint64_t Offset = BaseOffset;
       if (CGM.getContext().getLangOptions().ObjCNonFragileABI) {
         Offset = BaseOffset - superInstanceSize;
@@ -1315,7 +1309,7 @@ void CGObjCGNU::GenerateClass(const ObjCImplementationDecl *OID) {
           false, llvm::GlobalValue::ExternalLinkage,
           llvm::ConstantInt::get(IntTy, BaseOffset),
           "__objc_ivar_offset_value_" + ClassName +"." +
-          IVD->getNameAsString()));
+          (*iter)->getNameAsString()));
   }
   llvm::Constant *IvarOffsetArrayInit =
       llvm::ConstantArray::get(llvm::ArrayType::get(PtrToIntTy,
@@ -1640,7 +1634,7 @@ llvm::Function *CGObjCGNU::GenerateMethod(const ObjCMethodDecl *OMD,
   const ObjCCategoryImplDecl *OCD =
     dyn_cast<ObjCCategoryImplDecl>(OMD->getDeclContext());
   std::string CategoryName = OCD ? OCD->getNameAsString() : "";
-  std::string ClassName = CD->getName();
+  std::string ClassName = OMD->getClassInterface()->getNameAsString();
   std::string MethodName = OMD->getSelector().getAsString();
   bool isClassMethod = !OMD->isInstanceMethod();
 
@@ -1664,9 +1658,10 @@ llvm::Function *CGObjCGNU::GetPropertyGetFunction() {
     CGM.getTypes().ConvertType(CGM.getContext().BoolTy);
   Params.push_back(IdTy);
   Params.push_back(SelectorTy);
-  Params.push_back(IntTy);
+  // FIXME: Using LongTy for ptrdiff_t is probably broken on Win64
+  Params.push_back(LongTy);
   Params.push_back(BoolTy);
-  // void objc_getProperty (id, SEL, int, bool)
+  // void objc_getProperty (id, SEL, ptrdiff_t, bool)
   const llvm::FunctionType *FTy =
     llvm::FunctionType::get(IdTy, Params, false);
   return cast<llvm::Function>(CGM.CreateRuntimeFunction(FTy,
@@ -1679,20 +1674,16 @@ llvm::Function *CGObjCGNU::GetPropertySetFunction() {
     CGM.getTypes().ConvertType(CGM.getContext().BoolTy);
   Params.push_back(IdTy);
   Params.push_back(SelectorTy);
-  Params.push_back(IntTy);
+  // FIXME: Using LongTy for ptrdiff_t is probably broken on Win64
+  Params.push_back(LongTy);
   Params.push_back(IdTy);
   Params.push_back(BoolTy);
   Params.push_back(BoolTy);
-  // void objc_setProperty (id, SEL, int, id, bool, bool)
+  // void objc_setProperty (id, SEL, ptrdiff_t, id, bool, bool)
   const llvm::FunctionType *FTy =
     llvm::FunctionType::get(llvm::Type::getVoidTy(VMContext), Params, false);
   return cast<llvm::Function>(CGM.CreateRuntimeFunction(FTy,
                                                         "objc_setProperty"));
-}
-
-// FIXME. Implement this.
-llvm::Function *CGObjCGNU::GetCopyStructFunction() {
-  return 0;
 }
 
 llvm::Constant *CGObjCGNU::EnumerationMutationFunction() {
@@ -1703,7 +1694,7 @@ llvm::Constant *CGObjCGNU::EnumerationMutationFunction() {
   Params.push_back(ASTIdTy);
   const llvm::FunctionType *FTy =
     Types.GetFunctionType(Types.getFunctionInfo(Ctx.VoidTy, Params,
-                                              FunctionType::ExtInfo()), false);
+                                                CC_Default, false), false);
   return CGM.CreateRuntimeFunction(FTy, "objc_enumerationMutation");
 }
 
@@ -1773,7 +1764,7 @@ void CGObjCGNU::EmitTryOrSynchronizedStmt(CodeGen::CodeGenFunction &CGF,
   llvm::Value *RethrowPtr = CGF.CreateTempAlloca(Exc->getType(), "_rethrow");
 
   llvm::SmallVector<llvm::Value*, 8> ESelArgs;
-  llvm::SmallVector<std::pair<const VarDecl*, const Stmt*>, 8> Handlers;
+  llvm::SmallVector<std::pair<const ParmVarDecl*, const Stmt*>, 8> Handlers;
 
   ESelArgs.push_back(Exc);
   ESelArgs.push_back(Personality);
@@ -1781,13 +1772,12 @@ void CGObjCGNU::EmitTryOrSynchronizedStmt(CodeGen::CodeGenFunction &CGF,
   bool HasCatchAll = false;
   // Only @try blocks are allowed @catch blocks, but both can have @finally
   if (isTry) {
-    if (cast<ObjCAtTryStmt>(S).getNumCatchStmts()) {
-      const ObjCAtTryStmt &AtTry = cast<ObjCAtTryStmt>(S);
+    if (const ObjCAtCatchStmt* CatchStmt =
+      cast<ObjCAtTryStmt>(S).getCatchStmts())  {
       CGF.setInvokeDest(CatchInCatch);
 
-      for (unsigned I = 0, N = AtTry.getNumCatchStmts(); I != N; ++I) {
-        const ObjCAtCatchStmt *CatchStmt = AtTry.getCatchStmt(I);
-        const VarDecl *CatchDecl = CatchStmt->getCatchParamDecl();
+      for (; CatchStmt; CatchStmt = CatchStmt->getNextCatchStmt()) {
+        const ParmVarDecl *CatchDecl = CatchStmt->getCatchParamDecl();
         Handlers.push_back(std::make_pair(CatchDecl,
                                           CatchStmt->getCatchBody()));
 
@@ -1826,7 +1816,7 @@ void CGObjCGNU::EmitTryOrSynchronizedStmt(CodeGen::CodeGenFunction &CGF,
       ESelArgs.begin(), ESelArgs.end(), "selector");
 
   for (unsigned i = 0, e = Handlers.size(); i != e; ++i) {
-    const VarDecl *CatchParam = Handlers[i].first;
+    const ParmVarDecl *CatchParam = Handlers[i].first;
     const Stmt *CatchBody = Handlers[i].second;
 
     llvm::BasicBlock *Next = 0;
@@ -2056,14 +2046,7 @@ llvm::GlobalVariable *CGObjCGNU::ObjCIvarOffsetVariable(
   // when linked against code which isn't (most of the time).
   llvm::GlobalVariable *IvarOffsetPointer = TheModule.getNamedGlobal(Name);
   if (!IvarOffsetPointer) {
-    uint64_t Offset;
-    if (ObjCImplementationDecl *OID =
-            CGM.getContext().getObjCImplementation(
-              const_cast<ObjCInterfaceDecl *>(ID)))
-      Offset = ComputeIvarBaseOffset(CGM, OID, Ivar);
-    else
-      Offset = ComputeIvarBaseOffset(CGM, ID, Ivar);
-
+    uint64_t Offset = ComputeIvarBaseOffset(CGM, ID, Ivar);
     llvm::ConstantInt *OffsetGuess =
       llvm::ConstantInt::get(llvm::Type::getInt32Ty(VMContext), Offset, "ivar");
     // Don't emit the guess in non-PIC code because the linker will not be able

@@ -4,7 +4,7 @@
 typedef __typeof(sizeof(int)) size_t;
 typedef struct _FILE FILE;
 int fprintf(FILE *, const char *restrict, ...);
-int printf(const char *restrict, ...); // expected-note{{passing argument to parameter here}}
+int printf(const char *restrict, ...);
 int snprintf(char *restrict, size_t, const char *restrict, ...);
 int sprintf(char *restrict, const char *restrict, ...);
 int vasprintf(char **, const char *, va_list);
@@ -12,7 +12,7 @@ int asprintf(char **, const char *, ...);
 int vfprintf(FILE *, const char *restrict, va_list);
 int vprintf(const char *restrict, va_list);
 int vsnprintf(char *, size_t, const char *, va_list);
-int vsprintf(char *restrict, const char *restrict, va_list); // expected-note{{passing argument to parameter here}}
+int vsprintf(char *restrict, const char *restrict, va_list);
 
 char * global_fmt;
 
@@ -236,18 +236,5 @@ void test_positional_arguments() {
   printf("%1$2.2d", (int) 2); // no-warning
   printf("%2$*1$.2d", (int) 2, (int) 3); // no-warning
   printf("%2$*8$d", (int) 2, (int) 3); // expected-warning{{specified field width is missing a matching 'int' argument}}
-}
-
-// PR 6697 - Handle format strings where the data argument is not adjacent to the format string
-void myprintf_PR_6697(const char *format, int x, ...) __attribute__((__format__(printf,1, 3)));
-void test_pr_6697() {
-  myprintf_PR_6697("%s\n", 1, "foo"); // no-warning
-  myprintf_PR_6697("%s\n", 1, (int)0); // expected-warning{{conversion specifies type 'char *' but the argument has type 'int'}}
-  // FIXME: Not everything should clearly support positional arguments,
-  // but we need a way to identify those cases.
-  myprintf_PR_6697("%1$s\n", 1, "foo"); // no-warning
-  myprintf_PR_6697("%2$s\n", 1, "foo"); // expected-warning{{data argument position '2' exceeds the number of data arguments (1)}}
-  myprintf_PR_6697("%18$s\n", 1, "foo"); // expected-warning{{data argument position '18' exceeds the number of data arguments (1)}}
-  myprintf_PR_6697("%1$s\n", 1, (int) 0); // expected-warning{{conversion specifies type 'char *' but the argument has type 'int'}}
 }
 

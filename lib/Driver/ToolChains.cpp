@@ -217,8 +217,6 @@ Tool &Darwin::SelectTool(const Compilation &C, const JobAction &JA) const {
 
 void DarwinGCC::AddLinkSearchPathArgs(const ArgList &Args,
                                       ArgStringList &CmdArgs) const {
-  std::string Tmp;
-
   // FIXME: Derive these correctly.
   if (getArchName() == "x86_64") {
     CmdArgs.push_back(Args.MakeArgString("-L/usr/lib/gcc/" + ToolChainDir +
@@ -227,24 +225,10 @@ void DarwinGCC::AddLinkSearchPathArgs(const ArgList &Args,
     CmdArgs.push_back(Args.MakeArgString("-L/usr/lib/gcc/" + ToolChainDir +
                                          "/x86_64"));
   }
-  
   CmdArgs.push_back(Args.MakeArgString("-L/usr/lib/" + ToolChainDir));
-
-  Tmp = getDriver().Dir + "/../lib/gcc/" + ToolChainDir;
-  if (llvm::sys::Path(Tmp).exists())
-    CmdArgs.push_back(Args.MakeArgString("-L" + Tmp));
-  Tmp = getDriver().Dir + "/../lib/gcc";
-  if (llvm::sys::Path(Tmp).exists())
-    CmdArgs.push_back(Args.MakeArgString("-L" + Tmp));
   CmdArgs.push_back(Args.MakeArgString("-L/usr/lib/gcc/" + ToolChainDir));
   // Intentionally duplicated for (temporary) gcc bug compatibility.
   CmdArgs.push_back(Args.MakeArgString("-L/usr/lib/gcc/" + ToolChainDir));
-  Tmp = getDriver().Dir + "/../lib/" + ToolChainDir;
-  if (llvm::sys::Path(Tmp).exists())
-    CmdArgs.push_back(Args.MakeArgString("-L" + Tmp));
-  Tmp = getDriver().Dir + "/../lib";
-  if (llvm::sys::Path(Tmp).exists())
-    CmdArgs.push_back(Args.MakeArgString("-L" + Tmp));
   CmdArgs.push_back(Args.MakeArgString("-L/usr/lib/gcc/" + ToolChainDir +
                                        "/../../../" + ToolChainDir));
   CmdArgs.push_back(Args.MakeArgString("-L/usr/lib/gcc/" + ToolChainDir +
@@ -410,9 +394,9 @@ DerivedArgList *Darwin::TranslateArgs(InputArgList &Args,
       // this. Perhaps put under -pedantic?
       if (getTriple().getArch() == llvm::Triple::arm ||
           getTriple().getArch() == llvm::Triple::thumb)
-        OSXTarget = 0;
+        OSXVersion = 0;
       else
-        iPhoneOSTarget = 0;
+        iPhoneVersion = 0;
     }
 
     if (OSXTarget) {
@@ -670,11 +654,6 @@ const char *Darwin::GetForcedPicModel() const {
   if (getArchName() == "x86_64")
     return "pic";
   return 0;
-}
-
-bool Darwin::SupportsObjCGC() const {
-  // Garbage collection is supported everywhere except on iPhone OS.
-  return !isTargetIPhoneOS();
 }
 
 /// Generic_GCC - A tool chain using the 'gcc' command to perform

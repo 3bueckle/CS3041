@@ -126,9 +126,9 @@ void GRCoreEngine::ProcessStmt(CFGElement E, GRStmtNodeBuilder& Builder) {
   SubEngine.ProcessStmt(E, Builder);
 }
 
-bool GRCoreEngine::ProcessBlockEntrance(CFGBlock* Blk, const ExplodedNode *Pred,
+bool GRCoreEngine::ProcessBlockEntrance(CFGBlock* Blk, const GRState* State,
                                         GRBlockCounter BC) {
-  return SubEngine.ProcessBlockEntrance(Blk, Pred, BC);
+  return SubEngine.ProcessBlockEntrance(Blk, State, BC);
 }
 
 void GRCoreEngine::ProcessBranch(Stmt* Condition, Stmt* Terminator,
@@ -256,7 +256,7 @@ void GRCoreEngine::HandleBlockEdge(const BlockEdge& L, ExplodedNode* Pred) {
 
   // FIXME: Should we allow ProcessBlockEntrance to also manipulate state?
 
-  if (ProcessBlockEntrance(Blk, Pred, WList->getBlockCounter()))
+  if (ProcessBlockEntrance(Blk, Pred->State, WList->getBlockCounter()))
     GenerateNode(BlockEntrance(Blk, Pred->getLocationContext()), Pred->State, Pred);
 }
 
@@ -265,9 +265,7 @@ void GRCoreEngine::HandleBlockEntrance(const BlockEntrance& L,
 
   // Increment the block counter.
   GRBlockCounter Counter = WList->getBlockCounter();
-  Counter = BCounterFactory.IncrementCount(Counter, 
-                             Pred->getLocationContext()->getCurrentStackFrame(),
-                                           L.getBlock()->getBlockID());
+  Counter = BCounterFactory.IncrementCount(Counter, L.getBlock()->getBlockID());
   WList->setBlockCounter(Counter);
 
   // Process the entrance of the block.
@@ -453,33 +451,6 @@ void GRStmtNodeBuilder::GenerateAutoTransition(ExplodedNode* N) {
 
   if (IsNew)
     Eng.WList->Enqueue(Succ, B, Idx+1);
-}
-
-ExplodedNode* GRStmtNodeBuilder::MakeNode(ExplodedNodeSet& Dst, Stmt* S, 
-                                          ExplodedNode* Pred, const GRState* St,
-                                          ProgramPoint::Kind K) {
-  const GRState* PredState = GetState(Pred);
-
-  // If the state hasn't changed, don't generate a new node.
-  if (!BuildSinks && St == PredState && Auditor == 0) {
-    Dst.Add(Pred);
-    return NULL;
-  }
-
-  ExplodedNode* N = generateNode(S, St, Pred, K);
-
-  if (N) {
-    if (BuildSinks)
-      N->markAsSink();
-    else {
-      if (Auditor && Auditor->Audit(N, Mgr))
-        N->markAsSink();
-      
-      Dst.Add(N);
-    }
-  }
-  
-  return N;
 }
 
 static ProgramPoint GetProgramPoint(const Stmt *S, ProgramPoint::Kind K,

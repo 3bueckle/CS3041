@@ -256,7 +256,7 @@ namespace PR6199 {
 
   struct B { operator A(); };
 
-  // CHECK: define weak_odr void @_ZN6PR61992f2IiEENS_1AET_
+  // CHECK: define void @_ZN6PR61992f2IiEENS_1AET_
   template<typename T> A f2(T) {
     B b;
     // CHECK: call void @_ZN6PR61991BcvNS_1AEEv
@@ -287,36 +287,4 @@ void g() {
   int& i = f(A().f());
 }
 
-}
-
-namespace PR6648 {
-  struct B {
-    ~B();
-  };
-  B foo;
-  struct D;
-  D& zed(B);
-  void foobar() {
-    // CHECK: call %"struct.PR6648::D"* @_ZN6PR66483zedENS_1BE
-    zed(foo);
-  }
-}
-
-namespace UserConvertToValue {
-  struct X {
-    X(int);
-    X(const X&);
-    ~X();
-  };
-
-  void f(X);
-
-  // CHECK: void @_ZN18UserConvertToValue1gEv() 
-  void g() {
-    // CHECK: call void @_ZN18UserConvertToValue1XC1Ei
-    // CHECK: call void @_ZN18UserConvertToValue1fENS_1XE
-    // CHECK: call void @_ZN18UserConvertToValue1XD1Ev
-    // CHECK: ret void
-    f(1);
-  }
 }

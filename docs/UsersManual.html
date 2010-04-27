@@ -189,12 +189,6 @@ introduces the language selection and other high level options like -c, -g, etc.
 <p><b>-pedantic-errors</b>: Error on language extensions.</p>
 <p><b>-Wsystem-headers</b>: Enable warnings from system headers.</p>
 
-<p><b>-ferror-limit=123</b>: Stop emitting diagnostics after 123 errors have
-   been produced.  The default is 20, and the error limit can be disabled with
-   -ferror-limit=0.</p>
-
-<p><b>-ftemplate-backtrace-limit=123</b>: Only emit up to 123 template instantiation notes within the template instantiation backtrace for a single warning or error. The default is 10, and the limit can be disabled with -ftemplate-backtrace-limit=0.</p>
-
 <!-- ================================================= -->
 <h4 id="cl_diag_formatting">Formatting of Diagnostics</h4>
 <!-- ================================================= -->
@@ -802,13 +796,6 @@ ask on the mailing list about how you can help.</p>
 
 <p>Note that released Clang compilers will refuse to even try to use clang to compile C++ code unless you pass the <tt>-ccc-clang-cxx</tt> option to the driver. To turn on Clang's C++ support, please pass that flag. Clang compilers built from the Subversion trunk enable C++ support by default, and do not require the <tt>-ccc-clang-cxx</tt> flag.</p>
  
-<p>Clang strives to strictly conform to the C++ standard.  That means
-it will reject invalid C++ code that another compiler may accept.  If
-Clang reports errors in your code, please check
-the <a href="http://clang.llvm.org/cxx_compatibility.html">C++
-Compatibility</a> page to see whether they are C++-conformance bugs
-and how you can fix them.</p>
-
 <!-- ======================================================================= -->
 <h2 id="objcxx">Objective C++ Language Features</h2>
 <!-- ======================================================================= -->

@@ -46,8 +46,8 @@
 //  U   -> unsigned
 //
 // Types may be postfixed with the following modifiers:
-// * -> pointer (optionally followed by an address space number)
-// & -> reference (optionally followed by an address space number)
+// * -> pointer
+// & -> reference
 // C -> const
 // D -> volatile
 
@@ -314,7 +314,6 @@ BUILTIN(__builtin_setjmp, "iv**", "")
 BUILTIN(__builtin_longjmp, "vv**i", "r")
 BUILTIN(__builtin_unwind_init, "v", "")
 BUILTIN(__builtin_eh_return_data_regno, "ii", "nc")
-BUILTIN(__builtin_vsprintf, "ic*cC*a", "nFP:1:")
 BUILTIN(__builtin_vsnprintf, "ic*zcC*a", "nFP:2:")
 
 // GCC exception builtins
@@ -336,7 +335,6 @@ BUILTIN(__builtin___strcat_chk, "c*c*cC*z", "nF")
 BUILTIN(__builtin___strcpy_chk, "c*c*cC*z", "nF")
 BUILTIN(__builtin___strncat_chk, "c*c*cC*zz", "nF")
 BUILTIN(__builtin___strncpy_chk, "c*c*cC*zz", "nF")
-BUILTIN(__builtin___stpncpy_chk, "c*c*cC*zz", "nF")
 BUILTIN(__builtin___snprintf_chk, "ic*zizcC*.", "Fp:4:")
 BUILTIN(__builtin___sprintf_chk, "ic*izcC*.", "Fp:3:")
 BUILTIN(__builtin___vsnprintf_chk, "ic*zizcC*a", "FP:4:")
@@ -348,9 +346,12 @@ BUILTIN(__builtin___vprintf_chk, "iicC*a", "FP:1:")
 
 BUILTIN(__builtin_expect, "LiLiLi"   , "nc")
 BUILTIN(__builtin_prefetch, "vvC*.", "nc")
+BUILTIN(__builtin_abort, "v", "Fnr")
 BUILTIN(__builtin_trap, "v", "nr")
 BUILTIN(__builtin_unreachable, "v", "nr")
+
 BUILTIN(__builtin_shufflevector, "v."   , "nc")
+
 BUILTIN(__builtin_alloca, "v*z"   , "n")
 
 // "Overloaded" Atomic operator builtins.  These are overloaded to support data
@@ -396,6 +397,13 @@ BUILTIN(__sync_fetch_and_xor_4, "ii*i.", "n")
 BUILTIN(__sync_fetch_and_xor_8, "LLiLLi*LLi.", "n")
 BUILTIN(__sync_fetch_and_xor_16, "LLLiLLLi*LLLi.", "n")
 
+BUILTIN(__sync_fetch_and_nand, "v.", "")
+BUILTIN(__sync_fetch_and_nand_1, "cc*c.", "n")
+BUILTIN(__sync_fetch_and_nand_2, "ss*s.", "n")
+BUILTIN(__sync_fetch_and_nand_4, "ii*i.", "n")
+BUILTIN(__sync_fetch_and_nand_8, "LLiLLi*LLi.", "n")
+BUILTIN(__sync_fetch_and_nand_16, "LLLiLLLi*LLLi.", "n")
+
 
 BUILTIN(__sync_add_and_fetch, "v.", "")
 BUILTIN(__sync_add_and_fetch_1, "cc*c.", "n")
@@ -431,6 +439,14 @@ BUILTIN(__sync_xor_and_fetch_2, "ss*s.", "n")
 BUILTIN(__sync_xor_and_fetch_4, "ii*i.", "n")
 BUILTIN(__sync_xor_and_fetch_8, "LLiLLi*LLi.", "n")
 BUILTIN(__sync_xor_and_fetch_16, "LLLiLLLi*LLLi.", "n")
+
+BUILTIN(__sync_nand_and_fetch, "v.", "")
+BUILTIN(__sync_nand_and_fetch_1, "cc*c.", "n")
+BUILTIN(__sync_nand_and_fetch_2, "ss*s.", "n")
+BUILTIN(__sync_nand_and_fetch_4, "ii*i.", "n")
+BUILTIN(__sync_nand_and_fetch_8, "LLiLLi*LLi.", "n")
+BUILTIN(__sync_nand_and_fetch_16, "LLLiLLLi*LLLi.", "n")
+
 
 BUILTIN(__sync_bool_compare_and_swap, "v.", "")
 BUILTIN(__sync_bool_compare_and_swap_1, "bcD*cc.", "n")
@@ -471,13 +487,6 @@ BUILTIN(__sync_fetch_and_min, "ii*i", "n")
 BUILTIN(__sync_fetch_and_max, "ii*i", "n")
 BUILTIN(__sync_fetch_and_umin, "UiUi*Ui", "n")
 BUILTIN(__sync_fetch_and_umax, "UiUi*Ui", "n")
-
-// Random libc builtins.
-BUILTIN(__builtin_abort, "v", "Fnr")
-BUILTIN(__builtin_index, "c*cC*i", "Fn")
-BUILTIN(__builtin_rindex, "c*cC*i", "Fn")
-
-
 
 // C99 library functions
 // C99 stdlib.h

@@ -38,6 +38,7 @@
 #endif
 
 using namespace clang;
+using namespace idx;
 
 const llvm::sys::Path& CIndexer::getClangPath() {
   // Did we already compute the path?

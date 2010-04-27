@@ -15,7 +15,6 @@
 #define LLVM_CLANG_DIAGNOSTIC_H
 
 #include "clang/Basic/SourceLocation.h"
-#include "llvm/ADT/IntrusiveRefCntPtr.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/type_traits.h"
 #include <string>
@@ -96,7 +95,7 @@ namespace clang {
 /// should also provide full recovery from such errors, such that
 /// suppressing the diagnostic output can still result in successful
 /// compilation.
-class FixItHint {
+class CodeModificationHint {
 public:
   /// \brief Tokens that should be removed to correct the error.
   SourceRange RemoveRange;
@@ -111,7 +110,7 @@ public:
 
   /// \brief Empty code modification hint, indicating that no code
   /// modification is known.
-  FixItHint() : RemoveRange(), InsertionLoc() { }
+  CodeModificationHint() : RemoveRange(), InsertionLoc() { }
 
   bool isNull() const {
     return !RemoveRange.isValid() && !InsertionLoc.isValid();
@@ -119,9 +118,9 @@ public:
   
   /// \brief Create a code modification hint that inserts the given
   /// code string at a specific location.
-  static FixItHint CreateInsertion(SourceLocation InsertionLoc,
-                                   llvm::StringRef Code) {
-    FixItHint Hint;
+  static CodeModificationHint CreateInsertion(SourceLocation InsertionLoc,
+                                              llvm::StringRef Code) {
+    CodeModificationHint Hint;
     Hint.InsertionLoc = InsertionLoc;
     Hint.CodeToInsert = Code;
     return Hint;
@@ -129,17 +128,17 @@ public:
 
   /// \brief Create a code modification hint that removes the given
   /// source range.
-  static FixItHint CreateRemoval(SourceRange RemoveRange) {
-    FixItHint Hint;
+  static CodeModificationHint CreateRemoval(SourceRange RemoveRange) {
+    CodeModificationHint Hint;
     Hint.RemoveRange = RemoveRange;
     return Hint;
   }
 
   /// \brief Create a code modification hint that replaces the given
   /// source range with the given code string.
-  static FixItHint CreateReplacement(SourceRange RemoveRange,
-                                     llvm::StringRef Code) {
-    FixItHint Hint;
+  static CodeModificationHint CreateReplacement(SourceRange RemoveRange,
+                                                llvm::StringRef Code) {
+    CodeModificationHint Hint;
     Hint.RemoveRange = RemoveRange;
     Hint.InsertionLoc = RemoveRange.getBegin();
     Hint.CodeToInsert = Code;
@@ -151,7 +150,7 @@ public:
 /// problems and issues.  It massages the diagnostics (e.g. handling things like
 /// "report warnings as errors" and passes them off to the DiagnosticClient for
 /// reporting to the user.
-class Diagnostic : public llvm::RefCountedBase<Diagnostic> {
+class Diagnostic {
 public:
   /// Level - The level of the diagnostic, after it has been through mapping.
   enum Level {
@@ -188,9 +187,6 @@ private:
   bool ErrorsAsFatal;            // Treat errors like fatal errors.
   bool SuppressSystemWarnings;   // Suppress warnings in system headers.
   bool SuppressAllDiagnostics;   // Suppress all diagnostics.
-  unsigned ErrorLimit;           // Cap of # errors emitted, 0 -> no limit.
-  unsigned TemplateBacktraceLimit; // Cap on depth of template backtrace stack,
-                                   // 0 -> no limit.
   ExtensionHandling ExtBehavior; // Map extensions onto warnings or errors?
   DiagnosticClient *Client;
 
@@ -214,10 +210,9 @@ private:
   /// diagnostic that they follow.
   Diagnostic::Level LastDiagLevel;
 
-  unsigned NumWarnings;       // Number of warnings reported
-  unsigned NumErrors;         // Number of errors reported
-  unsigned NumErrorsSuppressed; // Number of errors suppressed
-  
+  unsigned NumDiagnostics;    // Number of diagnostics reported
+  unsigned NumErrors;         // Number of diagnostics that are errors
+
   /// CustomDiagInfo - Information for uniquing and looking up custom diags.
   diag::CustomDiagInfo *CustomDiagInfo;
 
@@ -239,18 +234,6 @@ private:
                                   void *Cookie);
   void *ArgToStringCookie;
   ArgToStringFnTy ArgToStringFn;
-
-  /// \brief ID of the "delayed" diagnostic, which is a (typically
-  /// fatal) diagnostic that had to be delayed because it was found
-  /// while emitting another diagnostic.
-  unsigned DelayedDiagID;
-
-  /// \brief First string argument for the delayed diagnostic.
-  std::string DelayedDiagArg1;
-
-  /// \brief Second string argument for the delayed diagnostic.
-  std::string DelayedDiagArg2;
-
 public:
   explicit Diagnostic(DiagnosticClient *client = 0);
   ~Diagnostic();
@@ -273,22 +256,6 @@ public:
   bool popMappings();
 
   void setClient(DiagnosticClient* client) { Client = client; }
-
-  /// setErrorLimit - Specify a limit for the number of errors we should
-  /// emit before giving up.  Zero disables the limit.
-  void setErrorLimit(unsigned Limit) { ErrorLimit = Limit; }
-  
-  /// \brief Specify the maximum number of template instantiation
-  /// notes to emit along with a given diagnostic.
-  void setTemplateBacktraceLimit(unsigned Limit) {
-    TemplateBacktraceLimit = Limit;
-  }
-
-  /// \brief Retrieve the maximum number of template instantiation
-  /// nodes to emit along with a given diagnostic.
-  unsigned getTemplateBacktraceLimit() const {
-    return TemplateBacktraceLimit;
-  }
 
   /// setIgnoreAllWarnings - When set to true, any unmapped warnings are
   /// ignored.  If this and WarningsAsErrors are both set, then this one wins.
@@ -344,9 +311,8 @@ public:
   void setDiagnosticMapping(diag::kind Diag, diag::Mapping Map) {
     assert(Diag < diag::DIAG_UPPER_LIMIT &&
            "Can only map builtin diagnostics");
-    assert((isBuiltinWarningOrExtension(Diag) ||
-            (Map == diag::MAP_FATAL || Map == diag::MAP_ERROR)) &&
-           "Cannot map errors into warnings!");
+    assert((isBuiltinWarningOrExtension(Diag) || Map == diag::MAP_FATAL) &&
+           "Cannot map errors!");
     setDiagnosticMappingInternal(Diag, Map, true);
   }
 
@@ -359,8 +325,7 @@ public:
   bool hasFatalErrorOccurred() const { return FatalErrorOccurred; }
 
   unsigned getNumErrors() const { return NumErrors; }
-  unsigned getNumErrorsSuppressed() const { return NumErrorsSuppressed; }
-  unsigned getNumWarnings() const { return NumWarnings; }
+  unsigned getNumDiagnostics() const { return NumDiagnostics; }
 
   /// getCustomDiagID - Return an ID for a diagnostic with the specified message
   /// and level.  If this is the first request for this diagnosic, it is
@@ -405,46 +370,13 @@ public:
   /// isBuiltinExtensionDiag - Determine whether the given built-in diagnostic
   /// ID is for an extension of some sort.
   ///
-  static bool isBuiltinExtensionDiag(unsigned DiagID) {
-    bool ignored;
-    return isBuiltinExtensionDiag(DiagID, ignored);
-  }
-  
-  /// isBuiltinExtensionDiag - Determine whether the given built-in diagnostic
-  /// ID is for an extension of some sort.  This also returns EnabledByDefault,
-  /// which is set to indicate whether the diagnostic is ignored by default (in
-  /// which case -pedantic enables it) or treated as a warning/error by default.
-  ///
-  static bool isBuiltinExtensionDiag(unsigned DiagID, bool &EnabledByDefault);
-  
+  static bool isBuiltinExtensionDiag(unsigned DiagID);
 
   /// getWarningOptionForDiag - Return the lowest-level warning option that
   /// enables the specified diagnostic.  If there is no -Wfoo flag that controls
   /// the diagnostic, this returns null.
   static const char *getWarningOptionForDiag(unsigned DiagID);
 
-  /// \brief Enumeration describing how the the emission of a diagnostic should
-  /// be treated when it occurs during C++ template argument deduction.
-  enum SFINAEResponse {
-    /// \brief The diagnostic should not be reported, but it should cause
-    /// template argument deduction to fail.
-    ///
-    /// The vast majority of errors that occur during template argument 
-    /// deduction fall into this category.
-    SFINAE_SubstitutionFailure,
-    
-    /// \brief The diagnostic should be suppressed entirely.
-    ///
-    /// Warnings generally fall into this category.
-    SFINAE_Suppress,
-    
-    /// \brief The diagnostic should be reported.
-    ///
-    /// The diagnostic should be reported. Various fatal errors (e.g., 
-    /// template instantiation depth exceeded) fall into this category.
-    SFINAE_Report
-  };
-  
   /// \brief Determines whether the given built-in diagnostic ID is
   /// for an error that is suppressed if it occurs during C++ template
   /// argument deduction.
@@ -453,7 +385,7 @@ public:
   /// deduction fails but no diagnostic is emitted. Certain classes of
   /// errors, such as those errors that involve C++ access control,
   /// are not SFINAE errors.
-  static SFINAEResponse getDiagnosticSFINAEResponse(unsigned DiagID);
+  static bool isBuiltinSFINAEDiag(unsigned DiagID);
 
   /// getDiagnosticLevel - Based on the way the client configured the Diagnostic
   /// object, classify the specified diagnostic ID into a Level, consumable by
@@ -468,45 +400,14 @@ public:
   inline DiagnosticBuilder Report(FullSourceLoc Pos, unsigned DiagID);
   inline DiagnosticBuilder Report(unsigned DiagID);
 
-  /// \brief Determine whethere there is already a diagnostic in flight.
-  bool isDiagnosticInFlight() const { return CurDiagID != ~0U; }
-
-  /// \brief Set the "delayed" diagnostic that will be emitted once
-  /// the current diagnostic completes.
-  ///
-  ///  If a diagnostic is already in-flight but the front end must
-  ///  report a problem (e.g., with an inconsistent file system
-  ///  state), this routine sets a "delayed" diagnostic that will be
-  ///  emitted after the current diagnostic completes. This should
-  ///  only be used for fatal errors detected at inconvenient
-  ///  times. If emitting a delayed diagnostic causes a second delayed
-  ///  diagnostic to be introduced, that second delayed diagnostic
-  ///  will be ignored.
-  ///
-  /// \param DiagID The ID of the diagnostic being delayed.
-  ///
-  /// \param Arg1 A string argument that will be provided to the
-  /// diagnostic. A copy of this string will be stored in the
-  /// Diagnostic object itself.
-  ///
-  /// \param Arg2 A string argument that will be provided to the
-  /// diagnostic. A copy of this string will be stored in the
-  /// Diagnostic object itself.
-  void SetDelayedDiagnostic(unsigned DiagID, llvm::StringRef Arg1 = "",
-                            llvm::StringRef Arg2 = "");
-  
   /// \brief Clear out the current diagnostic.
   void Clear() { CurDiagID = ~0U; }
 
 private:
-  /// \brief Report the delayed diagnostic.
-  void ReportDelayed();
-
-
   /// getDiagnosticMappingInfo - Return the mapping info currently set for the
   /// specified builtin diagnostic.  This returns the high bit encoding, or zero
   /// if the field is completely uninitialized.
-  diag::Mapping getDiagnosticMappingInfo(diag::kind Diag) const {
+  unsigned getDiagnosticMappingInfo(diag::kind Diag) const {
     const DiagMappings &currentMappings = DiagMappingsStack.back();
     return (diag::Mapping)((currentMappings[Diag/2] >> (Diag & 1)*4) & 15);
   }
@@ -553,8 +454,8 @@ private:
   /// NumRanges - This is the number of ranges in the DiagRanges array.
   unsigned char NumDiagRanges;
   /// \brief The number of code modifications hints in the
-  /// FixItHints array.
-  unsigned char NumFixItHints;
+  /// CodeModificationHints array.
+  unsigned char NumCodeModificationHints;
 
   /// DiagArgumentsKind - This is an array of ArgumentKind::ArgumentKind enum
   /// values, with one for each argument.  This specifies whether the argument
@@ -576,11 +477,11 @@ private:
   /// only support 10 ranges, could easily be extended if needed.
   SourceRange DiagRanges[10];
 
-  enum { MaxFixItHints = 3 };
+  enum { MaxCodeModificationHints = 3 };
 
-  /// FixItHints - If valid, provides a hint with some code
+  /// CodeModificationHints - If valid, provides a hint with some code
   /// to insert, remove, or modify at a particular position.
-  FixItHint FixItHints[MaxFixItHints];
+  CodeModificationHint CodeModificationHints[MaxCodeModificationHints];
 
   /// ProcessDiag - This is the method used to report a diagnostic that is
   /// finally fully formed.
@@ -607,12 +508,13 @@ private:
 /// for example.
 class DiagnosticBuilder {
   mutable Diagnostic *DiagObj;
-  mutable unsigned NumArgs, NumRanges, NumFixItHints;
+  mutable unsigned NumArgs, NumRanges, NumCodeModificationHints;
 
   void operator=(const DiagnosticBuilder&); // DO NOT IMPLEMENT
   friend class Diagnostic;
   explicit DiagnosticBuilder(Diagnostic *diagObj)
-    : DiagObj(diagObj), NumArgs(0), NumRanges(0), NumFixItHints(0) {}
+    : DiagObj(diagObj), NumArgs(0), NumRanges(0),
+      NumCodeModificationHints(0) {}
 
 public:
   /// Copy constructor.  When copied, this "takes" the diagnostic info from the
@@ -622,7 +524,7 @@ public:
     D.DiagObj = 0;
     NumArgs = D.NumArgs;
     NumRanges = D.NumRanges;
-    NumFixItHints = D.NumFixItHints;
+    NumCodeModificationHints = D.NumCodeModificationHints;
   }
 
   /// \brief Simple enumeration value used to give a name to the
@@ -632,7 +534,7 @@ public:
   /// \brief Create an empty DiagnosticBuilder object that represents
   /// no actual diagnostic.
   explicit DiagnosticBuilder(SuppressKind)
-    : DiagObj(0), NumArgs(0), NumRanges(0), NumFixItHints(0) { }
+    : DiagObj(0), NumArgs(0), NumRanges(0), NumCodeModificationHints(0) { }
 
   /// \brief Force the diagnostic builder to emit the diagnostic now.
   ///
@@ -641,7 +543,29 @@ public:
   ///
   /// \returns true if a diagnostic was emitted, false if the
   /// diagnostic was suppressed.
-  bool Emit();
+  bool Emit() {
+    // If DiagObj is null, then its soul was stolen by the copy ctor
+    // or the user called Emit().
+    if (DiagObj == 0) return false;
+
+    // When emitting diagnostics, we set the final argument count into
+    // the Diagnostic object.
+    DiagObj->NumDiagArgs = NumArgs;
+    DiagObj->NumDiagRanges = NumRanges;
+    DiagObj->NumCodeModificationHints = NumCodeModificationHints;
+
+    // Process the diagnostic, sending the accumulated information to the
+    // DiagnosticClient.
+    bool Emitted = DiagObj->ProcessDiag();
+
+    // Clear out the current diagnostic object.
+    DiagObj->Clear();
+
+    // This diagnostic is dead.
+    DiagObj = 0;
+
+    return Emitted;
+  }
 
   /// Destructor - The dtor emits the diagnostic if it hasn't already
   /// been emitted.
@@ -681,14 +605,14 @@ public:
       DiagObj->DiagRanges[NumRanges++] = R;
   }
 
-  void AddFixItHint(const FixItHint &Hint) const {
+  void AddCodeModificationHint(const CodeModificationHint &Hint) const {
     if (Hint.isNull())
       return;
     
-    assert(NumFixItHints < Diagnostic::MaxFixItHints &&
-           "Too many fix-it hints!");
+    assert(NumCodeModificationHints < Diagnostic::MaxCodeModificationHints &&
+           "Too many code modification hints!");
     if (DiagObj)
-      DiagObj->FixItHints[NumFixItHints++] = Hint;
+      DiagObj->CodeModificationHints[NumCodeModificationHints++] = Hint;
   }
 };
 
@@ -749,8 +673,8 @@ inline const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB,
 }
 
 inline const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB,
-                                           const FixItHint &Hint) {
-  DB.AddFixItHint(Hint);
+                                           const CodeModificationHint &Hint) {
+  DB.AddCodeModificationHint(Hint);
   return DB;
 }
 
@@ -846,17 +770,17 @@ public:
     return DiagObj->DiagRanges[Idx];
   }
 
-  unsigned getNumFixItHints() const {
-    return DiagObj->NumFixItHints;
+  unsigned getNumCodeModificationHints() const {
+    return DiagObj->NumCodeModificationHints;
   }
 
-  const FixItHint &getFixItHint(unsigned Idx) const {
-    return DiagObj->FixItHints[Idx];
+  const CodeModificationHint &getCodeModificationHint(unsigned Idx) const {
+    return DiagObj->CodeModificationHints[Idx];
   }
 
-  const FixItHint *getFixItHints() const {
-    return DiagObj->NumFixItHints?
-             &DiagObj->FixItHints[0] : 0;
+  const CodeModificationHint *getCodeModificationHints() const {
+    return DiagObj->NumCodeModificationHints?
+             &DiagObj->CodeModificationHints[0] : 0;
   }
 
   /// FormatDiagnostic - Format this diagnostic into a string, substituting the
@@ -879,7 +803,7 @@ class StoredDiagnostic {
   FullSourceLoc Loc;
   std::string Message;
   std::vector<SourceRange> Ranges;
-  std::vector<FixItHint> FixIts;
+  std::vector<CodeModificationHint> FixIts;
 
 public:
   StoredDiagnostic();
@@ -899,7 +823,7 @@ public:
   range_iterator range_end() const { return Ranges.end(); }
   unsigned range_size() const { return Ranges.size(); }
 
-  typedef std::vector<FixItHint>::const_iterator fixit_iterator;
+  typedef std::vector<CodeModificationHint>::const_iterator fixit_iterator;
   fixit_iterator fixit_begin() const { return FixIts.begin(); }
   fixit_iterator fixit_end() const { return FixIts.end(); }
   unsigned fixit_size() const { return FixIts.size(); }

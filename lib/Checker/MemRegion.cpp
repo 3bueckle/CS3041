@@ -13,10 +13,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/Checker/PathSensitive/MemRegion.h"
 #include "clang/Analysis/AnalysisContext.h"
-#include "clang/Analysis/Support/BumpVector.h"
+#include "clang/Checker/PathSensitive/MemRegion.h"
 #include "clang/AST/CharUnits.h"
+#include "clang/AST/StmtVisitor.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace clang;
@@ -365,11 +365,11 @@ void ElementRegion::dumpToStream(llvm::raw_ostream& os) const {
 }
 
 void FieldRegion::dumpToStream(llvm::raw_ostream& os) const {
-  os << superRegion << "->" << getDecl();
+  os << superRegion << "->" << getDecl()->getNameAsString();
 }
 
 void ObjCIvarRegion::dumpToStream(llvm::raw_ostream& os) const {
-  os << "ivar{" << superRegion << ',' << getDecl() << '}';
+  os << "ivar{" << superRegion << ',' << getDecl()->getNameAsString() << '}';
 }
 
 void StringRegion::dumpToStream(llvm::raw_ostream& os) const {
@@ -381,7 +381,7 @@ void SymbolicRegion::dumpToStream(llvm::raw_ostream& os) const {
 }
 
 void VarRegion::dumpToStream(llvm::raw_ostream& os) const {
-  os << cast<VarDecl>(D);
+  os << cast<VarDecl>(D)->getNameAsString();
 }
 
 void RegionRawOffset::dump() const {
@@ -647,14 +647,13 @@ bool MemRegion::hasGlobalsOrParametersStorage() const {
 const MemRegion *MemRegion::getBaseRegion() const {
   const MemRegion *R = this;
   while (true) {
-    switch (R->getKind()) {
-      case MemRegion::ElementRegionKind:
-      case MemRegion::FieldRegionKind:
-      case MemRegion::ObjCIvarRegionKind:
-        R = cast<SubRegion>(R)->getSuperRegion();
-        continue;
-      default:
-        break;
+    if (const ElementRegion *ER = dyn_cast<ElementRegion>(R)) {
+      R = ER->getSuperRegion();
+      continue;
+    }
+    if (const FieldRegion *FR = dyn_cast<FieldRegion>(R)) {
+      R = FR->getSuperRegion();
+      continue;
     }
     break;
   }

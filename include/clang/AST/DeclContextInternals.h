@@ -24,8 +24,6 @@
 
 namespace clang {
 
-class DependentDiagnostic;
-
 /// StoredDeclsList - This is an array of decls optimized a common case of only
 /// containing one entry.
 struct StoredDeclsList {
@@ -230,7 +228,7 @@ public:
     // Tag declarations always go at the end of the list so that an
     // iterator which points at the first tag will start a span of
     // decls that only contains tags.
-    if (D->hasTagIdentifierNamespace())
+    if (D->getIdentifierNamespace() == Decl::IDNS_Tag)
       Vec.push_back(reinterpret_cast<uintptr_t>(D));
 
     // Resolved using declarations go at the front of the list so that
@@ -251,7 +249,7 @@ public:
     // tag declarations.  But we can be clever about tag declarations
     // because there can only ever be one in a scope.
     } else if (reinterpret_cast<NamedDecl *>(Vec.back())
-                 ->hasTagIdentifierNamespace()) {
+                 ->getIdentifierNamespace() == Decl::IDNS_Tag) {
       uintptr_t TagD = Vec.back();
       Vec.back() = reinterpret_cast<uintptr_t>(D);
       Vec.push_back(TagD);
@@ -260,28 +258,8 @@ public:
   }
 };
 
-class StoredDeclsMap
-  : public llvm::DenseMap<DeclarationName, StoredDeclsList> {
+typedef llvm::DenseMap<DeclarationName, StoredDeclsList> StoredDeclsMap;
 
-public:
-  static void DestroyAll(StoredDeclsMap *Map, bool Dependent);
-
-private:
-  friend class ASTContext; // walks the chain deleting these
-  friend class DeclContext;
-  llvm::PointerIntPair<StoredDeclsMap*, 1> Previous;
-};
-
-class DependentStoredDeclsMap : public StoredDeclsMap {
-public:
-  DependentStoredDeclsMap() : FirstDiagnostic(0) {}
-
-private:
-  friend class DependentDiagnostic;
-  friend class DeclContext; // iterates over diagnostics
-
-  DependentDiagnostic *FirstDiagnostic;
-};
 
 } // end namespace clang
 

@@ -388,8 +388,11 @@ void StmtPrinter::VisitObjCAtTryStmt(ObjCAtTryStmt *Node) {
     OS << "\n";
   }
 
-  for (unsigned I = 0, N = Node->getNumCatchStmts(); I != N; ++I) {
-    ObjCAtCatchStmt *catchStmt = Node->getCatchStmt(I);
+  for (ObjCAtCatchStmt *catchStmt =
+         static_cast<ObjCAtCatchStmt *>(Node->getCatchStmts());
+       catchStmt;
+       catchStmt =
+         static_cast<ObjCAtCatchStmt *>(catchStmt->getNextCatchStmt())) {
     Indent() << "@catch(";
     if (catchStmt->getCatchParamDecl()) {
       if (Decl *DS = catchStmt->getCatchParamDecl())
@@ -471,7 +474,7 @@ void StmtPrinter::VisitExpr(Expr *Node) {
 void StmtPrinter::VisitDeclRefExpr(DeclRefExpr *Node) {
   if (NestedNameSpecifier *Qualifier = Node->getQualifier())
     Qualifier->print(OS, Policy);
-  OS << Node->getDecl();
+  OS << Node->getDecl()->getNameAsString();
   if (Node->hasExplicitTemplateArgumentList())
     OS << TemplateSpecializationType::PrintTemplateArgumentList(
                                                     Node->getTemplateArgs(),
@@ -506,7 +509,7 @@ void StmtPrinter::VisitObjCIvarRefExpr(ObjCIvarRefExpr *Node) {
     PrintExpr(Node->getBase());
     OS << (Node->isArrow() ? "->" : ".");
   }
-  OS << Node->getDecl();
+  OS << Node->getDecl()->getNameAsString();
 }
 
 void StmtPrinter::VisitObjCPropertyRefExpr(ObjCPropertyRefExpr *Node) {
@@ -524,7 +527,7 @@ void StmtPrinter::VisitObjCImplicitSetterGetterRefExpr(
     OS << ".";
   }
   if (Node->getGetterMethod())
-    OS << Node->getGetterMethod();
+    OS << Node->getGetterMethod()->getNameAsString();
 
 }
 
@@ -692,7 +695,7 @@ bool StmtPrinter::PrintOffsetOfDesignator(Expr *E) {
   } else {
     MemberExpr *ME = cast<MemberExpr>(E);
     bool IsFirst = PrintOffsetOfDesignator(ME->getBase());
-    OS << (IsFirst ? "" : ".") << ME->getMemberDecl();
+    OS << (IsFirst ? "" : ".") << ME->getMemberDecl()->getNameAsString();
     return false;
   }
 }
@@ -743,7 +746,7 @@ void StmtPrinter::VisitMemberExpr(MemberExpr *Node) {
   if (NestedNameSpecifier *Qualifier = Node->getQualifier())
     Qualifier->print(OS, Policy);
 
-  OS << Node->getMemberDecl();
+  OS << Node->getMemberDecl()->getNameAsString();
 
   if (Node->hasExplicitTemplateArgumentList())
     OS << TemplateSpecializationType::PrintTemplateArgumentList(
@@ -1239,26 +1242,14 @@ void StmtPrinter::VisitObjCSelectorExpr(ObjCSelectorExpr *Node) {
 }
 
 void StmtPrinter::VisitObjCProtocolExpr(ObjCProtocolExpr *Node) {
-  OS << "@protocol(" << Node->getProtocol() << ')';
+  OS << "@protocol(" << Node->getProtocol()->getNameAsString() << ')';
 }
 
 void StmtPrinter::VisitObjCMessageExpr(ObjCMessageExpr *Mess) {
   OS << "[";
-  switch (Mess->getReceiverKind()) {
-  case ObjCMessageExpr::Instance:
-    PrintExpr(Mess->getInstanceReceiver());
-    break;
-
-  case ObjCMessageExpr::Class:
-    OS << Mess->getClassReceiver().getAsString(Policy);
-    break;
-
-  case ObjCMessageExpr::SuperInstance:
-  case ObjCMessageExpr::SuperClass:
-    OS << "Super";
-    break;
-  }
-
+  Expr *receiver = Mess->getReceiver();
+  if (receiver) PrintExpr(receiver);
+  else OS << Mess->getClassName()->getName();
   OS << ' ';
   Selector selector = Mess->getSelector();
   if (selector.isUnarySelector()) {
@@ -1313,7 +1304,7 @@ void StmtPrinter::VisitBlockExpr(BlockExpr *Node) {
 }
 
 void StmtPrinter::VisitBlockDeclRefExpr(BlockDeclRefExpr *Node) {
-  OS << Node->getDecl();
+  OS << Node->getDecl()->getNameAsString();
 }
 //===----------------------------------------------------------------------===//
 // Stmt method implementations

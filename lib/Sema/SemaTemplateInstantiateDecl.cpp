@@ -15,10 +15,8 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/DeclVisitor.h"
-#include "clang/AST/DependentDiagnostic.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
-#include "clang/AST/TypeLoc.h"
 #include "clang/Basic/PrettyStackTrace.h"
 #include "clang/Lex/Preprocessor.h"
 
@@ -91,55 +89,18 @@ namespace {
     }
 
     // Helper functions for instantiating methods.
-    TypeSourceInfo *SubstFunctionType(FunctionDecl *D,
+    QualType SubstFunctionType(FunctionDecl *D,
                              llvm::SmallVectorImpl<ParmVarDecl *> &Params);
     bool InitFunctionInstantiation(FunctionDecl *New, FunctionDecl *Tmpl);
     bool InitMethodInstantiation(CXXMethodDecl *New, CXXMethodDecl *Tmpl);
 
     TemplateParameterList *
       SubstTemplateParams(TemplateParameterList *List);
-
-    bool SubstQualifier(const DeclaratorDecl *OldDecl,
-                        DeclaratorDecl *NewDecl);
-    bool SubstQualifier(const TagDecl *OldDecl,
-                        TagDecl *NewDecl);
       
     bool InstantiateClassTemplatePartialSpecialization(
                                               ClassTemplateDecl *ClassTemplate,
                            ClassTemplatePartialSpecializationDecl *PartialSpec);
   };
-}
-
-bool TemplateDeclInstantiator::SubstQualifier(const DeclaratorDecl *OldDecl,
-                                              DeclaratorDecl *NewDecl) {
-  NestedNameSpecifier *OldQual = OldDecl->getQualifier();
-  if (!OldQual) return false;
-
-  SourceRange QualRange = OldDecl->getQualifierRange();
-
-  NestedNameSpecifier *NewQual
-    = SemaRef.SubstNestedNameSpecifier(OldQual, QualRange, TemplateArgs);
-  if (!NewQual)
-    return true;
-
-  NewDecl->setQualifierInfo(NewQual, QualRange);
-  return false;
-}
-
-bool TemplateDeclInstantiator::SubstQualifier(const TagDecl *OldDecl,
-                                              TagDecl *NewDecl) {
-  NestedNameSpecifier *OldQual = OldDecl->getQualifier();
-  if (!OldQual) return false;
-
-  SourceRange QualRange = OldDecl->getQualifierRange();
-
-  NestedNameSpecifier *NewQual
-    = SemaRef.SubstNestedNameSpecifier(OldQual, QualRange, TemplateArgs);
-  if (!NewQual)
-    return true;
-
-  NewDecl->setQualifierInfo(NewQual, QualRange);
-  return false;
 }
 
 // FIXME: Is this too simple?
@@ -200,21 +161,11 @@ Decl *TemplateDeclInstantiator::VisitTypedefDecl(TypedefDecl *D) {
   if (Invalid)
     Typedef->setInvalidDecl();
 
-  if (const TagType *TT = DI->getType()->getAs<TagType>()) {
-    TagDecl *TD = TT->getDecl();
-    
-    // If the TagDecl that the TypedefDecl points to is an anonymous decl
-    // keep track of the TypedefDecl.
-    if (!TD->getIdentifier() && !TD->getTypedefForAnonDecl())
-      TD->setTypedefForAnonDecl(Typedef);
-  }
-  
   if (TypedefDecl *Prev = D->getPreviousDeclaration()) {
     NamedDecl *InstPrev = SemaRef.FindInstantiatedDecl(D->getLocation(), Prev,
                                                        TemplateArgs);
     Typedef->setPreviousDeclaration(cast<TypedefDecl>(InstPrev));
   }
-
 
   Typedef->setAccess(D->getAccess());
   Owner->addDecl(Typedef);
@@ -296,19 +247,17 @@ static bool InstantiateInitializer(Sema &S, Expr *Init,
   }
 
   if (CXXConstructExpr *Construct = dyn_cast<CXXConstructExpr>(Init)) {
-    if (!isa<CXXTemporaryObjectExpr>(Construct)) {
-      if (InstantiateInitializationArguments(S,
-                                             Construct->getArgs(),
-                                             Construct->getNumArgs(),
-                                             TemplateArgs,
-                                             CommaLocs, NewArgs))
-        return true;
+    if (InstantiateInitializationArguments(S,
+                                           Construct->getArgs(),
+                                           Construct->getNumArgs(),
+                                           TemplateArgs,
+                                           CommaLocs, NewArgs))
+      return true;
 
-      // FIXME: Fake locations!
-      LParenLoc = S.PP.getLocForEndOfToken(Init->getLocStart());
-      RParenLoc = CommaLocs.empty()? LParenLoc : CommaLocs.back();
-      return false;
-    }
+    // FIXME: Fake locations!
+    LParenLoc = S.PP.getLocForEndOfToken(Init->getLocStart());
+    RParenLoc = CommaLocs.empty()? LParenLoc : CommaLocs.back();
+    return false;
   }
  
   Sema::OwningExprResult Result = S.SubstExpr(Init, TemplateArgs);
@@ -332,15 +281,10 @@ Decl *TemplateDeclInstantiator::VisitVarDecl(VarDecl *D) {
   VarDecl *Var = VarDecl::Create(SemaRef.Context, Owner,
                                  D->getLocation(), D->getIdentifier(),
                                  DI->getType(), DI,
-                                 D->getStorageClass(),
-                                 D->getStorageClassAsWritten());
+                                 D->getStorageClass());
   Var->setThreadSpecified(D->isThreadSpecified());
   Var->setCXXDirectInitializer(D->hasCXXDirectInitializer());
   Var->setDeclaredInCondition(D->isDeclaredInCondition());
-
-  // Substitute the nested name specifier, if any.
-  if (SubstQualifier(D, Var))
-    return 0;
 
   // If we are instantiating a static data member defined
   // out-of-line, the instantiation will have the same lexical
@@ -487,37 +431,53 @@ Decl *TemplateDeclInstantiator::VisitFieldDecl(FieldDecl *D) {
 }
 
 Decl *TemplateDeclInstantiator::VisitFriendDecl(FriendDecl *D) {
+  FriendDecl::FriendUnion FU;
+
   // Handle friend type expressions by simply substituting template
-  // parameters into the pattern type and checking the result.
-  if (TypeSourceInfo *Ty = D->getFriendType()) {
-    TypeSourceInfo *InstTy = 
-      SemaRef.SubstType(Ty, TemplateArgs,
-                        D->getLocation(), DeclarationName());
-    if (!InstTy) 
-      return 0;
+  // parameters into the pattern type.
+  if (Type *Ty = D->getFriendType()) {
+    QualType T = SemaRef.SubstType(QualType(Ty,0), TemplateArgs,
+                                   D->getLocation(), DeclarationName());
+    if (T.isNull()) return 0;
 
-    FriendDecl *FD = SemaRef.CheckFriendTypeDecl(D->getFriendLoc(), InstTy);
-    if (!FD)
-      return 0;
-    
-    FD->setAccess(AS_public);
-    Owner->addDecl(FD);
-    return FD;
-  } 
-  
-  NamedDecl *ND = D->getFriendDecl();
-  assert(ND && "friend decl must be a decl or a type!");
+    assert(getLangOptions().CPlusPlus0x || T->isRecordType());
+    FU = T.getTypePtr();
 
-  // All of the Visit implementations for the various potential friend
-  // declarations have to be carefully written to work for friend
-  // objects, with the most important detail being that the target
-  // decl should almost certainly not be placed in Owner.
-  Decl *NewND = Visit(ND);
-  if (!NewND) return 0;
+  // Handle everything else by appropriate substitution.
+  } else {
+    NamedDecl *ND = D->getFriendDecl();
+    assert(ND && "friend decl must be a decl or a type!");
+
+    // FIXME: We have a problem here, because the nested call to Visit(ND)
+    // will inject the thing that the friend references into the current
+    // owner, which is wrong.
+    Decl *NewND;
+
+    // Hack to make this work almost well pending a rewrite.
+    if (ND->getDeclContext()->isRecord()) {
+      if (!ND->getDeclContext()->isDependentContext()) {
+        NewND = SemaRef.FindInstantiatedDecl(D->getLocation(), ND, 
+                                             TemplateArgs);
+      } else {
+        // FIXME: Hack to avoid crashing when incorrectly trying to instantiate
+        // templated friend declarations. This doesn't produce a correct AST;
+        // however this is sufficient for some AST analysis. The real solution
+        // must be put in place during the pending rewrite. See PR5848.
+        return 0;
+      }
+    } else if (D->wasSpecialization()) {
+      // Totally egregious hack to work around PR5866
+      return 0;
+    } else
+      NewND = Visit(ND);
+    if (!NewND) return 0;
+
+    FU = cast<NamedDecl>(NewND);
+  }
 
   FriendDecl *FD =
-    FriendDecl::Create(SemaRef.Context, Owner, D->getLocation(), 
-                       cast<NamedDecl>(NewND), D->getFriendLoc());
+    FriendDecl::Create(SemaRef.Context, Owner, D->getLocation(), FU,
+                       D->getFriendLoc());
   FD->setAccess(AS_public);
   Owner->addDecl(FD);
   return FD;
@@ -550,7 +510,6 @@ Decl *TemplateDeclInstantiator::VisitEnumDecl(EnumDecl *D) {
                                     /*PrevDecl=*/0);
   Enum->setInstantiationOfMemberEnum(D);
   Enum->setAccess(D->getAccess());
-  if (SubstQualifier(D, Enum)) return 0;
   Owner->addDecl(Enum);
   Enum->startDefinition();
 
@@ -636,8 +595,6 @@ namespace {
 }
 
 Decl *TemplateDeclInstantiator::VisitClassTemplateDecl(ClassTemplateDecl *D) {
-  bool isFriend = (D->getFriendObjectKind() != Decl::FOK_None);
-
   // Create a local instantiation scope for this class template, which
   // will contain the instantiations of the template parameters.
   Sema::LocalInstantiationScope Scope(SemaRef);
@@ -647,148 +604,31 @@ Decl *TemplateDeclInstantiator::VisitClassTemplateDecl(ClassTemplateDecl *D) {
     return NULL;
 
   CXXRecordDecl *Pattern = D->getTemplatedDecl();
-
-  // Instantiate the qualifier.  We have to do this first in case
-  // we're a friend declaration, because if we are then we need to put
-  // the new declaration in the appropriate context.
-  NestedNameSpecifier *Qualifier = Pattern->getQualifier();
-  if (Qualifier) {
-    Qualifier = SemaRef.SubstNestedNameSpecifier(Qualifier,
-                                                 Pattern->getQualifierRange(),
-                                                 TemplateArgs);
-    if (!Qualifier) return 0;
-  }
-
-  CXXRecordDecl *PrevDecl = 0;
-  ClassTemplateDecl *PrevClassTemplate = 0;
-
-  // If this isn't a friend, then it's a member template, in which
-  // case we just want to build the instantiation in the
-  // specialization.  If it is a friend, we want to build it in
-  // the appropriate context.
-  DeclContext *DC = Owner;
-  if (isFriend) {
-    if (Qualifier) {
-      CXXScopeSpec SS;
-      SS.setScopeRep(Qualifier);
-      SS.setRange(Pattern->getQualifierRange());
-      DC = SemaRef.computeDeclContext(SS);
-      if (!DC) return 0;
-    } else {
-      DC = SemaRef.FindInstantiatedContext(Pattern->getLocation(),
-                                           Pattern->getDeclContext(),
-                                           TemplateArgs);
-    }
-
-    // Look for a previous declaration of the template in the owning
-    // context.
-    LookupResult R(SemaRef, Pattern->getDeclName(), Pattern->getLocation(),
-                   Sema::LookupOrdinaryName, Sema::ForRedeclaration);
-    SemaRef.LookupQualifiedName(R, DC);
-
-    if (R.isSingleResult()) {
-      PrevClassTemplate = R.getAsSingle<ClassTemplateDecl>();
-      if (PrevClassTemplate)
-        PrevDecl = PrevClassTemplate->getTemplatedDecl();
-    }
-
-    if (!PrevClassTemplate && Qualifier) {
-      SemaRef.Diag(Pattern->getLocation(), diag::err_not_tag_in_scope)
-        << D->getTemplatedDecl()->getTagKind() << Pattern->getDeclName() << DC
-        << Pattern->getQualifierRange();
-      return 0;
-    }
-
-    bool AdoptedPreviousTemplateParams = false;
-    if (PrevClassTemplate) {
-      bool Complain = true;
-
-      // HACK: libstdc++ 4.2.1 contains an ill-formed friend class
-      // template for struct std::tr1::__detail::_Map_base, where the
-      // template parameters of the friend declaration don't match the
-      // template parameters of the original declaration. In this one
-      // case, we don't complain about the ill-formed friend
-      // declaration.
-      if (isFriend && Pattern->getIdentifier() && 
-          Pattern->getIdentifier()->isStr("_Map_base") &&
-          DC->isNamespace() &&
-          cast<NamespaceDecl>(DC)->getIdentifier() &&
-          cast<NamespaceDecl>(DC)->getIdentifier()->isStr("__detail")) {
-        DeclContext *DCParent = DC->getParent();
-        if (DCParent->isNamespace() &&
-            cast<NamespaceDecl>(DCParent)->getIdentifier() &&
-            cast<NamespaceDecl>(DCParent)->getIdentifier()->isStr("tr1")) {
-          DeclContext *DCParent2 = DCParent->getParent();
-          if (DCParent2->isNamespace() &&
-              cast<NamespaceDecl>(DCParent2)->getIdentifier() &&
-              cast<NamespaceDecl>(DCParent2)->getIdentifier()->isStr("std") &&
-              DCParent2->getParent()->isTranslationUnit())
-            Complain = false;
-        }
-      }
-
-      TemplateParameterList *PrevParams
-        = PrevClassTemplate->getTemplateParameters();
-
-      // Make sure the parameter lists match.
-      if (!SemaRef.TemplateParameterListsAreEqual(InstParams, PrevParams,
-                                                  Complain, 
-                                                  Sema::TPL_TemplateMatch)) {
-        if (Complain)
-          return 0;
-
-        AdoptedPreviousTemplateParams = true;
-        InstParams = PrevParams;
-      }
-
-      // Do some additional validation, then merge default arguments
-      // from the existing declarations.
-      if (!AdoptedPreviousTemplateParams &&
-          SemaRef.CheckTemplateParameterList(InstParams, PrevParams,
-                                             Sema::TPC_ClassTemplate))
-        return 0;
-    }
-  }
-
   CXXRecordDecl *RecordInst
-    = CXXRecordDecl::Create(SemaRef.Context, Pattern->getTagKind(), DC,
+    = CXXRecordDecl::Create(SemaRef.Context, Pattern->getTagKind(), Owner,
                             Pattern->getLocation(), Pattern->getIdentifier(),
-                            Pattern->getTagKeywordLoc(), PrevDecl,
+                            Pattern->getTagKeywordLoc(), /*PrevDecl=*/ NULL,
                             /*DelayTypeCreation=*/true);
 
-  if (Qualifier)
-    RecordInst->setQualifierInfo(Qualifier, Pattern->getQualifierRange());
-
   ClassTemplateDecl *Inst
-    = ClassTemplateDecl::Create(SemaRef.Context, DC, D->getLocation(),
-                                D->getIdentifier(), InstParams, RecordInst,
-                                PrevClassTemplate);
+    = ClassTemplateDecl::Create(SemaRef.Context, Owner, D->getLocation(),
+                                D->getIdentifier(), InstParams, RecordInst, 0);
   RecordInst->setDescribedClassTemplate(Inst);
-
-  if (isFriend) {
-    if (PrevClassTemplate)
-      Inst->setAccess(PrevClassTemplate->getAccess());
-    else
-      Inst->setAccess(D->getAccess());
-
-    Inst->setObjectOfFriendDecl(PrevClassTemplate != 0);
-    // TODO: do we want to track the instantiation progeny of this
-    // friend target decl?
-  } else {
+  if (D->getFriendObjectKind())
+    Inst->setObjectOfFriendDecl(true);
+  else
     Inst->setAccess(D->getAccess());
-    Inst->setInstantiatedFromMemberTemplate(D);
-  }
+  Inst->setInstantiatedFromMemberTemplate(D);
   
   // Trigger creation of the type for the instantiation.
-  SemaRef.Context.getInjectedClassNameType(RecordInst,
-                  Inst->getInjectedClassNameSpecialization(SemaRef.Context));
-
+  SemaRef.Context.getTypeDeclType(RecordInst);
+  
   // Finish handling of friends.
-  if (isFriend) {
-    DC->makeDeclVisibleInContext(Inst, /*Recoverable*/ false);
+  if (Inst->getFriendObjectKind()) {
     return Inst;
   }
   
+  Inst->setAccess(D->getAccess());
   Owner->addDecl(Inst);
   
   // First, we sort the partial specializations by location, so 
@@ -874,18 +714,16 @@ TemplateDeclInstantiator::VisitFunctionTemplateDecl(FunctionTemplateDecl *D) {
   assert(InstTemplate && 
          "VisitFunctionDecl/CXXMethodDecl didn't create a template!");
 
-  bool isFriend = (InstTemplate->getFriendObjectKind() != Decl::FOK_None);
-
   // Link the instantiation back to the pattern *unless* this is a
   // non-definition friend declaration.
   if (!InstTemplate->getInstantiatedFromMemberTemplate() &&
-      !(isFriend && !D->getTemplatedDecl()->isThisDeclarationADefinition()))
+      !(InstTemplate->getFriendObjectKind() &&
+        !D->getTemplatedDecl()->isThisDeclarationADefinition()))
     InstTemplate->setInstantiatedFromMemberTemplate(D);
   
-  // Make declarations visible in the appropriate context.
-  if (!isFriend)
+  // Add non-friends into the owner.
+  if (!InstTemplate->getFriendObjectKind())
     Owner->addDecl(InstTemplate);
-
   return InstTemplate;
 }
 
@@ -905,11 +743,6 @@ Decl *TemplateDeclInstantiator::VisitCXXRecordDecl(CXXRecordDecl *D) {
     = CXXRecordDecl::Create(SemaRef.Context, D->getTagKind(), Owner,
                             D->getLocation(), D->getIdentifier(),
                             D->getTagKeywordLoc(), PrevDecl);
-
-  // Substitute the nested name specifier, if any.
-  if (SubstQualifier(D, Record))
-    return 0;
-
   Record->setImplicit(D->isImplicit());
   // FIXME: Check against AS_none is an ugly hack to work around the issue that
   // the tag decls introduced by friend class declarations don't have an access
@@ -957,64 +790,31 @@ Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D,
       return Info->Function;
   }
 
-  bool isFriend;
-  if (FunctionTemplate)
-    isFriend = (FunctionTemplate->getFriendObjectKind() != Decl::FOK_None);
-  else
-    isFriend = (D->getFriendObjectKind() != Decl::FOK_None);
-
   bool MergeWithParentScope = (TemplateParams != 0) ||
     !(isa<Decl>(Owner) && 
       cast<Decl>(Owner)->isDefinedOutsideFunctionOrMethod());
   Sema::LocalInstantiationScope Scope(SemaRef, MergeWithParentScope);
 
   llvm::SmallVector<ParmVarDecl *, 4> Params;
-  TypeSourceInfo *TInfo = D->getTypeSourceInfo();
-  TInfo = SubstFunctionType(D, Params);
-  if (!TInfo)
+  QualType T = SubstFunctionType(D, Params);
+  if (T.isNull())
     return 0;
-  QualType T = TInfo->getType();
-
-  NestedNameSpecifier *Qualifier = D->getQualifier();
-  if (Qualifier) {
-    Qualifier = SemaRef.SubstNestedNameSpecifier(Qualifier,
-                                                 D->getQualifierRange(),
-                                                 TemplateArgs);
-    if (!Qualifier) return 0;
-  }
 
   // If we're instantiating a local function declaration, put the result
   // in the owner;  otherwise we need to find the instantiated context.
   DeclContext *DC;
   if (D->getDeclContext()->isFunctionOrMethod())
     DC = Owner;
-  else if (isFriend && Qualifier) {
-    CXXScopeSpec SS;
-    SS.setScopeRep(Qualifier);
-    SS.setRange(D->getQualifierRange());
-    DC = SemaRef.computeDeclContext(SS);
-    if (!DC) return 0;
-  } else {
+  else
     DC = SemaRef.FindInstantiatedContext(D->getLocation(), D->getDeclContext(), 
                                          TemplateArgs);
-  }
 
   FunctionDecl *Function =
       FunctionDecl::Create(SemaRef.Context, DC, D->getLocation(),
-                           D->getDeclName(), T, TInfo,
-                           D->getStorageClass(), D->getStorageClassAsWritten(),
+                           D->getDeclName(), T, D->getTypeSourceInfo(),
+                           D->getStorageClass(),
                            D->isInlineSpecified(), D->hasWrittenPrototype());
-
-  if (Qualifier)
-    Function->setQualifierInfo(Qualifier, D->getQualifierRange());
-
-  DeclContext *LexicalDC = Owner;
-  if (!isFriend && D->isOutOfLine()) {
-    assert(D->getDeclContext()->isFileContext());
-    LexicalDC = D->getDeclContext();
-  }
-
-  Function->setLexicalDeclContext(LexicalDC);
+  Function->setLexicalDeclContext(Owner);
 
   // Attach the parameters
   for (unsigned P = 0; P < Params.size(); ++P)
@@ -1036,29 +836,17 @@ Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D,
     // which means substituting int for T, but leaving "f" as a friend function
     // template.
     // Build the function template itself.
-    FunctionTemplate = FunctionTemplateDecl::Create(SemaRef.Context, DC,
+    FunctionTemplate = FunctionTemplateDecl::Create(SemaRef.Context, Owner,
                                                     Function->getLocation(),
                                                     Function->getDeclName(),
                                                     TemplateParams, Function);
     Function->setDescribedFunctionTemplate(FunctionTemplate);
-
-    FunctionTemplate->setLexicalDeclContext(LexicalDC);
-
-    if (isFriend && D->isThisDeclarationADefinition()) {
-      // TODO: should we remember this connection regardless of whether
-      // the friend declaration provided a body?
-      FunctionTemplate->setInstantiatedFromMemberTemplate(
-                                           D->getDescribedFunctionTemplate());
-    }
+    FunctionTemplate->setLexicalDeclContext(D->getLexicalDeclContext());
   } else if (FunctionTemplate) {
     // Record this function template specialization.
     Function->setFunctionTemplateSpecialization(FunctionTemplate,
                                                 &TemplateArgs.getInnermost(),
                                                 InsertPos);
-  } else if (isFriend && D->isThisDeclarationADefinition()) {
-    // TODO: should we remember this connection regardless of whether
-    // the friend declaration provided a body?
-    Function->setInstantiationOfMemberFunction(D, TSK_ImplicitInstantiation);
   }
     
   if (InitFunctionInstantiation(Function, D))
@@ -1066,47 +854,11 @@ Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D,
 
   bool Redeclaration = false;
   bool OverloadableAttrRequired = false;
-  bool isExplicitSpecialization = false;
     
   LookupResult Previous(SemaRef, Function->getDeclName(), SourceLocation(),
                         Sema::LookupOrdinaryName, Sema::ForRedeclaration);
 
-  if (DependentFunctionTemplateSpecializationInfo *Info
-        = D->getDependentSpecializationInfo()) {
-    assert(isFriend && "non-friend has dependent specialization info?");
-
-    // This needs to be set now for future sanity.
-    Function->setObjectOfFriendDecl(/*HasPrevious*/ true);
-
-    // Instantiate the explicit template arguments.
-    TemplateArgumentListInfo ExplicitArgs(Info->getLAngleLoc(),
-                                          Info->getRAngleLoc());
-    for (unsigned I = 0, E = Info->getNumTemplateArgs(); I != E; ++I) {
-      TemplateArgumentLoc Loc;
-      if (SemaRef.Subst(Info->getTemplateArg(I), Loc, TemplateArgs))
-        return 0;
-
-      ExplicitArgs.addArgument(Loc);
-    }
-
-    // Map the candidate templates to their instantiations.
-    for (unsigned I = 0, E = Info->getNumTemplates(); I != E; ++I) {
-      Decl *Temp = SemaRef.FindInstantiatedDecl(D->getLocation(),
-                                                Info->getTemplate(I),
-                                                TemplateArgs);
-      if (!Temp) return 0;
-
-      Previous.addDecl(cast<FunctionTemplateDecl>(Temp));
-    }
-
-    if (SemaRef.CheckFunctionTemplateSpecialization(Function,
-                                                    &ExplicitArgs,
-                                                    Previous))
-      Function->setInvalidDecl();
-                                          
-    isExplicitSpecialization = true;
-
-  } else if (TemplateParams || !FunctionTemplate) {
+  if (TemplateParams || !FunctionTemplate) {
     // Look only into the namespace where the friend would be declared to 
     // find a previous declaration. This is the innermost enclosing namespace, 
     // as described in ActOnFriendFunctionDecl.
@@ -1121,29 +873,30 @@ Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D,
   }
   
   SemaRef.CheckFunctionDeclaration(/*Scope*/ 0, Function, Previous,
-                                   isExplicitSpecialization, Redeclaration,
+                                   false, Redeclaration,
                                    /*FIXME:*/OverloadableAttrRequired);
-
-  NamedDecl *PrincipalDecl = (TemplateParams
-                              ? cast<NamedDecl>(FunctionTemplate)
-                              : Function);
 
   // If the original function was part of a friend declaration,
   // inherit its namespace state and add it to the owner.
-  if (isFriend) {
+  NamedDecl *FromFriendD 
+      = TemplateParams? cast<NamedDecl>(D->getDescribedFunctionTemplate()) : D;
+  if (FromFriendD->getFriendObjectKind()) {
+    NamedDecl *ToFriendD = 0;
     NamedDecl *PrevDecl;
-    if (TemplateParams)
+    if (TemplateParams) {
+      ToFriendD = cast<NamedDecl>(FunctionTemplate);
       PrevDecl = FunctionTemplate->getPreviousDeclaration();
-    else
+    } else {
+      ToFriendD = Function;
       PrevDecl = Function->getPreviousDeclaration();
+    }
+    ToFriendD->setObjectOfFriendDecl(PrevDecl != NULL);
+    if (!Owner->isDependentContext() && !PrevDecl)
+      DC->makeDeclVisibleInContext(ToFriendD, /* Recoverable = */ false);
 
-    PrincipalDecl->setObjectOfFriendDecl(PrevDecl != 0);
-    DC->makeDeclVisibleInContext(PrincipalDecl, /*Recoverable=*/ false);
+    if (!TemplateParams)
+      Function->setInstantiationOfMemberFunction(D, TSK_ImplicitInstantiation);
   }
-
-  if (Function->isOverloadedOperator() && !DC->isRecord() &&
-      PrincipalDecl->isInIdentifierNamespace(Decl::IDNS_Ordinary))
-    PrincipalDecl->setNonMemberOperator();
 
   return Function;
 }
@@ -1172,49 +925,18 @@ TemplateDeclInstantiator::VisitCXXMethodDecl(CXXMethodDecl *D,
       return Info->Function;
   }
 
-  bool isFriend;
-  if (FunctionTemplate)
-    isFriend = (FunctionTemplate->getFriendObjectKind() != Decl::FOK_None);
-  else
-    isFriend = (D->getFriendObjectKind() != Decl::FOK_None);
-
   bool MergeWithParentScope = (TemplateParams != 0) ||
     !(isa<Decl>(Owner) && 
       cast<Decl>(Owner)->isDefinedOutsideFunctionOrMethod());
   Sema::LocalInstantiationScope Scope(SemaRef, MergeWithParentScope);
 
   llvm::SmallVector<ParmVarDecl *, 4> Params;
-  TypeSourceInfo *TInfo = D->getTypeSourceInfo();
-  TInfo = SubstFunctionType(D, Params);
-  if (!TInfo)
+  QualType T = SubstFunctionType(D, Params);
+  if (T.isNull())
     return 0;
-  QualType T = TInfo->getType();
-
-  NestedNameSpecifier *Qualifier = D->getQualifier();
-  if (Qualifier) {
-    Qualifier = SemaRef.SubstNestedNameSpecifier(Qualifier,
-                                                 D->getQualifierRange(),
-                                                 TemplateArgs);
-    if (!Qualifier) return 0;
-  }
-
-  DeclContext *DC = Owner;
-  if (isFriend) {
-    if (Qualifier) {
-      CXXScopeSpec SS;
-      SS.setScopeRep(Qualifier);
-      SS.setRange(D->getQualifierRange());
-      DC = SemaRef.computeDeclContext(SS);
-    } else {
-      DC = SemaRef.FindInstantiatedContext(D->getLocation(),
-                                           D->getDeclContext(),
-                                           TemplateArgs);
-    }
-    if (!DC) return 0;
-  }
 
   // Build the instantiated method declaration.
-  CXXRecordDecl *Record = cast<CXXRecordDecl>(DC);
+  CXXRecordDecl *Record = cast<CXXRecordDecl>(Owner);
   CXXMethodDecl *Method = 0;
 
   DeclarationName Name = D->getDeclName();
@@ -1224,18 +946,17 @@ TemplateDeclInstantiator::VisitCXXMethodDecl(CXXMethodDecl *D,
                                     SemaRef.Context.getCanonicalType(ClassTy));
     Method = CXXConstructorDecl::Create(SemaRef.Context, Record,
                                         Constructor->getLocation(),
-                                        Name, T, TInfo,
+                                        Name, T,
+                                        Constructor->getTypeSourceInfo(),
                                         Constructor->isExplicit(),
-                                        Constructor->isInlineSpecified(),
-                                        false);
+                                        Constructor->isInlineSpecified(), false);
   } else if (CXXDestructorDecl *Destructor = dyn_cast<CXXDestructorDecl>(D)) {
     QualType ClassTy = SemaRef.Context.getTypeDeclType(Record);
     Name = SemaRef.Context.DeclarationNames.getCXXDestructorName(
                                    SemaRef.Context.getCanonicalType(ClassTy));
     Method = CXXDestructorDecl::Create(SemaRef.Context, Record,
                                        Destructor->getLocation(), Name,
-                                       T, Destructor->isInlineSpecified(),
-                                       false);
+                                       T, Destructor->isInlineSpecified(), false);
   } else if (CXXConversionDecl *Conversion = dyn_cast<CXXConversionDecl>(D)) {
     CanQualType ConvTy
       = SemaRef.Context.getCanonicalType(
@@ -1244,19 +965,14 @@ TemplateDeclInstantiator::VisitCXXMethodDecl(CXXMethodDecl *D,
                                                                       ConvTy);
     Method = CXXConversionDecl::Create(SemaRef.Context, Record,
                                        Conversion->getLocation(), Name,
-                                       T, TInfo,
+                                       T, Conversion->getTypeSourceInfo(),
                                        Conversion->isInlineSpecified(),
                                        Conversion->isExplicit());
   } else {
     Method = CXXMethodDecl::Create(SemaRef.Context, Record, D->getLocation(),
-                                   D->getDeclName(), T, TInfo,
-                                   D->isStatic(),
-                                   D->getStorageClassAsWritten(),
-                                   D->isInlineSpecified());
+                                   D->getDeclName(), T, D->getTypeSourceInfo(),
+                                   D->isStatic(), D->isInlineSpecified());
   }
-
-  if (Qualifier)
-    Method->setQualifierInfo(Qualifier, D->getQualifierRange());
 
   if (TemplateParams) {
     // Our resulting instantiation is actually a function template, since we
@@ -1276,10 +992,7 @@ TemplateDeclInstantiator::VisitCXXMethodDecl(CXXMethodDecl *D,
                                                     Method->getLocation(),
                                                     Method->getDeclName(),
                                                     TemplateParams, Method);
-    if (isFriend) {
-      FunctionTemplate->setLexicalDeclContext(Owner);
-      FunctionTemplate->setObjectOfFriendDecl(true);
-    } else if (D->isOutOfLine())
+    if (D->isOutOfLine())
       FunctionTemplate->setLexicalDeclContext(D->getLexicalDeclContext());
     Method->setDescribedFunctionTemplate(FunctionTemplate);
   } else if (FunctionTemplate) {
@@ -1287,7 +1000,7 @@ TemplateDeclInstantiator::VisitCXXMethodDecl(CXXMethodDecl *D,
     Method->setFunctionTemplateSpecialization(FunctionTemplate,
                                               &TemplateArgs.getInnermost(),
                                               InsertPos);
-  } else if (!isFriend) {
+  } else {
     // Record that this is an instantiation of a member function.
     Method->setInstantiationOfMemberFunction(D, TSK_ImplicitInstantiation);
   }
@@ -1295,10 +1008,7 @@ TemplateDeclInstantiator::VisitCXXMethodDecl(CXXMethodDecl *D,
   // If we are instantiating a member function defined
   // out-of-line, the instantiation will have the same lexical
   // context (which will be a namespace scope) as the template.
-  if (isFriend) {
-    Method->setLexicalDeclContext(Owner);
-    Method->setObjectOfFriendDecl(true);
-  } else if (D->isOutOfLine())
+  if (D->isOutOfLine())
     Method->setLexicalDeclContext(D->getLexicalDeclContext());
 
   // Attach the parameters
@@ -1312,8 +1022,8 @@ TemplateDeclInstantiator::VisitCXXMethodDecl(CXXMethodDecl *D,
   LookupResult Previous(SemaRef, Name, SourceLocation(),
                         Sema::LookupOrdinaryName, Sema::ForRedeclaration);
 
-  if (!FunctionTemplate || TemplateParams || isFriend) {
-    SemaRef.LookupQualifiedName(Previous, Record);
+  if (!FunctionTemplate || TemplateParams) {
+    SemaRef.LookupQualifiedName(Previous, Owner);
 
     // In C++, the previous declaration we find might be a tag type
     // (class or enum). In this case, the new declaration will hide the
@@ -1333,19 +1043,9 @@ TemplateDeclInstantiator::VisitCXXMethodDecl(CXXMethodDecl *D,
 
   Method->setAccess(D->getAccess());
 
-  if (FunctionTemplate) {
-    // If there's a function template, let our caller handle it.
-  } else if (Method->isInvalidDecl() && !Previous.empty()) {
-    // Don't hide a (potentially) valid declaration with an invalid one.
-  } else {
-    NamedDecl *DeclToAdd = (TemplateParams
-                            ? cast<NamedDecl>(FunctionTemplate)
-                            : Method);
-    if (isFriend)
-      Record->makeDeclVisibleInContext(DeclToAdd);
-    else
-      Owner->addDecl(DeclToAdd);
-  }
+  if (!FunctionTemplate && (!Method->isInvalidDecl() || Previous.empty()) &&
+      !Method->getFriendObjectKind())
+    Owner->addDecl(Method);
 
   return Method;
 }
@@ -1363,7 +1063,41 @@ Decl *TemplateDeclInstantiator::VisitCXXConversionDecl(CXXConversionDecl *D) {
 }
 
 ParmVarDecl *TemplateDeclInstantiator::VisitParmVarDecl(ParmVarDecl *D) {
-  return SemaRef.SubstParmVarDecl(D, TemplateArgs);
+  QualType T;
+  TypeSourceInfo *DI = D->getTypeSourceInfo();
+  if (DI) {
+    DI = SemaRef.SubstType(DI, TemplateArgs, D->getLocation(),
+                           D->getDeclName());
+    if (DI) T = DI->getType();
+  } else {
+    T = SemaRef.SubstType(D->getType(), TemplateArgs, D->getLocation(),
+                          D->getDeclName());
+    DI = 0;
+  }
+
+  if (T.isNull())
+    return 0;
+
+  T = SemaRef.adjustParameterType(T);
+
+  // Allocate the parameter
+  ParmVarDecl *Param
+    = ParmVarDecl::Create(SemaRef.Context,
+                          SemaRef.Context.getTranslationUnitDecl(),
+                          D->getLocation(),
+                          D->getIdentifier(), T, DI, D->getStorageClass(), 0);
+
+  // Mark the default argument as being uninstantiated.
+  if (D->hasUninstantiatedDefaultArg())
+    Param->setUninstantiatedDefaultArg(D->getUninstantiatedDefaultArg());
+  else if (Expr *Arg = D->getDefaultArg())
+    Param->setUninstantiatedDefaultArg(Arg);
+  
+  // Note: we don't try to instantiate function parameters until after
+  // we've instantiated the function's type. Therefore, we don't have
+  // to check for 'void' parameter types here.
+  SemaRef.CurrentInstantiationScope->InstantiatedLocal(D, Param);
+  return Param;
 }
 
 Decl *TemplateDeclInstantiator::VisitTemplateTypeParmDecl(
@@ -1728,10 +1462,8 @@ TemplateDeclInstantiator::InstantiateClassTemplatePartialSpecialization(
   // actually wrote the specialization, rather than formatting the
   // name based on the "canonical" representation used to store the
   // template arguments in the specialization.
-  TypeSourceInfo *WrittenTy
-    = SemaRef.Context.getTemplateSpecializationTypeInfo(
-                                                    TemplateName(ClassTemplate),
-                                                    PartialSpec->getLocation(),
+  QualType WrittenTy
+    = SemaRef.Context.getTemplateSpecializationType(TemplateName(ClassTemplate),
                                                     InstTemplateArgs,
                                                     CanonType);
   
@@ -1767,12 +1499,7 @@ TemplateDeclInstantiator::InstantiateClassTemplatePartialSpecialization(
                                                      ClassTemplate, 
                                                      Converted,
                                                      InstTemplateArgs,
-                                                     CanonType,
                                                      0);
-  // Substitute the nested name specifier, if any.
-  if (SubstQualifier(PartialSpec, InstPartialSpec))
-    return 0;
-
   InstPartialSpec->setInstantiatedFromMember(PartialSpec);
   InstPartialSpec->setTypeAsWritten(WrittenTy);
   
@@ -1783,40 +1510,60 @@ TemplateDeclInstantiator::InstantiateClassTemplatePartialSpecialization(
   return false;
 }
 
-TypeSourceInfo*
+/// \brief Does substitution on the type of the given function, including
+/// all of the function parameters.
+///
+/// \param D The function whose type will be the basis of the substitution
+///
+/// \param Params the instantiated parameter declarations
+
+/// \returns the instantiated function's type if successful, a NULL
+/// type if there was an error.
+QualType
 TemplateDeclInstantiator::SubstFunctionType(FunctionDecl *D,
                               llvm::SmallVectorImpl<ParmVarDecl *> &Params) {
-  TypeSourceInfo *OldTInfo = D->getTypeSourceInfo();
-  assert(OldTInfo && "substituting function without type source info");
-  assert(Params.empty() && "parameter vector is non-empty at start");
-  TypeSourceInfo *NewTInfo
-    = SemaRef.SubstFunctionDeclType(OldTInfo, TemplateArgs,
-                                    D->getTypeSpecStartLoc(),
-                                    D->getDeclName());
-  if (!NewTInfo)
-    return 0;
+  bool InvalidDecl = false;
 
-  if (NewTInfo != OldTInfo) {
-    // Get parameters from the new type info.
-    TypeLoc NewTL = NewTInfo->getTypeLoc();
-    FunctionProtoTypeLoc *NewProtoLoc = cast<FunctionProtoTypeLoc>(&NewTL);
-    assert(NewProtoLoc && "Missing prototype?");
-    for (unsigned i = 0, i_end = NewProtoLoc->getNumArgs(); i != i_end; ++i)
-      Params.push_back(NewProtoLoc->getArg(i));
-  } else {
-    // The function type itself was not dependent and therefore no
-    // substitution occurred. However, we still need to instantiate
-    // the function parameters themselves.
-    TypeLoc OldTL = OldTInfo->getTypeLoc();
-    FunctionProtoTypeLoc *OldProtoLoc = cast<FunctionProtoTypeLoc>(&OldTL);
-    for (unsigned i = 0, i_end = OldProtoLoc->getNumArgs(); i != i_end; ++i) {
-      ParmVarDecl *Parm = VisitParmVarDecl(OldProtoLoc->getArg(i));
-      if (!Parm)
-        return 0;
-      Params.push_back(Parm);
-    }
+  // Substitute all of the function's formal parameter types.
+  TemplateDeclInstantiator ParamInstantiator(SemaRef, 0, TemplateArgs);
+  llvm::SmallVector<QualType, 4> ParamTys;
+  for (FunctionDecl::param_iterator P = D->param_begin(),
+                                 PEnd = D->param_end();
+       P != PEnd; ++P) {
+    if (ParmVarDecl *PInst = ParamInstantiator.VisitParmVarDecl(*P)) {
+      if (PInst->getType()->isVoidType()) {
+        SemaRef.Diag(PInst->getLocation(), diag::err_param_with_void_type);
+        PInst->setInvalidDecl();
+      } else if (SemaRef.RequireNonAbstractType(PInst->getLocation(),
+                                                PInst->getType(),
+                                                diag::err_abstract_type_in_decl,
+                                                Sema::AbstractParamType))
+        PInst->setInvalidDecl();
+
+      Params.push_back(PInst);
+      ParamTys.push_back(PInst->getType());
+
+      if (PInst->isInvalidDecl())
+        InvalidDecl = true;
+    } else
+      InvalidDecl = true;
   }
-  return NewTInfo;
+
+  // FIXME: Deallocate dead declarations.
+  if (InvalidDecl)
+    return QualType();
+
+  const FunctionProtoType *Proto = D->getType()->getAs<FunctionProtoType>();
+  assert(Proto && "Missing prototype?");
+  QualType ResultType
+    = SemaRef.SubstType(Proto->getResultType(), TemplateArgs,
+                        D->getLocation(), D->getDeclName());
+  if (ResultType.isNull())
+    return QualType();
+
+  return SemaRef.BuildFunctionType(ResultType, ParamTys.data(), ParamTys.size(),
+                                   Proto->isVariadic(), Proto->getTypeQuals(),
+                                   D->getLocation(), D->getDeclName());
 }
 
 /// \brief Initializes the common fields of an instantiation function
@@ -1886,7 +1633,8 @@ TemplateDeclInstantiator::InitFunctionInstantiation(FunctionDecl *New,
                                                  Proto->hasAnyExceptionSpec(),
                                                  Exceptions.size(),
                                                  Exceptions.data(),
-                                                 Proto->getExtInfo()));
+                                                 Proto->getNoReturnAttr(),
+                                                 Proto->getCallConv()));
   }
 
   return false;
@@ -2029,8 +1777,6 @@ void Sema::InstantiateFunctionDefinition(SourceLocation PointOfInstantiation,
   
   ActOnFinishFunctionBody(DeclPtrTy::make(Function), move(Body),
                           /*IsInstantiation=*/true);
-
-  PerformDependentDiagnostics(PatternDecl, TemplateArgs);
 
   CurContext = PreviousContext;
 
@@ -2490,18 +2236,12 @@ NamedDecl *Sema::FindInstantiatedDecl(SourceLocation Loc, NamedDecl *D,
     ClassTemplateDecl *ClassTemplate = Record->getDescribedClassTemplate();
     
     if (ClassTemplate) {
-      T = ClassTemplate->getInjectedClassNameSpecialization(Context);
+      T = ClassTemplate->getInjectedClassNameType(Context);
     } else if (ClassTemplatePartialSpecializationDecl *PartialSpec
                  = dyn_cast<ClassTemplatePartialSpecializationDecl>(Record)) {
-      ClassTemplate = PartialSpec->getSpecializedTemplate();
-
-      // If we call SubstType with an InjectedClassNameType here we
-      // can end up in an infinite loop.
       T = Context.getTypeDeclType(Record);
-      assert(isa<InjectedClassNameType>(T) &&
-             "type of partial specialization is not an InjectedClassNameType");
-      T = cast<InjectedClassNameType>(T)->getInjectedSpecializationType();
-    }  
+      ClassTemplate = PartialSpec->getSpecializedTemplate();
+    } 
     
     if (!T.isNull()) {
       // Substitute into the injected-class-name to get the type
@@ -2568,16 +2308,16 @@ NamedDecl *Sema::FindInstantiatedDecl(SourceLocation Loc, NamedDecl *D,
     // so now we need to look into the instantiated parent context to
     // find the instantiation of the declaration D.
 
-    // If our context used to be dependent, we may need to instantiate
-    // it before performing lookup into that context.
-    if (CXXRecordDecl *Spec = dyn_cast<CXXRecordDecl>(ParentDC)) {
+    // If our context is a class template specialization, we may need
+    // to instantiate it before performing lookup into that context.
+    if (ClassTemplateSpecializationDecl *Spec
+                       = dyn_cast<ClassTemplateSpecializationDecl>(ParentDC)) {
       if (!Spec->isDependentContext()) {
         QualType T = Context.getTypeDeclType(Spec);
-        const RecordType *Tag = T->getAs<RecordType>();
-        assert(Tag && "type of non-dependent record is not a RecordType");
-        if (!Tag->isBeingDefined() &&
-            RequireCompleteType(Loc, T, diag::err_incomplete_type))
-          return 0;
+        if (const TagType *Tag = T->getAs<TagType>())
+          if (!Tag->isBeingDefined() &&
+              RequireCompleteType(Loc, T, diag::err_incomplete_type))
+            return 0;
       }
     }
 
@@ -2666,19 +2406,5 @@ void Sema::PerformPendingImplicitInstantiations(bool LocalOnly) {
                                           "definition");
 
     InstantiateStaticDataMemberDefinition(/*FIXME:*/Inst.second, Var, true);
-  }
-}
-
-void Sema::PerformDependentDiagnostics(const DeclContext *Pattern,
-                       const MultiLevelTemplateArgumentList &TemplateArgs) {
-  for (DeclContext::ddiag_iterator I = Pattern->ddiag_begin(),
-         E = Pattern->ddiag_end(); I != E; ++I) {
-    DependentDiagnostic *DD = *I;
-
-    switch (DD->getKind()) {
-    case DependentDiagnostic::Access:
-      HandleDependentAccessCheck(*DD, TemplateArgs);
-      break;
-    }
   }
 }

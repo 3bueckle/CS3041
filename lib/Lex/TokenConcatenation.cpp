@@ -85,7 +85,7 @@ TokenConcatenation::TokenConcatenation(Preprocessor &pp) : PP(pp) {
   TokenInfo[tok::star        ] |= aci_avoid_equal;           // *=
   TokenInfo[tok::exclaim     ] |= aci_avoid_equal;           // !=
   TokenInfo[tok::lessless    ] |= aci_avoid_equal;           // <<=
-  TokenInfo[tok::greatergreater] |= aci_avoid_equal;         // >>=
+  TokenInfo[tok::greaterequal] |= aci_avoid_equal;           // >>=
   TokenInfo[tok::caret       ] |= aci_avoid_equal;           // ^=
   TokenInfo[tok::equal       ] |= aci_avoid_equal;           // ==
 }
@@ -124,8 +124,7 @@ static char GetFirstChar(Preprocessor &PP, const Token &Tok) {
 /// but the resulting output won't have incorrect concatenations going on.
 /// Examples include "..", which we print with a space between, because we
 /// don't want to track enough to tell "x.." from "...".
-bool TokenConcatenation::AvoidConcat(const Token &PrevPrevTok,
-                                     const Token &PrevTok,
+bool TokenConcatenation::AvoidConcat(const Token &PrevTok,
                                      const Token &Tok) const {
   // First, check to see if the tokens were directly adjacent in the original
   // source.  If they were, it must be okay to stick them together: if there
@@ -193,8 +192,7 @@ bool TokenConcatenation::AvoidConcat(const Token &PrevPrevTok,
     return isalnum(FirstChar) || Tok.is(tok::numeric_constant) ||
     FirstChar == '+' || FirstChar == '-' || FirstChar == '.';
   case tok::period:          // ..., .*, .1234
-    return (FirstChar == '.' && PrevPrevTok.is(tok::period)) ||
-    isdigit(FirstChar) ||
+    return FirstChar == '.' || isdigit(FirstChar) ||
     (PP.getLangOptions().CPlusPlus && FirstChar == '*');
   case tok::amp:             // &&
     return FirstChar == '&';

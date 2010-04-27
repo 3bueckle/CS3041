@@ -136,15 +136,8 @@ private:
   /// in, inout, etc.
   unsigned objcDeclQualifier : 6;
 
-  // Number of args separated by ':' in a method declaration.
-  unsigned NumSelectorArgs;
-
-  // Result type of this method.
+  // Type of this method.
   QualType MethodDeclType;
-  
-  // Type source information for the result type.
-  TypeSourceInfo *ResultTInfo;
-
   /// ParamInfo - List of pointers to VarDecls for the formal parameters of this
   /// Method.
   ObjCList<ParmVarDecl> ParamInfo;
@@ -165,20 +158,17 @@ private:
 
   ObjCMethodDecl(SourceLocation beginLoc, SourceLocation endLoc,
                  Selector SelInfo, QualType T,
-                 TypeSourceInfo *ResultTInfo,
                  DeclContext *contextDecl,
                  bool isInstance = true,
                  bool isVariadic = false,
                  bool isSynthesized = false,
-                 ImplementationControl impControl = None,
-                 unsigned numSelectorArgs = 0)
+                 ImplementationControl impControl = None)
   : NamedDecl(ObjCMethod, contextDecl, beginLoc, SelInfo),
     DeclContext(ObjCMethod),
     IsInstance(isInstance), IsVariadic(isVariadic),
     IsSynthesized(isSynthesized),
     DeclImplementation(impControl), objcDeclQualifier(OBJC_TQ_None),
-    NumSelectorArgs(numSelectorArgs), MethodDeclType(T), 
-    ResultTInfo(ResultTInfo),
+    MethodDeclType(T),
     EndLoc(endLoc), Body(0), SelfDecl(0), CmdDecl(0) {}
 
   virtual ~ObjCMethodDecl() {}
@@ -196,14 +186,11 @@ public:
   static ObjCMethodDecl *Create(ASTContext &C,
                                 SourceLocation beginLoc,
                                 SourceLocation endLoc, Selector SelInfo,
-                                QualType T, 
-                                TypeSourceInfo *ResultTInfo,
-                                DeclContext *contextDecl,
+                                QualType T, DeclContext *contextDecl,
                                 bool isInstance = true,
                                 bool isVariadic = false,
                                 bool isSynthesized = false,
-                                ImplementationControl impControl = None,
-                                unsigned numSelectorArgs = 0);
+                                ImplementationControl impControl = None);
 
   virtual ObjCMethodDecl *getCanonicalDecl();
   const ObjCMethodDecl *getCanonicalDecl() const {
@@ -215,11 +202,6 @@ public:
   }
   void setObjCDeclQualifier(ObjCDeclQualifier QV) { objcDeclQualifier = QV; }
 
-  unsigned getNumSelectorArgs() const { return NumSelectorArgs; }
-  void setNumSelectorArgs(unsigned numSelectorArgs) { 
-    NumSelectorArgs = numSelectorArgs; 
-  }
-  
   // Location information, modeled after the Stmt API.
   SourceLocation getLocStart() const { return getLocation(); }
   SourceLocation getLocEnd() const { return EndLoc; }
@@ -238,24 +220,14 @@ public:
   QualType getResultType() const { return MethodDeclType; }
   void setResultType(QualType T) { MethodDeclType = T; }
 
-  TypeSourceInfo *getResultTypeSourceInfo() const { return ResultTInfo; }
-  void setResultTypeSourceInfo(TypeSourceInfo *TInfo) { ResultTInfo = TInfo; }
-
   // Iterator access to formal parameters.
   unsigned param_size() const { return ParamInfo.size(); }
   typedef ObjCList<ParmVarDecl>::iterator param_iterator;
   param_iterator param_begin() const { return ParamInfo.begin(); }
   param_iterator param_end() const { return ParamInfo.end(); }
-  // This method returns and of the parameters which are part of the selector
-  // name mangling requirements.
-  param_iterator sel_param_end() const { 
-    return ParamInfo.begin() + NumSelectorArgs; 
-  }
 
-  void setMethodParams(ASTContext &C, ParmVarDecl *const *List, unsigned Num,
-                       unsigned numSelectorArgs) {
+  void setMethodParams(ASTContext &C, ParmVarDecl *const *List, unsigned Num) {
     ParamInfo.set(List, Num, C);
-    NumSelectorArgs = numSelectorArgs; 
   }
 
   // Iterator access to parameter types.
@@ -399,6 +371,8 @@ public:
   ObjCIvarDecl *getIvarDecl(IdentifierInfo *Id) const;
 
   ObjCPropertyDecl *FindPropertyDeclaration(IdentifierInfo *PropertyId) const;
+  ObjCPropertyDecl *FindPropertyVisibleInPrimaryClass(
+                                            IdentifierInfo *PropertyId) const;
 
   // Marks the end of the container.
   SourceRange getAtEndRange() const {
@@ -460,6 +434,9 @@ class ObjCInterfaceDecl : public ObjCContainerDecl {
 
   /// Protocols referenced in interface header declaration
   ObjCProtocolList ReferencedProtocols;
+
+  /// Instance variables in the interface. This list is completely redundant.
+  ObjCList<ObjCIvarDecl> IVars;
 
   /// List of categories defined for this class.
   /// FIXME: Why is this a linked list??
@@ -551,10 +528,7 @@ public:
   }
 
   ObjCCategoryDecl* getClassExtension() const;
-
-  ObjCPropertyDecl
-    *FindPropertyVisibleInPrimaryClass(IdentifierInfo *PropertyId) const;
-
+  
   /// isSuperClassOf - Return true if this class is the specified class or is a
   /// super class of the specified interface class.
   bool isSuperClassOf(const ObjCInterfaceDecl *I) const {
@@ -642,22 +616,16 @@ public:
   };
 
 private:
-  ObjCIvarDecl(ObjCContainerDecl *DC, SourceLocation L, IdentifierInfo *Id,
+  ObjCIvarDecl(DeclContext *DC, SourceLocation L, IdentifierInfo *Id,
                QualType T, TypeSourceInfo *TInfo, AccessControl ac, Expr *BW)
     : FieldDecl(ObjCIvar, DC, L, Id, T, TInfo, BW, /*Mutable=*/false),
       DeclAccess(ac) {}
 
 public:
-  static ObjCIvarDecl *Create(ASTContext &C, ObjCContainerDecl *DC,
-                              SourceLocation L, IdentifierInfo *Id, QualType T,
+  static ObjCIvarDecl *Create(ASTContext &C, DeclContext *DC, SourceLocation L,
+                              IdentifierInfo *Id, QualType T,
                               TypeSourceInfo *TInfo,
                               AccessControl ac, Expr *BW = NULL);
-
-  /// \brief Return the class interface that this ivar is logically contained
-  /// in; this is either the interface where the ivar was declared, or the
-  /// interface the ivar is conceptually a part of in the case of synthesized
-  /// ivars.
-  const ObjCInterfaceDecl *getContainingInterface() const;
 
   void setAccessControl(AccessControl ac) { DeclAccess = ac; }
 
@@ -1132,9 +1100,6 @@ public:
   static bool classofKind(Kind K) { return K == ObjCCategoryImpl;}
 };
 
-llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
-                              const ObjCCategoryImplDecl *CID);
-
 /// ObjCImplementationDecl - Represents a class definition - this is where
 /// method definitions are specified. For example:
 ///
@@ -1219,9 +1184,6 @@ public:
   static bool classof(const ObjCImplementationDecl *D) { return true; }
   static bool classofKind(Kind K) { return K == ObjCImplementation; }
 };
-
-llvm::raw_ostream &operator<<(llvm::raw_ostream &OS,
-                              const ObjCImplementationDecl *ID);
 
 /// ObjCCompatibleAliasDecl - Represents alias of a class. This alias is
 /// declared as @compatibility_alias alias class.
@@ -1357,10 +1319,6 @@ public:
   ObjCIvarDecl *getPropertyIvarDecl() const {
     return PropertyIvarDecl;
   }
-
-  /// Lookup a property by name in the specified DeclContext.
-  static ObjCPropertyDecl *findPropertyDecl(const DeclContext *DC,
-                                            IdentifierInfo *propertyID);
 
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
   static bool classof(const ObjCPropertyDecl *D) { return true; }

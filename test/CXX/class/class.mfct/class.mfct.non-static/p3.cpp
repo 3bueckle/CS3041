@@ -50,7 +50,7 @@ namespace test1 {
 }
 
 namespace test2 {
-  struct Unrelated {
+  class Unrelated {
     void foo();
   };
 

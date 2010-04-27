@@ -31,16 +31,10 @@
 #include <algorithm>
 using namespace clang;
 
-void clang::ProcessWarningOptions(Diagnostic &Diags,
+bool clang::ProcessWarningOptions(Diagnostic &Diags,
                                   const DiagnosticOptions &Opts) {
   Diags.setSuppressSystemWarnings(true);  // Default to -Wno-system-headers
   Diags.setIgnoreAllWarnings(Opts.IgnoreWarnings);
-  
-  // Handle -ferror-limit
-  if (Opts.ErrorLimit)
-    Diags.setErrorLimit(Opts.ErrorLimit);
-  if (Opts.TemplateBacktraceLimit)
-    Diags.setTemplateBacktraceLimit(Opts.TemplateBacktraceLimit);
 
   // If -pedantic or -pedantic-errors was specified, then we want to map all
   // extension diagnostics onto WARNING or ERROR unless the user has futz'd
@@ -128,4 +122,6 @@ void clang::ProcessWarningOptions(Diagnostic &Diags,
     if (Diags.setDiagnosticGroupMapping(OptStart, Mapping))
       Diags.Report(diag::warn_unknown_warning_option) << ("-W" + Opt);
   }
+
+  return false;
 }

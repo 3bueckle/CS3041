@@ -25,7 +25,6 @@ namespace llvm {
 namespace clang {
 
 class DependentTemplateName;
-class DiagnosticBuilder;
 class IdentifierInfo;
 class NestedNameSpecifier;
 struct PrintingPolicy;
@@ -173,11 +172,6 @@ public:
     return TemplateName(Ptr);
   }
 };
-
-/// Insertion operator for diagnostics.  This allows sending TemplateName's
-/// into a diagnostic with <<.
-const DiagnosticBuilder &operator<<(const DiagnosticBuilder &DB,
-                                    TemplateName N);
 
 /// \brief Represents a template name that was expressed as a
 /// qualified name.

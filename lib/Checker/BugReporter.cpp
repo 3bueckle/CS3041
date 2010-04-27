@@ -13,7 +13,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "clang/Checker/BugReporter/BugReporter.h"
-#include "clang/Checker/BugReporter/BugType.h"
 #include "clang/Checker/PathSensitive/GRExprEngine.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/Analysis/CFG.h"
@@ -35,23 +34,6 @@ BugReporterVisitor::~BugReporterVisitor() {}
 BugReporterContext::~BugReporterContext() {
   for (visitor_iterator I = visitor_begin(), E = visitor_end(); I != E; ++I)
     if ((*I)->isOwnedByReporterContext()) delete *I;
-}
-
-void BugReporterContext::addVisitor(BugReporterVisitor* visitor) {
-  if (!visitor)
-    return;
-
-  llvm::FoldingSetNodeID ID;
-  visitor->Profile(ID);
-  void *InsertPos;
-
-  if (CallbacksSet.FindNodeOrInsertPos(ID, InsertPos)) {
-    delete visitor;
-    return;
-  }
-
-  CallbacksSet.InsertNode(visitor, InsertPos);
-  Callbacks = F.Add(visitor, Callbacks);
 }
 
 //===----------------------------------------------------------------------===//
@@ -607,7 +589,7 @@ static void GenerateMinimalPathDiagnostic(PathDiagnostic& PD,
 
                   if (D) {
                     GetRawInt = false;
-                    os << D;
+                    os << D->getNameAsString();
                   }
                 }
 
@@ -1140,9 +1122,12 @@ void EdgeBuilder::addContext(const Stmt *S) {
 static void GenerateExtensivePathDiagnostic(PathDiagnostic& PD,
                                             PathDiagnosticBuilder &PDB,
                                             const ExplodedNode *N) {
+
+
   EdgeBuilder EB(PD, PDB);
 
-  const ExplodedNode* NextNode = N->pred_empty() ? NULL : *(N->pred_begin());
+  const ExplodedNode* NextNode = N->pred_empty()
+                                        ? NULL : *(N->pred_begin());
   while (NextNode) {
     N = NextNode;
     NextNode = GetPredecessorNode(N);
@@ -1628,9 +1613,7 @@ void GRBugReporter::GeneratePathDiagnostic(PathDiagnostic& PD,
   else
     return;
 
-  // Register node visitors.
   R->registerInitialVisitors(PDB, N);
-  bugreporter::registerNilReceiverVisitor(PDB);
 
   switch (PDB.getGenerationScheme()) {
     case PathDiagnosticClient::Extensive:
