@@ -1,0 +1,22 @@
+# <rdar://problem/8414119> enum >= (enum)0 comparison should not generate any warnings
+114695
+
+# <rdar://problem/8461525> Implement API to retrieve the lexical and semantic parents of a cursor
+114587
+
+# <rdar://problem/8467189> clang reports wrong container for @property declared in @protocol and class extension (but not @interface)
+114693
+
+# <rdar://problem/8470644> Extraneous results with caching of global completions
+114704
+
+# <rdar://problem/8476497> libclang should enable LLVM multithreading
+114760
+
+# <rdar://problem/8477345> Precompiled preambles are failing when prefix headers are involved
+114774
+
+# <rdar://problem/8479999> Enable caching of global code completions in "editing" options
+114810
+
+
