@@ -61,7 +61,7 @@ protected:
   BugType& BT;
   std::string ShortDescription;
   std::string Description;
-  const ExplodedNode *ErrorNode;
+  const ExplodedNode *EndNode;
   SourceRange R;
 
 protected:
@@ -81,13 +81,12 @@ public:
             getOriginalNode(const ExplodedNode* N) = 0;
   };
 
-  BugReport(BugType& bt, llvm::StringRef desc, const ExplodedNode *errornode)
-    : BT(bt), Description(desc), ErrorNode(errornode) {}
+  BugReport(BugType& bt, llvm::StringRef desc, const ExplodedNode *n)
+    : BT(bt), Description(desc), EndNode(n) {}
 
   BugReport(BugType& bt, llvm::StringRef shortDesc, llvm::StringRef desc,
-            const ExplodedNode *errornode)
-  : BT(bt), ShortDescription(shortDesc), Description(desc),
-    ErrorNode(errornode) {}
+            const ExplodedNode *n)
+  : BT(bt), ShortDescription(shortDesc), Description(desc), EndNode(n) {}
 
   virtual ~BugReport();
 
@@ -97,7 +96,7 @@ public:
   BugType& getBugType() { return BT; }
 
   // FIXME: Perhaps this should be moved into a subclass?
-  const ExplodedNode* getErrorNode() const { return ErrorNode; }
+  const ExplodedNode* getEndNode() const { return EndNode; }
 
   // FIXME: Do we need this?  Maybe getLocation() should return a ProgramPoint
   // object.
@@ -194,13 +193,12 @@ public:
 class RangedBugReport : public BugReport {
   std::vector<SourceRange> Ranges;
 public:
-  RangedBugReport(BugType& D, llvm::StringRef description,
-                  ExplodedNode *errornode)
-    : BugReport(D, description, errornode) {}
+  RangedBugReport(BugType& D, llvm::StringRef description, ExplodedNode *n)
+    : BugReport(D, description, n) {}
 
   RangedBugReport(BugType& D, llvm::StringRef shortDescription,
-                  llvm::StringRef description, ExplodedNode *errornode)
-  : BugReport(D, shortDescription, description, errornode) {}
+                  llvm::StringRef description, ExplodedNode *n)
+  : BugReport(D, shortDescription, description, n) {}
 
   ~RangedBugReport();
 
@@ -234,13 +232,12 @@ private:
   Creators creators;
 
 public:
-  EnhancedBugReport(BugType& D, llvm::StringRef description,
-                    ExplodedNode *errornode)
-   : RangedBugReport(D, description, errornode) {}
+  EnhancedBugReport(BugType& D, llvm::StringRef description, ExplodedNode *n)
+   : RangedBugReport(D, description, n) {}
 
   EnhancedBugReport(BugType& D, llvm::StringRef shortDescription,
-                   llvm::StringRef description, ExplodedNode *errornode)
-    : RangedBugReport(D, shortDescription, description, errornode) {}
+                   llvm::StringRef description, ExplodedNode *n)
+    : RangedBugReport(D, shortDescription, description, n) {}
 
   ~EnhancedBugReport() {}
 
@@ -282,12 +279,10 @@ private:
   void FlushReport(BugReportEquivClass& EQ);
 
 protected:
-  BugReporter(BugReporterData& d, Kind k) : BugTypes(F.GetEmptySet()), kind(k),
-                                            D(d) {}
+  BugReporter(BugReporterData& d, Kind k) : BugTypes(F.GetEmptySet()), kind(k), D(d) {}
 
 public:
-  BugReporter(BugReporterData& d) : BugTypes(F.GetEmptySet()), kind(BaseBRKind),
-                                    D(d) {}
+  BugReporter(BugReporterData& d) : BugTypes(F.GetEmptySet()), kind(BaseBRKind), D(d) {}
   virtual ~BugReporter();
 
   void FlushReports();
@@ -311,8 +306,7 @@ public:
   SourceManager& getSourceManager() { return D.getSourceManager(); }
 
   virtual void GeneratePathDiagnostic(PathDiagnostic& PD,
-                                      BugReportEquivClass& EQ,
-               llvm::SmallVectorImpl<const ExplodedNode*> &Nodes) {}
+                                      BugReportEquivClass& EQ) {}
 
   void Register(BugType *BT);
 
@@ -374,8 +368,7 @@ public:
   GRStateManager &getStateManager();
 
   virtual void GeneratePathDiagnostic(PathDiagnostic& PD,
-                                      BugReportEquivClass& R,
-                     llvm::SmallVectorImpl<const ExplodedNode*> &Nodes);
+                                      BugReportEquivClass& R);
 
   void addNotableSymbol(SymbolRef Sym) {
     NotableSymbols.insert(Sym);

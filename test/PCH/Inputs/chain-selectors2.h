@@ -9,7 +9,3 @@ void foo2() {
   //(void)@selector(y);
   //(void)@selector(e);
 }
-
-@interface X (Blarg)
-- (void)blarg_method;
-@end

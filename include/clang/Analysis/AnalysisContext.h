@@ -56,20 +56,15 @@ class AnalysisContext {
   llvm::BumpPtrAllocator A;
   bool UseUnoptimizedCFG;  
   bool AddEHEdges;
-  bool AddImplicitDtors;
-  bool AddInitializers;
 public:
   AnalysisContext(const Decl *d, idx::TranslationUnit *tu,
                   bool useUnoptimizedCFG = false,
-                  bool addehedges = false,
-                  bool addImplicitDtors = false,
-                  bool addInitializers = false)
+                  bool addehedges = false)
     : D(d), TU(tu), cfg(0), completeCFG(0),
       builtCFG(false), builtCompleteCFG(false),
       liveness(0), relaxedLiveness(0), PM(0), PCA(0),
       ReferencedBlockVars(0), UseUnoptimizedCFG(useUnoptimizedCFG),
-      AddEHEdges(addehedges), AddImplicitDtors(addImplicitDtors),
-      AddInitializers(addInitializers) {}
+      AddEHEdges(addehedges) {}
 
   ~AnalysisContext();
 
@@ -85,8 +80,6 @@ public:
   bool getAddEHEdges() const { return AddEHEdges; }
   
   bool getUseUnoptimizedCFG() const { return UseUnoptimizedCFG; }
-  bool getAddImplicitDtors() const { return AddImplicitDtors; }
-  bool getAddInitializers() const { return AddInitializers; }
 
   Stmt *getBody();
   CFG *getCFG();
@@ -113,21 +106,15 @@ class AnalysisContextManager {
   typedef llvm::DenseMap<const Decl*, AnalysisContext*> ContextMap;
   ContextMap Contexts;
   bool UseUnoptimizedCFG;
-  bool AddImplicitDtors;
-  bool AddInitializers;
 public:
-  AnalysisContextManager(bool useUnoptimizedCFG = false,
-      bool addImplicitDtors = false, bool addInitializers = false)
-    : UseUnoptimizedCFG(useUnoptimizedCFG), AddImplicitDtors(addImplicitDtors),
-      AddInitializers(addInitializers) {}
+  AnalysisContextManager(bool useUnoptimizedCFG = false)
+    : UseUnoptimizedCFG(useUnoptimizedCFG) {}
   
   ~AnalysisContextManager();
 
   AnalysisContext *getContext(const Decl *D, idx::TranslationUnit *TU = 0);
 
   bool getUseUnoptimizedCFG() const { return UseUnoptimizedCFG; }
-  bool getAddImplicitDtors() const { return AddImplicitDtors; }
-  bool getAddInitializers() const { return AddInitializers; }
 
   // Discard all previously created AnalysisContexts.
   void clear();

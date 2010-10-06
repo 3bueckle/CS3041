@@ -22,19 +22,3 @@ void bar() {
   (void)@selector(y); // expected-warning {{unimplemented selector}}
   (void)@selector(e); // expected-warning {{unimplemented selector}}
 }
-
-@implementation X (Blah)
-- (void)test_Blah {
-  [self blah_method];
-}
-
-- (void)blah_method { }
-@end
-
-@implementation X (Blarg)
-- (void)test_Blarg {
-  [self blarg_method];
-}
-
-- (void)blarg_method { }
-@end

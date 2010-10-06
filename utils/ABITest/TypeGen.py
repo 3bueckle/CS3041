@@ -24,12 +24,6 @@ class Type:
     def isPaddingBitField(self):
         return False
 
-    def getTypeName(self, printer):
-        name = 'T%d' % len(printer.types)
-        typedef = self.getTypedefDef(name, printer)
-        printer.addDeclaration(typedef)
-        return name
-
 class BuiltinType(Type):
     def __init__(self, name, size, bitFieldSize=None):
         self.name = name
@@ -45,9 +39,6 @@ class BuiltinType(Type):
     def getBitFieldSize(self):
         assert self.isBitField()
         return self.bitFieldSize
-
-    def getTypeName(self, printer):
-        return self.name
 
     def sizeof(self):
         return self.size

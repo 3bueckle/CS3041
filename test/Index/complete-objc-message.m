@@ -132,23 +132,7 @@ void msg_id(id x) {
 
 void test_ranking(B *b) {
   [b method1];
-  b method1];
 }
-
-void test_overload3(Overload *ovl) {
-  ovl Method:1 Arg1:1 OtherArg:ovl];
-   Overload2 Method:1 Arg1:1 OtherArg:ovl];
-  (Overload2 Method:1 Arg1:1 OtherArg:ovl]);
-}
-
-@interface C : B
-- (void)method2;
-- (void)method3;
-@end
-
-void test_redundancy(C *c) {
-  [c method2];
-};
 
 // RUN: c-index-test -code-completion-at=%s:23:19 %s | FileCheck -check-prefix=CHECK-CC1 %s
 // CHECK-CC1: {TypedText categoryClassMethod}
@@ -250,21 +234,3 @@ void test_redundancy(C *c) {
 // RUN: c-index-test -code-completion-at=%s:134:6 %s | FileCheck -check-prefix=CHECK-CCI %s
 // CHECK-CCI: ObjCInstanceMethodDecl:{ResultType void}{TypedText method1} (22)
 // CHECK-CCI: ObjCInstanceMethodDecl:{ResultType void}{TypedText method2} (20)
-
-// RUN: c-index-test -code-completion-at=%s:150:5 %s | FileCheck -check-prefix=CHECK-REDUNDANT %s
-// CHECK-REDUNDANT: ObjCInstanceMethodDecl:{ResultType void}{TypedText method2} (20)
-// CHECK-REDUNDANT-NOT: ObjCInstanceMethodDecl:{ResultType void}{TypedText method2}
-// CHECK-REDUNDANT: ObjCInstanceMethodDecl:{ResultType void}{TypedText method3} (20)
-
-// Test code completion with a missing opening bracket:
-// RUN: c-index-test -code-completion-at=%s:135:5 %s | FileCheck -check-prefix=CHECK-CCI %s
-// RUN: c-index-test -code-completion-at=%s:139:7 %s | FileCheck -check-prefix=CHECK-CC7 %s
-// RUN: c-index-test -code-completion-at=%s:139:16 %s | FileCheck -check-prefix=CHECK-CC8 %s
-// RUN: c-index-test -code-completion-at=%s:139:23 %s | FileCheck -check-prefix=CHECK-CC9 %s
-
-// RUN: c-index-test -code-completion-at=%s:140:14 %s | FileCheck -check-prefix=CHECK-CCC %s
-// RUN: c-index-test -code-completion-at=%s:140:23 %s | FileCheck -check-prefix=CHECK-CCD %s
-// RUN: c-index-test -code-completion-at=%s:140:30 %s | FileCheck -check-prefix=CHECK-CCE %s
-// RUN: c-index-test -code-completion-at=%s:141:14 %s | FileCheck -check-prefix=CHECK-CCC %s
-// RUN: c-index-test -code-completion-at=%s:141:23 %s | FileCheck -check-prefix=CHECK-CCD %s
-// RUN: c-index-test -code-completion-at=%s:141:30 %s | FileCheck -check-prefix=CHECK-CCE %s

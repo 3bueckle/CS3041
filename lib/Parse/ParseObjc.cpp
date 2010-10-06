@@ -13,7 +13,6 @@
 
 #include "clang/Parse/ParseDiagnostic.h"
 #include "clang/Parse/Parser.h"
-#include "RAIIObjectsForParser.h"
 #include "clang/Sema/DeclSpec.h"
 #include "clang/Sema/PrettyDeclStackTrace.h"
 #include "clang/Sema/Scope.h"
@@ -504,17 +503,13 @@ void Parser::ParseObjCPropertyAttribute(ObjCDeclSpec &DS, Decl *ClassDecl,
     else if (II->isStr("nonatomic"))
       DS.setPropertyAttributes(ObjCDeclSpec::DQ_PR_nonatomic);
     else if (II->isStr("getter") || II->isStr("setter")) {
-      bool IsSetter = II->getNameStart()[0] == 's';
-
       // getter/setter require extra treatment.
-      unsigned DiagID = IsSetter ? diag::err_objc_expected_equal_for_setter :
-        diag::err_objc_expected_equal_for_getter;
-
-      if (ExpectAndConsume(tok::equal, DiagID, "", tok::r_paren))
+      if (ExpectAndConsume(tok::equal, diag::err_objc_expected_equal, "",
+                           tok::r_paren))
         return;
 
       if (Tok.is(tok::code_completion)) {
-        if (IsSetter)
+        if (II->getNameStart()[0] == 's')
           Actions.CodeCompleteObjCPropertySetter(getCurScope(), ClassDecl,
                                                  Methods, NumMethods);
         else
@@ -523,20 +518,16 @@ void Parser::ParseObjCPropertyAttribute(ObjCDeclSpec &DS, Decl *ClassDecl,
         ConsumeCodeCompletionToken();
       }
 
-      
-      SourceLocation SelLoc;
-      IdentifierInfo *SelIdent = ParseObjCSelectorPiece(SelLoc);
-
-      if (!SelIdent) {
-        Diag(Tok, diag::err_objc_expected_selector_for_getter_setter)
-          << IsSetter;
+      if (Tok.isNot(tok::identifier)) {
+        Diag(Tok, diag::err_expected_ident);
         SkipUntil(tok::r_paren);
         return;
       }
 
-      if (IsSetter) {
+      if (II->getNameStart()[0] == 's') {
         DS.setPropertyAttributes(ObjCDeclSpec::DQ_PR_setter);
-        DS.setSetterName(SelIdent);
+        DS.setSetterName(Tok.getIdentifierInfo());
+        ConsumeToken();  // consume method name
 
         if (ExpectAndConsume(tok::colon, 
                              diag::err_expected_colon_after_setter_name, "",
@@ -544,7 +535,8 @@ void Parser::ParseObjCPropertyAttribute(ObjCDeclSpec &DS, Decl *ClassDecl,
           return;
       } else {
         DS.setPropertyAttributes(ObjCDeclSpec::DQ_PR_getter);
-        DS.setGetterName(SelIdent);
+        DS.setGetterName(Tok.getIdentifierInfo());
+        ConsumeToken();  // consume method name
       }
     } else {
       Diag(AttrName, diag::err_objc_expected_property_attr) << II;
@@ -1739,7 +1731,7 @@ StmtResult Parser::ParseObjCAtStatement(SourceLocation AtLoc) {
   }
   
   // Otherwise, eat the semicolon.
-  ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);
+  ExpectAndConsume(tok::semi, diag::err_expected_semi_after_expr);
   return Actions.ActOnExprStmt(Actions.MakeFullExpr(Res.take()));
 }
 
@@ -1793,8 +1785,6 @@ ExprResult Parser::ParseObjCAtExpression(SourceLocation AtLoc) {
 ///     simple-type-specifier
 ///     typename-specifier
 bool Parser::ParseObjCXXMessageReceiver(bool &IsExpr, void *&TypeOrExpr) {
-  InMessageExpressionRAIIObject InMessage(*this, true);
-
   if (Tok.is(tok::identifier) || Tok.is(tok::coloncolon) || 
       Tok.is(tok::kw_typename) || Tok.is(tok::annot_cxxscope))
     TryAnnotateTypeOrScopeToken();
@@ -1869,35 +1859,6 @@ bool Parser::isSimpleObjCMessageExpression() {
          GetLookAheadToken(2).is(tok::identifier);
 }
 
-bool Parser::isStartOfObjCClassMessageMissingOpenBracket() {
-  if (!getLang().ObjC1 || !NextToken().is(tok::identifier) || 
-      InMessageExpression)
-    return false;
-  
-  
-  ParsedType Type;
-
-  if (Tok.is(tok::annot_typename)) 
-    Type = getTypeAnnotation(Tok);
-  else if (Tok.is(tok::identifier))
-    Type = Actions.getTypeName(*Tok.getIdentifierInfo(), Tok.getLocation(), 
-                               getCurScope());
-  else
-    return false;
-  
-  if (!Type.get().isNull() && Type.get()->isObjCObjectOrInterfaceType()) {
-    const Token &AfterNext = GetLookAheadToken(2);
-    if (AfterNext.is(tok::colon) || AfterNext.is(tok::r_square)) {
-      if (Tok.is(tok::identifier))
-        TryAnnotateTypeOrScopeToken();
-      
-      return Tok.is(tok::annot_typename);
-    }
-  }
-
-  return false;
-}
-
 ///   objc-message-expr:
 ///     '[' objc-receiver objc-message-args ']'
 ///
@@ -1918,8 +1879,6 @@ ExprResult Parser::ParseObjCMessageExpression() {
     return ExprError();
   }
   
-  InMessageExpressionRAIIObject InMessage(*this, true);
-  
   if (getLang().CPlusPlus) {
     // We completely separate the C and C++ cases because C++ requires
     // more complicated (read: slower) parsing. 
@@ -1934,7 +1893,7 @@ ExprResult Parser::ParseObjCMessageExpression() {
 
     // Parse the receiver, which is either a type or an expression.
     bool IsExpr;
-    void *TypeOrExpr = NULL;
+    void *TypeOrExpr;
     if (ParseObjCXXMessageReceiver(IsExpr, TypeOrExpr)) {
       SkipUntil(tok::r_square);
       return ExprError();
@@ -2033,18 +1992,14 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
                                        SourceLocation SuperLoc,
                                        ParsedType ReceiverType,
                                        ExprArg ReceiverExpr) {
-  InMessageExpressionRAIIObject InMessage(*this, true);
-
   if (Tok.is(tok::code_completion)) {
     if (SuperLoc.isValid())
-      Actions.CodeCompleteObjCSuperMessage(getCurScope(), SuperLoc, 0, 0,
-                                           false);
+      Actions.CodeCompleteObjCSuperMessage(getCurScope(), SuperLoc, 0, 0);
     else if (ReceiverType)
-      Actions.CodeCompleteObjCClassMessage(getCurScope(), ReceiverType, 0, 0,
-                                           false);
+      Actions.CodeCompleteObjCClassMessage(getCurScope(), ReceiverType, 0, 0);
     else
       Actions.CodeCompleteObjCInstanceMessage(getCurScope(), ReceiverExpr,
-                                              0, 0, false);
+                                              0, 0);
     ConsumeCodeCompletionToken();
   }
   
@@ -2073,29 +2028,6 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
 
       ConsumeToken(); // Eat the ':'.
       ///  Parse the expression after ':'
-      
-      if (Tok.is(tok::code_completion)) {
-        if (SuperLoc.isValid())
-          Actions.CodeCompleteObjCSuperMessage(getCurScope(), SuperLoc, 
-                                               KeyIdents.data(), 
-                                               KeyIdents.size(),
-                                               /*AtArgumentEpression=*/true);
-        else if (ReceiverType)
-          Actions.CodeCompleteObjCClassMessage(getCurScope(), ReceiverType,
-                                               KeyIdents.data(), 
-                                               KeyIdents.size(),
-                                               /*AtArgumentEpression=*/true);
-        else
-          Actions.CodeCompleteObjCInstanceMessage(getCurScope(), ReceiverExpr,
-                                                  KeyIdents.data(), 
-                                                  KeyIdents.size(),
-                                                  /*AtArgumentEpression=*/true);
-
-        ConsumeCodeCompletionToken();
-        SkipUntil(tok::r_square);
-        return ExprError();
-      }
-      
       ExprResult Res(ParseAssignmentExpression());
       if (Res.isInvalid()) {
         // We must manually skip to a ']', otherwise the expression skipper will
@@ -2113,21 +2045,16 @@ Parser::ParseObjCMessageExpressionBody(SourceLocation LBracLoc,
         if (SuperLoc.isValid())
           Actions.CodeCompleteObjCSuperMessage(getCurScope(), SuperLoc, 
                                                KeyIdents.data(), 
-                                               KeyIdents.size(),
-                                               /*AtArgumentEpression=*/false);
+                                               KeyIdents.size());
         else if (ReceiverType)
           Actions.CodeCompleteObjCClassMessage(getCurScope(), ReceiverType,
                                                KeyIdents.data(), 
-                                               KeyIdents.size(),
-                                               /*AtArgumentEpression=*/false);
+                                               KeyIdents.size());
         else
           Actions.CodeCompleteObjCInstanceMessage(getCurScope(), ReceiverExpr,
                                                   KeyIdents.data(), 
-                                                  KeyIdents.size(),
-                                                /*AtArgumentEpression=*/false);
+                                                  KeyIdents.size());
         ConsumeCodeCompletionToken();
-        SkipUntil(tok::r_square);
-        return ExprError();
       }
             
       // Check for another keyword selector.

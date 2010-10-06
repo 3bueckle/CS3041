@@ -14,7 +14,6 @@
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/ASTContext.h"
-#include "clang/AST/CXXInheritance.h"
 #include "clang/AST/Expr.h"
 #include "clang/AST/TypeLoc.h"
 #include "clang/Basic/IdentifierTable.h"
@@ -98,25 +97,6 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
     CXXRecordDecl *BaseClassDecl
       = cast<CXXRecordDecl>(BaseType->getAs<RecordType>()->getDecl());
 
-    // C++ [dcl.init.aggr]p1:
-    //   An aggregate is [...] a class with [...] no base classes [...].
-    data().Aggregate = false;    
-    
-    // C++ [class]p4:
-    //   A POD-struct is an aggregate class...
-    data().PlainOldData = false;
-    
-    // A class with a non-empty base class is not empty.
-    // FIXME: Standard ref?
-    if (!BaseClassDecl->isEmpty())
-      data().Empty = false;
-    
-    // C++ [class.virtual]p1:
-    //   A class that declares or inherits a virtual function is called a 
-    //   polymorphic class.
-    if (BaseClassDecl->isPolymorphic())
-      data().Polymorphic = true;
-    
     // Now go through all virtual bases of this base and add them.
     for (CXXRecordDecl::base_class_iterator VBase =
           BaseClassDecl->vbases_begin(),
@@ -130,50 +110,8 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
       // Add this base if it's not already in the list.
       if (SeenVBaseTypes.insert(C.getCanonicalType(BaseType)))
           VBases.push_back(Base);
-      
-      // C++0x [meta.unary.prop] is_empty:
-      //    T is a class type, but not a union type, with ... no virtual base
-      //    classes
-      data().Empty = false;
-      
-      // C++ [class.ctor]p5:
-      //   A constructor is trivial if its class has no virtual base classes.
-      data().HasTrivialConstructor = false;
-      
-      // C++ [class.copy]p6:
-      //   A copy constructor is trivial if its class has no virtual base 
-      //   classes.
-      data().HasTrivialCopyConstructor = false;
-      
-      // C++ [class.copy]p11:
-      //   A copy assignment operator is trivial if its class has no virtual
-      //   base classes.
-      data().HasTrivialCopyAssignment = false;
-    } else {
-      // C++ [class.ctor]p5:
-      //   A constructor is trivial if all the direct base classes of its
-      //   class have trivial constructors.
-      if (!BaseClassDecl->hasTrivialConstructor())
-        data().HasTrivialConstructor = false;
-      
-      // C++ [class.copy]p6:
-      //   A copy constructor is trivial if all the direct base classes of its
-      //   class have trivial copy constructors.
-      if (!BaseClassDecl->hasTrivialCopyConstructor())
-        data().HasTrivialCopyConstructor = false;
-      
-      // C++ [class.copy]p11:
-      //   A copy assignment operator is trivial if all the direct base classes
-      //   of its class have trivial copy assignment operators.
-      if (!BaseClassDecl->hasTrivialCopyAssignment())
-        data().HasTrivialCopyAssignment = false;
     }
-    
-    // C++ [class.ctor]p3:
-    //   A destructor is trivial if all the direct base classes of its class
-    //   have trivial destructors.
-    if (!BaseClassDecl->hasTrivialDestructor())
-      data().HasTrivialDestructor = false;
+
   }
   
   if (VBases.empty())
@@ -320,262 +258,84 @@ CXXMethodDecl *CXXRecordDecl::getCopyAssignmentOperator(bool ArgIsConst) const {
   return GetBestOverloadCandidateSimple(Found);
 }
 
-void CXXRecordDecl::markedVirtualFunctionPure() {
-  // C++ [class.abstract]p2: 
-  //   A class is abstract if it has at least one pure virtual function.
-  data().Abstract = true;
+void
+CXXRecordDecl::addedConstructor(ASTContext &Context,
+                                CXXConstructorDecl *ConDecl) {
+  assert(!ConDecl->isImplicit() && "addedConstructor - not for implicit decl");
+  // Note that we have a user-declared constructor.
+  data().UserDeclaredConstructor = true;
+
+  // Note that we have no need of an implicitly-declared default constructor.
+  data().DeclaredDefaultConstructor = true;
+  
+  // C++ [dcl.init.aggr]p1:
+  //   An aggregate is an array or a class (clause 9) with no
+  //   user-declared constructors (12.1) [...].
+  data().Aggregate = false;
+
+  // C++ [class]p4:
+  //   A POD-struct is an aggregate class [...]
+  data().PlainOldData = false;
+
+  // C++ [class.ctor]p5:
+  //   A constructor is trivial if it is an implicitly-declared default
+  //   constructor.
+  // FIXME: C++0x: don't do this for "= default" default constructors.
+  data().HasTrivialConstructor = false;
+
+  // Note when we have a user-declared copy constructor, which will
+  // suppress the implicit declaration of a copy constructor.
+  if (ConDecl->isCopyConstructor()) {
+    data().UserDeclaredCopyConstructor = true;
+    data().DeclaredCopyConstructor = true;
+    
+    // C++ [class.copy]p6:
+    //   A copy constructor is trivial if it is implicitly declared.
+    // FIXME: C++0x: don't do this for "= default" copy constructors.
+    data().HasTrivialCopyConstructor = false;
+    
+  }
 }
 
-void CXXRecordDecl::addedMember(Decl *D) {
-  // Ignore friends and invalid declarations.
-  if (D->getFriendObjectKind() || D->isInvalidDecl())
+void CXXRecordDecl::addedAssignmentOperator(ASTContext &Context,
+                                            CXXMethodDecl *OpDecl) {
+  // We're interested specifically in copy assignment operators.
+  const FunctionProtoType *FnType = OpDecl->getType()->getAs<FunctionProtoType>();
+  assert(FnType && "Overloaded operator has no proto function type.");
+  assert(FnType->getNumArgs() == 1 && !FnType->isVariadic());
+  
+  // Copy assignment operators must be non-templates.
+  if (OpDecl->getPrimaryTemplate() || OpDecl->getDescribedFunctionTemplate())
     return;
   
-  FunctionTemplateDecl *FunTmpl = dyn_cast<FunctionTemplateDecl>(D);
-  if (FunTmpl)
-    D = FunTmpl->getTemplatedDecl();
-  
-  if (CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(D)) {
-    if (Method->isVirtual()) {
-      // C++ [dcl.init.aggr]p1:
-      //   An aggregate is an array or a class with [...] no virtual functions.
-      data().Aggregate = false;
-      
-      // C++ [class]p4:
-      //   A POD-struct is an aggregate class...
-      data().PlainOldData = false;
-      
-      // Virtual functions make the class non-empty.
-      // FIXME: Standard ref?
-      data().Empty = false;
+  QualType ArgType = FnType->getArgType(0);
+  if (const LValueReferenceType *Ref = ArgType->getAs<LValueReferenceType>())
+    ArgType = Ref->getPointeeType();
 
-      // C++ [class.virtual]p1:
-      //   A class that declares or inherits a virtual function is called a 
-      //   polymorphic class.
-      data().Polymorphic = true;
-      
-      // None of the special member functions are trivial.
-      data().HasTrivialConstructor = false;
-      data().HasTrivialCopyConstructor = false;
-      data().HasTrivialCopyAssignment = false;
-      // FIXME: Destructor?
-    }
-  }
-  
-  if (D->isImplicit()) {
-    if (CXXConstructorDecl *Constructor = dyn_cast<CXXConstructorDecl>(D)) {
-      // If this is the implicit default constructor, note that we have now
-      // declared it.
-      if (Constructor->isDefaultConstructor())
-        data().DeclaredDefaultConstructor = true;
-      // If this is the implicit copy constructor, note that we have now
-      // declared it.
-      else if (Constructor->isCopyConstructor())
-        data().DeclaredCopyConstructor = true;
-      return;
-    } 
+  ArgType = ArgType.getUnqualifiedType();
+  QualType ClassType = Context.getCanonicalType(Context.getTypeDeclType(
+    const_cast<CXXRecordDecl*>(this)));
 
-    if (isa<CXXDestructorDecl>(D)) {
-      data().DeclaredDestructor = true;
-      return;
-    } 
-
-    if (CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(D)) {
-      // If this is the implicit copy constructor, note that we have now
-      // declared it.
-      // FIXME: Move constructors
-      if (Method->getOverloadedOperator() == OO_Equal)
-        data().DeclaredCopyAssignment = true;
-      return;
-    }
-
-    // Any other implicit declarations are handled like normal declarations.
-  }
-  
-  // Handle (user-declared) constructors.
-  if (CXXConstructorDecl *Constructor = dyn_cast<CXXConstructorDecl>(D)) {
-    // Note that we have a user-declared constructor.
-    data().UserDeclaredConstructor = true;
-
-    // Note that we have no need of an implicitly-declared default constructor.
-    data().DeclaredDefaultConstructor = true;
-    
-    // C++ [dcl.init.aggr]p1:
-    //   An aggregate is an array or a class (clause 9) with no
-    //   user-declared constructors (12.1) [...].
-    data().Aggregate = false;
-
-    // C++ [class]p4:
-    //   A POD-struct is an aggregate class [...]
-    data().PlainOldData = false;
-
-    // C++ [class.ctor]p5:
-    //   A constructor is trivial if it is an implicitly-declared default
-    //   constructor.
-    // FIXME: C++0x: don't do this for "= default" default constructors.
-    data().HasTrivialConstructor = false;
-
-    // Note when we have a user-declared copy constructor, which will
-    // suppress the implicit declaration of a copy constructor.
-    if (!FunTmpl && Constructor->isCopyConstructor()) {
-      data().UserDeclaredCopyConstructor = true;
-      data().DeclaredCopyConstructor = true;
-      
-      // C++ [class.copy]p6:
-      //   A copy constructor is trivial if it is implicitly declared.
-      // FIXME: C++0x: don't do this for "= default" copy constructors.
-      data().HasTrivialCopyConstructor = false;
-    }
-    
+  if (!Context.hasSameUnqualifiedType(ClassType, ArgType))
     return;
-  }
 
-  // Handle (user-declared) destructors.
-  if (isa<CXXDestructorDecl>(D)) {
-    data().DeclaredDestructor = true;
-    data().UserDeclaredDestructor = true;
-    
-    // C++ [class]p4: 
-    //   A POD-struct is an aggregate class that has [...] no user-defined 
-    //   destructor.
-    data().PlainOldData = false;
-    
-    // C++ [class.dtor]p3: 
-    //   A destructor is trivial if it is an implicitly-declared destructor and
-    //   [...].
-    //
-    // FIXME: C++0x: don't do this for "= default" destructors
-    data().HasTrivialDestructor = false;
-    
-    return;
-  }
-  
-  // Handle (user-declared) member functions.
-  if (CXXMethodDecl *Method = dyn_cast<CXXMethodDecl>(D)) {
-    if (Method->getOverloadedOperator() == OO_Equal) {
-      // We're interested specifically in copy assignment operators.
-      const FunctionProtoType *FnType 
-        = Method->getType()->getAs<FunctionProtoType>();
-      assert(FnType && "Overloaded operator has no proto function type.");
-      assert(FnType->getNumArgs() == 1 && !FnType->isVariadic());
-      
-      // Copy assignment operators must be non-templates.
-      if (Method->getPrimaryTemplate() || FunTmpl)
-        return;
-      
-      ASTContext &Context = getASTContext();
-      QualType ArgType = FnType->getArgType(0);
-      if (const LValueReferenceType *Ref =ArgType->getAs<LValueReferenceType>())
-        ArgType = Ref->getPointeeType();
-      
-      ArgType = ArgType.getUnqualifiedType();
-      QualType ClassType = Context.getCanonicalType(Context.getTypeDeclType(
-                                             const_cast<CXXRecordDecl*>(this)));
-      
-      if (!Context.hasSameUnqualifiedType(ClassType, ArgType))
-        return;
-      
-      // This is a copy assignment operator.
-      // FIXME: Move assignment operators.
-      
-      // Suppress the implicit declaration of a copy constructor.
-      data().UserDeclaredCopyAssignment = true;
-      data().DeclaredCopyAssignment = true;
-      
-      // C++ [class.copy]p11:
-      //   A copy assignment operator is trivial if it is implicitly declared.
-      // FIXME: C++0x: don't do this for "= default" copy operators.
-      data().HasTrivialCopyAssignment = false;
-      
-      // C++ [class]p4:
-      //   A POD-struct is an aggregate class that [...] has no user-defined copy
-      //   assignment operator [...].
-      data().PlainOldData = false;
-    }
-    
-    // Keep the list of conversion functions up-to-date.
-    if (CXXConversionDecl *Conversion = dyn_cast<CXXConversionDecl>(D)) {
-      // We don't record specializations.
-      if (Conversion->getPrimaryTemplate())
-        return;
-      
-      // FIXME: We intentionally don't use the decl's access here because it
-      // hasn't been set yet.  That's really just a misdesign in Sema.
+  // This is a copy assignment operator.
+  // Note on the decl that it is a copy assignment operator.
+  OpDecl->setCopyAssignment(true);
 
-      if (FunTmpl) {
-        if (FunTmpl->getPreviousDeclaration())
-          data().Conversions.replace(FunTmpl->getPreviousDeclaration(),
-                                     FunTmpl);
-        else
-          data().Conversions.addDecl(FunTmpl);
-      } else {
-        if (Conversion->getPreviousDeclaration())
-          data().Conversions.replace(Conversion->getPreviousDeclaration(),
-                                     Conversion);
-        else
-          data().Conversions.addDecl(Conversion);        
-      }
-    }
-    
-    return;
-  }
+  // Suppress the implicit declaration of a copy constructor.
+  data().UserDeclaredCopyAssignment = true;
+  data().DeclaredCopyAssignment = true;
   
-  // Handle non-static data members.
-  if (FieldDecl *Field = dyn_cast<FieldDecl>(D)) {
-    // C++ [dcl.init.aggr]p1:
-    //   An aggregate is an array or a class (clause 9) with [...] no
-    //   private or protected non-static data members (clause 11).
-    //
-    // A POD must be an aggregate.    
-    if (D->getAccess() == AS_private || D->getAccess() == AS_protected) {
-      data().Aggregate = false;
-      data().PlainOldData = false;
-    }
-    
-    // C++ [class]p9:
-    //   A POD struct is a class that is both a trivial class and a 
-    //   standard-layout class, and has no non-static data members of type 
-    //   non-POD struct, non-POD union (or array of such types).
-    ASTContext &Context = getASTContext();
-    QualType T = Context.getBaseElementType(Field->getType());
-    if (!T->isPODType())
-      data().PlainOldData = false;
-    if (T->isReferenceType())
-      data().HasTrivialConstructor = false;
-    
-    if (const RecordType *RecordTy = T->getAs<RecordType>()) {
-      CXXRecordDecl* FieldRec = cast<CXXRecordDecl>(RecordTy->getDecl());
-      if (FieldRec->getDefinition()) {
-        if (!FieldRec->hasTrivialConstructor())
-          data().HasTrivialConstructor = false;
-        if (!FieldRec->hasTrivialCopyConstructor())
-          data().HasTrivialCopyConstructor = false;
-        if (!FieldRec->hasTrivialCopyAssignment())
-          data().HasTrivialCopyAssignment = false;
-        if (!FieldRec->hasTrivialDestructor())
-          data().HasTrivialDestructor = false;
-      }
-    }
-    
-    // If this is not a zero-length bit-field, then the class is not empty.
-    if (data().Empty) {
-      if (!Field->getBitWidth())
-        data().Empty = false;
-      else if (!Field->getBitWidth()->isTypeDependent() &&
-               !Field->getBitWidth()->isValueDependent()) {
-        llvm::APSInt Bits;
-        if (Field->getBitWidth()->isIntegerConstantExpr(Bits, Context))
-          if (!!Bits)
-            data().Empty = false;
-      } 
-    }
-  }
-  
-  // Handle using declarations of conversion functions.
-  if (UsingShadowDecl *Shadow = dyn_cast<UsingShadowDecl>(D))
-    if (Shadow->getDeclName().getNameKind()
-          == DeclarationName::CXXConversionFunctionName)
-      data().Conversions.addDecl(Shadow, Shadow->getAccess());
+  // C++ [class.copy]p11:
+  //   A copy assignment operator is trivial if it is implicitly declared.
+  // FIXME: C++0x: don't do this for "= default" copy operators.
+  data().HasTrivialCopyAssignment = false;
+
+  // C++ [class]p4:
+  //   A POD-struct is an aggregate class that [...] has no user-defined copy
+  //   assignment operator [...].
+  data().PlainOldData = false;
 }
 
 static CanQualType GetConversionType(ASTContext &Context, NamedDecl *Conv) {
@@ -758,6 +518,17 @@ void CXXRecordDecl::removeConversion(const NamedDecl *ConvDecl) {
   llvm_unreachable("conversion not found in set!");
 }
 
+void CXXRecordDecl::setMethodAsVirtual(FunctionDecl *Method) {
+  Method->setVirtualAsWritten(true);
+  setAggregate(false);
+  setPOD(false);
+  setEmpty(false);
+  setPolymorphic(true);
+  setHasTrivialConstructor(false);
+  setHasTrivialCopyConstructor(false);
+  setHasTrivialCopyAssignment(false);
+}
+
 CXXRecordDecl *CXXRecordDecl::getInstantiatedFromMemberClass() const {
   if (MemberSpecializationInfo *MSInfo = getMemberSpecializationInfo())
     return cast<CXXRecordDecl>(MSInfo->getInstantiatedFrom());
@@ -806,6 +577,28 @@ CXXRecordDecl::setTemplateSpecializationKind(TemplateSpecializationKind TSK) {
   assert(false && "Not a class template or member class specialization");
 }
 
+CXXConstructorDecl *
+CXXRecordDecl::getDefaultConstructor() {
+  ASTContext &Context = getASTContext();
+  QualType ClassType = Context.getTypeDeclType(this);
+  DeclarationName ConstructorName
+    = Context.DeclarationNames.getCXXConstructorName(
+                      Context.getCanonicalType(ClassType.getUnqualifiedType()));
+
+  DeclContext::lookup_const_iterator Con, ConEnd;
+  for (llvm::tie(Con, ConEnd) = lookup(ConstructorName);
+       Con != ConEnd; ++Con) {
+    // FIXME: In C++0x, a constructor template can be a default constructor.
+    if (isa<FunctionTemplateDecl>(*Con))
+      continue;
+
+    CXXConstructorDecl *Constructor = cast<CXXConstructorDecl>(*Con);
+    if (Constructor->isDefaultConstructor())
+      return Constructor;
+  }
+  return 0;
+}
+
 CXXDestructorDecl *CXXRecordDecl::getDestructor() const {
   ASTContext &Context = getASTContext();
   QualType ClassType = Context.getTypeDeclType(this);
@@ -823,69 +616,6 @@ CXXDestructorDecl *CXXRecordDecl::getDestructor() const {
   assert(++I == E && "Found more than one destructor!");
 
   return Dtor;
-}
-
-void CXXRecordDecl::completeDefinition() {
-  completeDefinition(0);
-}
-
-void CXXRecordDecl::completeDefinition(CXXFinalOverriderMap *FinalOverriders) {
-  RecordDecl::completeDefinition();
-  
-  // If the class may be abstract (but hasn't been marked as such), check for
-  // any pure final overriders.
-  if (mayBeAbstract()) {
-    CXXFinalOverriderMap MyFinalOverriders;
-    if (!FinalOverriders) {
-      getFinalOverriders(MyFinalOverriders);
-      FinalOverriders = &MyFinalOverriders;
-    }
-    
-    bool Done = false;
-    for (CXXFinalOverriderMap::iterator M = FinalOverriders->begin(), 
-                                     MEnd = FinalOverriders->end();
-         M != MEnd && !Done; ++M) {
-      for (OverridingMethods::iterator SO = M->second.begin(), 
-                                    SOEnd = M->second.end();
-           SO != SOEnd && !Done; ++SO) {
-        assert(SO->second.size() > 0 && 
-               "All virtual functions have overridding virtual functions");
-        
-        // C++ [class.abstract]p4:
-        //   A class is abstract if it contains or inherits at least one
-        //   pure virtual function for which the final overrider is pure
-        //   virtual.
-        if (SO->second.front().Method->isPure()) {
-          data().Abstract = true;
-          Done = true;
-          break;
-        }
-      }
-    }
-  }
-  
-  // Set access bits correctly on the directly-declared conversions.
-  for (UnresolvedSetIterator I = data().Conversions.begin(), 
-                             E = data().Conversions.end(); 
-       I != E; ++I)
-    data().Conversions.setAccess(I, (*I)->getAccess());
-}
-
-bool CXXRecordDecl::mayBeAbstract() const {
-  if (data().Abstract || isInvalidDecl() || !data().Polymorphic ||
-      isDependentContext())
-    return false;
-  
-  for (CXXRecordDecl::base_class_const_iterator B = bases_begin(),
-                                             BEnd = bases_end();
-       B != BEnd; ++B) {
-    CXXRecordDecl *BaseDecl 
-      = cast<CXXRecordDecl>(B->getType()->getAs<RecordType>()->getDecl());
-    if (BaseDecl->isAbstract())
-      return true;
-  }
-  
-  return false;
 }
 
 CXXMethodDecl *

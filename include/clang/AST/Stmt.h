@@ -561,14 +561,10 @@ class LabelStmt : public Stmt {
   IdentifierInfo *Label;
   Stmt *SubStmt;
   SourceLocation IdentLoc;
-  bool Used : 1;
-  bool HasUnusedAttr : 1;
 public:
-  LabelStmt(SourceLocation IL, IdentifierInfo *label, Stmt *substmt,
-            bool hasUnusedAttr = false)
+  LabelStmt(SourceLocation IL, IdentifierInfo *label, Stmt *substmt)
     : Stmt(LabelStmtClass), Label(label),
-      SubStmt(substmt), IdentLoc(IL), Used(false),
-      HasUnusedAttr(hasUnusedAttr) {}
+      SubStmt(substmt), IdentLoc(IL) {}
 
   // \brief Build an empty label statement.
   explicit LabelStmt(EmptyShell Empty) : Stmt(LabelStmtClass, Empty) { }
@@ -581,15 +577,6 @@ public:
   const Stmt *getSubStmt() const { return SubStmt; }
   void setIdentLoc(SourceLocation L) { IdentLoc = L; }
   void setSubStmt(Stmt *SS) { SubStmt = SS; }
-
-  /// \brief Whether this label was used.
-  bool isUsed(bool CheckUnusedAttr = true) const {
-    return Used || (CheckUnusedAttr && HasUnusedAttr);
-  }
-  void setUsed(bool U = true) { Used = U; }
-
-  bool HasUnusedAttribute() const { return HasUnusedAttr; }
-  void setUnusedAttribute(bool U) { HasUnusedAttr = U; }
 
   virtual SourceRange getSourceRange() const {
     return SourceRange(IdentLoc, SubStmt->getLocEnd());
@@ -675,11 +662,6 @@ class SwitchStmt : public Stmt {
   SwitchCase *FirstCase;
   SourceLocation SwitchLoc;
 
-  /// If the SwitchStmt is a switch on an enum value, this records whether
-  /// all the enum values were covered by CaseStmts.  This value is meant to
-  /// be a hint for possible clients.
-  unsigned AllEnumCasesCovered : 1;
-
 public:
   SwitchStmt(ASTContext &C, VarDecl *Var, Expr *cond);
 
@@ -727,19 +709,6 @@ public:
     SC->setNextSwitchCase(FirstCase);
     FirstCase = SC;
   }
-
-  /// Set a flag in the SwitchStmt indicating that if the 'switch (X)' is a
-  /// switch over an enum value then all cases have been explicitly covered.
-  void setAllEnumCasesCovered() {
-    AllEnumCasesCovered = 1;
-  }
-
-  /// Returns true if the SwitchStmt is a switch of an enum value and all cases
-  /// have been explicitly covered.
-  bool isAllEnumCasesCovered() const {
-    return (bool) AllEnumCasesCovered;
-  }
-
   virtual SourceRange getSourceRange() const {
     return SourceRange(SwitchLoc, SubExprs[BODY]->getLocEnd());
   }

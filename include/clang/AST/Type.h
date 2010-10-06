@@ -3281,17 +3281,7 @@ inline bool QualType::isCanonical() const {
 
 inline bool QualType::isCanonicalAsParam() const {
   if (hasLocalQualifiers()) return false;
-  
   const Type *T = getTypePtr();
-  if ((*this)->isPointerType()) {
-    QualType BaseType = (*this)->getAs<PointerType>()->getPointeeType();
-    if (isa<VariableArrayType>(BaseType)) {
-      ArrayType *AT = dyn_cast<ArrayType>(BaseType);
-      VariableArrayType *VAT = cast<VariableArrayType>(AT);
-      if (VAT->getSizeExpr())
-        T = BaseType.getTypePtr();
-    }
-  }
   return T->isCanonicalUnqualified() &&
            !isa<FunctionType>(T) && !isa<ArrayType>(T);
 }
@@ -3541,14 +3531,8 @@ inline bool Type::isVariableArrayType() const {
 inline bool Type::isDependentSizedArrayType() const {
   return isa<DependentSizedArrayType>(CanonicalType);
 }
-inline bool Type::isBuiltinType() const {
-  return isa<BuiltinType>(CanonicalType);
-}
 inline bool Type::isRecordType() const {
   return isa<RecordType>(CanonicalType);
-}
-inline bool Type::isEnumeralType() const {
-  return isa<EnumType>(CanonicalType);
 }
 inline bool Type::isAnyComplexType() const {
   return isa<ComplexType>(CanonicalType);
@@ -3600,6 +3584,10 @@ inline bool Type::isObjCBuiltinType() const {
 }
 inline bool Type::isTemplateTypeParmType() const {
   return isa<TemplateTypeParmType>(CanonicalType);
+}
+
+inline bool Type::isBuiltinType() const {
+  return getAs<BuiltinType>();
 }
 
 inline bool Type::isSpecificBuiltinType(unsigned K) const {

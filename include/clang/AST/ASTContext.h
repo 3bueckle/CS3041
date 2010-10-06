@@ -316,8 +316,6 @@ public:
 
   const LangOptions& getLangOptions() const { return LangOpts; }
 
-  Diagnostic &getDiagnostics() const;
-
   FullSourceLoc getFullLoc(SourceLocation Loc) const {
     return FullSourceLoc(Loc,SourceMgr);
   }
@@ -568,14 +566,6 @@ public:
   QualType getConstantArrayType(QualType EltTy, const llvm::APInt &ArySize,
                                 ArrayType::ArraySizeModifier ASM,
                                 unsigned EltTypeQuals);
-  
-  /// getUnknownSizeVariableArrayType - Return a variable array type with
-  /// all variable indices replaced with unknow [*] size.
-  QualType getUnknownSizeVariableArrayType(QualType Ty);
-  
-  /// getVariableArrayDecayedType - Returns a vla type where known sizes
-  /// are replaced with [*]
-  QualType getVariableArrayDecayedType(QualType Ty);
 
   /// getVectorType - Return the unique reference to a vector type of
   /// the specified element type and size. VectorType must be a built-in type.
@@ -905,12 +895,8 @@ public:
     GE_Missing_setjmp     //< Missing a type from <setjmp.h>
   };
 
-  /// GetBuiltinType - Return the type for the specified builtin.  If 
-  /// IntegerConstantArgs is non-null, it is filled in with a bitmask of
-  /// arguments to the builtin that are required to be integer constant
-  /// expressions.
-  QualType GetBuiltinType(unsigned ID, GetBuiltinTypeError &Error,
-                          unsigned *IntegerConstantArgs = 0);
+  /// GetBuiltinType - Return the type for the specified builtin.
+  QualType GetBuiltinType(unsigned ID, GetBuiltinTypeError &Error);
 
 private:
   CanQualType getFromTargetType(unsigned Type) const;

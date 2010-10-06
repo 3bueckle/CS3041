@@ -6,4 +6,3 @@ struct B : A {
   int y;
   int foo();
 };
-

@@ -21,9 +21,7 @@ using namespace clang;
 // #pragma GCC visibility comes in two variants:
 //   'push' '(' [visibility] ')'
 //   'pop'
-void PragmaGCCVisibilityHandler::HandlePragma(Preprocessor &PP, 
-                                              PragmaIntroducerKind Introducer,
-                                              Token &VisTok) {
+void PragmaGCCVisibilityHandler::HandlePragma(Preprocessor &PP, Token &VisTok) {
   SourceLocation VisLoc = VisTok.getLocation();
 
   Token Tok;
@@ -76,9 +74,7 @@ void PragmaGCCVisibilityHandler::HandlePragma(Preprocessor &PP,
 //   pack '(' [integer] ')'
 //   pack '(' 'show' ')'
 //   pack '(' ('push' | 'pop') [',' identifier] [, integer] ')'
-void PragmaPackHandler::HandlePragma(Preprocessor &PP, 
-                                     PragmaIntroducerKind Introducer,
-                                     Token &PackTok) {
+void PragmaPackHandler::HandlePragma(Preprocessor &PP, Token &PackTok) {
   SourceLocation PackLoc = PackTok.getLocation();
 
   Token Tok;
@@ -226,22 +222,16 @@ static void ParseAlignPragma(Sema &Actions, Preprocessor &PP, Token &FirstTok,
   Actions.ActOnPragmaOptionsAlign(Kind, FirstTok.getLocation(), KindLoc);
 }
 
-void PragmaAlignHandler::HandlePragma(Preprocessor &PP, 
-                                      PragmaIntroducerKind Introducer,
-                                      Token &AlignTok) {
+void PragmaAlignHandler::HandlePragma(Preprocessor &PP, Token &AlignTok) {
   ParseAlignPragma(Actions, PP, AlignTok, /*IsOptions=*/false);
 }
 
-void PragmaOptionsHandler::HandlePragma(Preprocessor &PP, 
-                                        PragmaIntroducerKind Introducer,
-                                        Token &OptionsTok) {
+void PragmaOptionsHandler::HandlePragma(Preprocessor &PP, Token &OptionsTok) {
   ParseAlignPragma(Actions, PP, OptionsTok, /*IsOptions=*/true);
 }
 
 // #pragma unused(identifier)
-void PragmaUnusedHandler::HandlePragma(Preprocessor &PP, 
-                                       PragmaIntroducerKind Introducer,
-                                       Token &UnusedTok) {
+void PragmaUnusedHandler::HandlePragma(Preprocessor &PP, Token &UnusedTok) {
   // FIXME: Should we be expanding macros here? My guess is no.
   SourceLocation UnusedLoc = UnusedTok.getLocation();
 
@@ -308,9 +298,7 @@ void PragmaUnusedHandler::HandlePragma(Preprocessor &PP,
 
 // #pragma weak identifier
 // #pragma weak identifier '=' identifier
-void PragmaWeakHandler::HandlePragma(Preprocessor &PP, 
-                                     PragmaIntroducerKind Introducer,
-                                     Token &WeakTok) {
+void PragmaWeakHandler::HandlePragma(Preprocessor &PP, Token &WeakTok) {
   // FIXME: Should we be expanding macros here? My guess is no.
   SourceLocation WeakLoc = WeakTok.getLocation();
 

@@ -470,6 +470,12 @@ bool Type::isIntegralOrEnumerationType() const {
   return false;  
 }
 
+bool Type::isEnumeralType() const {
+  if (const TagType *TT = dyn_cast<TagType>(CanonicalType))
+    return TT->getDecl()->isEnum();
+  return false;
+}
+
 bool Type::isBooleanType() const {
   if (const BuiltinType *BT = dyn_cast<BuiltinType>(CanonicalType))
     return BT->getKind() == BuiltinType::Bool;
@@ -672,11 +678,7 @@ bool Type::isIncompleteType() const {
 /// isPODType - Return true if this is a plain-old-data type (C++ 3.9p10)
 bool Type::isPODType() const {
   // The compiler shouldn't query this for incomplete types, but the user might.
-  // We return false for that case. Except for incomplete arrays of PODs, which
-  // are PODs according to the standard.
-  if (isIncompleteArrayType() &&
-      cast<ArrayType>(CanonicalType)->getElementType()->isPODType())
-    return true;
+  // We return false for that case.
   if (isIncompleteType())
     return false;
 
@@ -685,7 +687,7 @@ bool Type::isPODType() const {
   default: return false;
   case VariableArray:
   case ConstantArray:
-    // IncompleteArray is handled above.
+    // IncompleteArray is caught by isIncompleteType() above.
     return cast<ArrayType>(CanonicalType)->getElementType()->isPODType();
 
   case Builtin:

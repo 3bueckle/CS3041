@@ -44,7 +44,7 @@ namespace clang {
   /// \brief Retrieves the repository path (e.g., Subversion path) that 
   /// identifies the particular Clang branch, tag, or trunk from which this
   /// Clang was built.
-  std::string getClangRepositoryPath();
+  llvm::StringRef getClangRepositoryPath();
   
   /// \brief Retrieves the repository revision number (or identifer) from which
   ///  this Clang was built.

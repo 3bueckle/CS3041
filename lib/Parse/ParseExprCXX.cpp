@@ -500,9 +500,9 @@ ExprResult Parser::ParseCXXTypeid() {
     TypeResult Ty = ParseTypeName();
 
     // Match the ')'.
-    RParenLoc = MatchRHSPunctuation(tok::r_paren, LParenLoc);
+    MatchRHSPunctuation(tok::r_paren, LParenLoc);
 
-    if (Ty.isInvalid() || RParenLoc.isInvalid())
+    if (Ty.isInvalid())
       return ExprError();
 
     Result = Actions.ActOnCXXTypeid(OpLoc, LParenLoc, /*isType=*/true,
@@ -524,59 +524,9 @@ ExprResult Parser::ParseCXXTypeid() {
     if (Result.isInvalid())
       SkipUntil(tok::r_paren);
     else {
-      RParenLoc = MatchRHSPunctuation(tok::r_paren, LParenLoc);
-      if (RParenLoc.isInvalid())
-        return ExprError();
-      
+      MatchRHSPunctuation(tok::r_paren, LParenLoc);
+
       Result = Actions.ActOnCXXTypeid(OpLoc, LParenLoc, /*isType=*/false,
-                                      Result.release(), RParenLoc);
-    }
-  }
-
-  return move(Result);
-}
-
-/// ParseCXXUuidof - This handles the Microsoft C++ __uuidof expression.
-///
-///         '__uuidof' '(' expression ')'
-///         '__uuidof' '(' type-id ')'
-///
-ExprResult Parser::ParseCXXUuidof() {
-  assert(Tok.is(tok::kw___uuidof) && "Not '__uuidof'!");
-
-  SourceLocation OpLoc = ConsumeToken();
-  SourceLocation LParenLoc = Tok.getLocation();
-  SourceLocation RParenLoc;
-
-  // __uuidof expressions are always parenthesized.
-  if (ExpectAndConsume(tok::l_paren, diag::err_expected_lparen_after,
-      "__uuidof"))
-    return ExprError();
-
-  ExprResult Result;
-
-  if (isTypeIdInParens()) {
-    TypeResult Ty = ParseTypeName();
-
-    // Match the ')'.
-    RParenLoc = MatchRHSPunctuation(tok::r_paren, LParenLoc);
-
-    if (Ty.isInvalid())
-      return ExprError();
-
-    Result = Actions.ActOnCXXUuidof(OpLoc, LParenLoc, /*isType=*/true,
-                                    Ty.get().getAsOpaquePtr(), RParenLoc);
-  } else {
-    EnterExpressionEvaluationContext Unevaluated(Actions, Sema::Unevaluated);
-    Result = ParseExpression();
-
-    // Match the ')'.
-    if (Result.isInvalid())
-      SkipUntil(tok::r_paren);
-    else {
-      RParenLoc = MatchRHSPunctuation(tok::r_paren, LParenLoc);
-
-      Result = Actions.ActOnCXXUuidof(OpLoc, LParenLoc, /*isType=*/false,
                                       Result.release(), RParenLoc);
     }
   }
@@ -741,8 +691,9 @@ Parser::ParseCXXTypeConstructExpression(const DeclSpec &DS) {
 
   assert((Exprs.size() == 0 || Exprs.size()-1 == CommaLocs.size())&&
          "Unexpected number of commas!");
-  return Actions.ActOnCXXTypeConstructExpr(TypeRep, LParenLoc, move_arg(Exprs),
-                                           RParenLoc);
+  return Actions.ActOnCXXTypeConstructExpr(DS.getSourceRange(), TypeRep,
+                                           LParenLoc, move_arg(Exprs),
+                                           CommaLocs.data(), RParenLoc);
 }
 
 /// ParseCXXCondition - if/switch/while condition expression.
@@ -1832,7 +1783,7 @@ ExprResult Parser::ParseUnaryTypeTrait() {
   if (Ty.isInvalid())
     return ExprError();
 
-  return Actions.ActOnUnaryTypeTrait(UTT, Loc, Ty.get(), RParen);
+  return Actions.ActOnUnaryTypeTrait(UTT, Loc, LParen, Ty.get(), RParen);
 }
 
 /// ParseCXXAmbiguousParenExpression - We have parsed the left paren of a

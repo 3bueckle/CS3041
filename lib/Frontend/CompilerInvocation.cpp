@@ -99,8 +99,6 @@ static void AnalyzerOptsToArgs(const AnalyzerOptions &Opts,
     Res.push_back("-analyzer-display-progress");
   if (Opts.AnalyzeNestedBlocks)
     Res.push_back("-analyzer-opt-analyze-nested-blocks");
-  if (Opts.AnalyzerStats)
-    Res.push_back("-analyzer-stats");
   if (Opts.EagerlyAssume)
     Res.push_back("-analyzer-eagerly-assume");
   if (!Opts.PurgeDead)
@@ -445,11 +443,6 @@ static void HeaderSearchOptsToArgs(const HeaderSearchOptions &Opts,
     Res.push_back(Opts.Sysroot);
   }
 
-  for (unsigned i = 0, e = Opts.CXXSystemIncludes.size(); i != e; ++i) {
-    Res.push_back("-cxx-system-include");
-    Res.push_back(Opts.CXXSystemIncludes[i]);
-  }
-
   /// User specified include entries.
   for (unsigned i = 0, e = Opts.UserEntries.size(); i != e; ++i) {
     const HeaderSearchOptions::Entry &E = Opts.UserEntries[i];
@@ -581,12 +574,7 @@ static void LangOptsToArgs(const LangOptions &Opts,
   switch (Opts.getSignedOverflowBehavior()) {
   case LangOptions::SOB_Undefined: break;
   case LangOptions::SOB_Defined:   Res.push_back("-fwrapv"); break;
-  case LangOptions::SOB_Trapping:  
-    Res.push_back("-ftrapv"); break;
-    if (!Opts.OverflowHandler.empty()) {
-      Res.push_back("-ftrapv-handler");
-      Res.push_back(Opts.OverflowHandler);
-    }
+  case LangOptions::SOB_Trapping:  Res.push_back("-ftrapv"); break;
   }
   if (Opts.HeinousExtensions)
     Res.push_back("-fheinous-gnu-extensions");
@@ -822,13 +810,10 @@ static void ParseAnalyzerArgs(AnalyzerOptions &Opts, ArgList &Args,
   Opts.AnalyzerDisplayProgress = Args.hasArg(OPT_analyzer_display_progress);
   Opts.AnalyzeNestedBlocks =
     Args.hasArg(OPT_analyzer_opt_analyze_nested_blocks);
-  Opts.AnalyzerStats = Args.hasArg(OPT_analysis_AnalyzerStats);
   Opts.PurgeDead = !Args.hasArg(OPT_analyzer_no_purge_dead);
   Opts.EagerlyAssume = Args.hasArg(OPT_analyzer_eagerly_assume);
   Opts.AnalyzeSpecificFunction = Args.getLastArgValue(OPT_analyze_function);
   Opts.UnoptimizedCFG = Args.hasArg(OPT_analysis_UnoptimizedCFG);
-  Opts.CFGAddImplicitDtors = Args.hasArg(OPT_analysis_CFGAddImplicitDtors);
-  Opts.CFGAddInitializers = Args.hasArg(OPT_analysis_CFGAddInitializers);
   Opts.EnableExperimentalChecks = Args.hasArg(OPT_analyzer_experimental_checks);
   Opts.EnableExperimentalInternalChecks =
     Args.hasArg(OPT_analyzer_experimental_internal_checks);
@@ -859,7 +844,6 @@ static void ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args,
     : CodeGenOptions::OnlyAlwaysInlining;
 
   Opts.DebugInfo = Args.hasArg(OPT_g);
-  Opts.LimitDebugInfo = Args.hasArg(OPT_flimit_debug_info);
   Opts.DisableLLVMOpts = Args.hasArg(OPT_disable_llvm_optzns);
   Opts.DisableRedZone = Args.hasArg(OPT_disable_red_zone);
   Opts.DwarfDebugFlags = Args.getLastArgValue(OPT_dwarf_debug_flags);
@@ -1159,7 +1143,6 @@ std::string CompilerInvocation::GetResourcesPath(const char *Argv0,
 
 static void ParseHeaderSearchArgs(HeaderSearchOptions &Opts, ArgList &Args) {
   using namespace cc1options;
-  Opts.CXXSystemIncludes = Args.getAllArgValues(OPT_cxx_system_include);
   Opts.Sysroot = Args.getLastArgValue(OPT_isysroot, "/");
   Opts.Verbose = Args.hasArg(OPT_v);
   Opts.UseBuiltinIncludes = !Args.hasArg(OPT_nobuiltininc);
@@ -1320,12 +1303,8 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   if (Args.hasArg(OPT_fvisibility_inlines_hidden))
     Opts.InlineVisibilityHidden = 1;
   
-  if (Args.hasArg(OPT_ftrapv)) {
+  if (Args.hasArg(OPT_ftrapv))
     Opts.setSignedOverflowBehavior(LangOptions::SOB_Trapping); 
-    // Set the handler, if one is specified.
-    Opts.OverflowHandler =
-        Args.getLastArgValue(OPT_ftrapv_handler);
-  }
   else if (Args.hasArg(OPT_fwrapv))
     Opts.setSignedOverflowBehavior(LangOptions::SOB_Defined); 
 

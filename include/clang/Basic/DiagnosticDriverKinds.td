@@ -16,8 +16,6 @@ def err_drv_unknown_stdin_type : Error<
 def err_drv_unknown_language : Error<"language not recognized: '%0'">;
 def err_drv_invalid_arch_name : Error<
   "invalid arch name '%0'">;
-def err_drv_invalid_stdlib_name : Error<
-  "invalid library name in argument '%0'">;
 def err_drv_invalid_opt_with_multiple_archs : Error<
   "option '%0' cannot be used with multiple -arch options">;
 def err_drv_invalid_output_with_multiple_archs : Error<
@@ -102,7 +100,5 @@ def warn_drv_treating_input_as_cxx : Warning<
   InGroup<Deprecated>;
 def warn_drv_objc_gc_unsupported : Warning<
   "Objective-C garbage collection is not supported on this platform, ignoring '%0'">;
-def warn_drv_pch_not_first_include : Warning<
-  "precompiled header '%0' was ignored because '%1' is not first '-include'">;
 
 }

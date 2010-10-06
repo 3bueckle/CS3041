@@ -156,8 +156,6 @@ int parse_remapped_files(int argc, const char **argv, int start_arg,
 /* Pretty-printing.                                                           */
 /******************************************************************************/
 
-int want_display_name = 0;
-
 static void PrintCursor(CXCursor Cursor) {
   if (clang_isInvalid(Cursor.kind)) {
     CXString ks = clang_getCursorKindSpelling(Cursor.kind);
@@ -169,12 +167,9 @@ static void PrintCursor(CXCursor Cursor) {
     CXCursor Referenced;
     unsigned line, column;
     CXCursor SpecializationOf;
-    CXCursor *overridden;
-    unsigned num_overridden;
-
+    
     ks = clang_getCursorKindSpelling(Cursor.kind);
-    string = want_display_name? clang_getCursorDisplayName(Cursor) 
-                              : clang_getCursorSpelling(Cursor);
+    string = clang_getCursorSpelling(Cursor);
     printf("%s=%s", clang_getCString(ks),
                     clang_getCString(string));
     clang_disposeString(ks);
@@ -182,25 +177,9 @@ static void PrintCursor(CXCursor Cursor) {
 
     Referenced = clang_getCursorReferenced(Cursor);
     if (!clang_equalCursors(Referenced, clang_getNullCursor())) {
-      if (clang_getCursorKind(Referenced) == CXCursor_OverloadedDeclRef) {
-        unsigned I, N = clang_getNumOverloadedDecls(Referenced);
-        printf("[");
-        for (I = 0; I != N; ++I) {
-          CXCursor Ovl = clang_getOverloadedDecl(Referenced, I);
-          CXSourceLocation Loc;
-          if (I)
-            printf(", ");
-          
-          Loc = clang_getCursorLocation(Ovl);
-          clang_getInstantiationLocation(Loc, 0, &line, &column, 0);
-          printf("%d:%d", line, column);          
-        }
-        printf("]");
-      } else {
-        CXSourceLocation Loc = clang_getCursorLocation(Referenced);
-        clang_getInstantiationLocation(Loc, 0, &line, &column, 0);
-        printf(":%d:%d", line, column);
-      }
+      CXSourceLocation Loc = clang_getCursorLocation(Referenced);
+      clang_getInstantiationLocation(Loc, 0, &line, &column, 0);
+      printf(":%d:%d", line, column);
     }
 
     if (clang_isCursorDefinition(Cursor))
@@ -255,21 +234,6 @@ static void PrintCursor(CXCursor Cursor) {
       printf(" [Specialization of %s:%d:%d]", 
              clang_getCString(Name), line, column);
       clang_disposeString(Name);
-    }
-
-    clang_getOverriddenCursors(Cursor, &overridden, &num_overridden);
-    if (num_overridden) {      
-      unsigned I;
-      printf(" [Overrides ");
-      for (I = 0; I != num_overridden; ++I) {
-        CXSourceLocation Loc = clang_getCursorLocation(overridden[I]);
-        clang_getInstantiationLocation(Loc, 0, &line, &column, 0);
-        if (I)
-          printf(", ");
-        printf("@%d:%d", line, column);
-      }
-      printf("]");
-      clang_disposeOverriddenCursors(overridden);
     }
   }
 }
@@ -607,11 +571,6 @@ static int perform_test_load(CXIndex Idx, CXTranslationUnit TU,
 
     /* Perform some simple filtering. */
     if (!strcmp(filter, "all") || !strcmp(filter, "local")) ck = NULL;
-    else if (!strcmp(filter, "all-display") || 
-             !strcmp(filter, "local-display")) {
-      ck = NULL;
-      want_display_name = 1;
-    }
     else if (!strcmp(filter, "none")) K = (enum CXCursorKind) ~0;
     else if (!strcmp(filter, "category")) K = CXCursor_ObjCCategoryDecl;
     else if (!strcmp(filter, "interface")) K = CXCursor_ObjCInterfaceDecl;
@@ -669,8 +628,7 @@ int perform_test_load_source(int argc, const char **argv,
   int result;
   
   Idx = clang_createIndex(/* excludeDeclsFromPCH */
-                          (!strcmp(filter, "local") || 
-                           !strcmp(filter, "local-display"))? 1 : 0,
+                          !strcmp(filter, "local") ? 1 : 0,
                           /* displayDiagnosics=*/1);
 
   if (UseExternalASTs && strlen(UseExternalASTs))
@@ -1006,7 +964,7 @@ int perform_code_completion(int argc, const char **argv, int timing_only) {
   struct CXUnsavedFile *unsaved_files = 0;
   int num_unsaved_files = 0;
   CXCodeCompleteResults *results = 0;
-  CXTranslationUnit TU = 0;
+  CXTranslationUnit *TU = 0;
   
   if (timing_only)
     input += strlen("-code-completion-timing=");
@@ -1504,9 +1462,7 @@ static void print_usage(void) {
     "   scan-function - scan function bodies (non-PCH)\n\n");
 }
 
-/***/
-
-int cindextest_main(int argc, const char **argv) {
+int main(int argc, const char **argv) {
   clang_enableStackTraces();
   if (argc > 2 && strstr(argv[1], "-code-completion-at=") == argv[1])
     return perform_code_completion(argc, argv, 0);
@@ -1566,55 +1522,3 @@ int cindextest_main(int argc, const char **argv) {
   print_usage();
   return 1;
 }
-
-/***/
-
-/* We intentionally run in a separate thread to ensure we at least minimal
- * testing of a multithreaded environment (for example, having a reduced stack
- * size). */
-
-#include "llvm/Config/config.h"
-#ifdef HAVE_PTHREAD_H
-
-#include <pthread.h>
-
-typedef struct thread_info {
-  int argc;
-  const char **argv;
-  int result;
-} thread_info;
-void *thread_runner(void *client_data_v) {
-  thread_info *client_data = client_data_v;
-  client_data->result = cindextest_main(client_data->argc, client_data->argv);
-  return 0;
-}
-
-int main(int argc, const char **argv) {
-  thread_info client_data;
-  pthread_t thread;
-  int res;
-
-  client_data.argc = argc;
-  client_data.argv = argv;
-  res = pthread_create(&thread, 0, thread_runner, &client_data);
-  if (res != 0) {
-    perror("thread creation failed");
-    return 1;
-  }
-
-  res = pthread_join(thread, 0);
-  if (res != 0) {
-    perror("thread join failed");
-    return 1;
-  }
-
-  return client_data.result;
-}
-
-#else
-
-int main(int argc, const char **argv) {
-  return cindextest_main(argc, argv);
-}
-
-#endif

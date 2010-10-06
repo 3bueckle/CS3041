@@ -412,7 +412,6 @@ void TypeLocWriter::VisitExtVectorTypeLoc(ExtVectorTypeLoc TL) {
 void TypeLocWriter::VisitFunctionTypeLoc(FunctionTypeLoc TL) {
   Writer.AddSourceLocation(TL.getLParenLoc(), Record);
   Writer.AddSourceLocation(TL.getRParenLoc(), Record);
-  Record.push_back(TL.getTrailingReturn());
   for (unsigned i = 0, e = TL.getNumArgs(); i != e; ++i)
     Writer.AddDeclRef(TL.getArg(i), Record);
 }
@@ -1229,8 +1228,7 @@ void ASTWriter::WriteSourceManagerBlock(SourceManager &SourceMgr,
   Record.clear();
   Record.push_back(SOURCE_LOCATION_OFFSETS);
   Record.push_back(SLocEntryOffsets.size());
-  unsigned BaseOffset = Chain ? Chain->getNextSLocOffset() : 0;
-  Record.push_back(SourceMgr.getNextOffset() - BaseOffset);
+  Record.push_back(SourceMgr.getNextOffset());
   Stream.EmitRecordWithBlob(SLocOffsetsAbbrev, Record,
                             (const char *)data(SLocEntryOffsets),
                            SLocEntryOffsets.size()*sizeof(SLocEntryOffsets[0]));
@@ -1277,13 +1275,7 @@ void ASTWriter::WritePreprocessor(const Preprocessor &PP) {
     // Don't emit builtin macros like __LINE__ to the AST file unless they have
     // been redefined by the header (in which case they are not isBuiltinMacro).
     // Also skip macros from a AST file if we're chaining.
-
-    // FIXME: There is a (probably minor) optimization we could do here, if
-    // the macro comes from the original PCH but the identifier comes from a
-    // chained PCH, by storing the offset into the original PCH rather than
-    // writing the macro definition a second time.
-    if (MI->isBuiltinMacro() || 
-        (Chain && I->first->isFromAST() && MI->isFromAST()))
+    if (MI->isBuiltinMacro() || (Chain && MI->isFromAST()))
       continue;
 
     AddIdentifierRef(I->first, Record);
@@ -1341,14 +1333,12 @@ void ASTWriter::WritePreprocessor(const Preprocessor &PP) {
   // If the preprocessor has a preprocessing record, emit it.
   unsigned NumPreprocessingRecords = 0;
   if (PPRec) {
-    unsigned IndexBase = Chain ? PPRec->getNumPreallocatedEntities() : 0;
-    for (PreprocessingRecord::iterator E = PPRec->begin(Chain),
-                                       EEnd = PPRec->end(Chain);
+    for (PreprocessingRecord::iterator E = PPRec->begin(), EEnd = PPRec->end();
          E != EEnd; ++E) {
       Record.clear();
       
       if (MacroInstantiation *MI = dyn_cast<MacroInstantiation>(*E)) {
-        Record.push_back(IndexBase + NumPreprocessingRecords++);
+        Record.push_back(NumPreprocessingRecords++);
         AddSourceLocation(MI->getSourceRange().getBegin(), Record);
         AddSourceLocation(MI->getSourceRange().getEnd(), Record);
         AddIdentifierRef(MI->getName(), Record);
@@ -1359,22 +1349,16 @@ void ASTWriter::WritePreprocessor(const Preprocessor &PP) {
       
       if (MacroDefinition *MD = dyn_cast<MacroDefinition>(*E)) {
         // Record this macro definition's location.
-        MacroID ID = getMacroDefinitionID(MD);
-        
-        // Don't write the macro definition if it is from another AST file.
-        if (ID < FirstMacroID)
-          continue;
-        
-        unsigned Position = ID - FirstMacroID;
-        if (Position != MacroDefinitionOffsets.size()) {
-          if (Position > MacroDefinitionOffsets.size())
-            MacroDefinitionOffsets.resize(Position + 1);
+        IdentID ID = getMacroDefinitionID(MD);
+        if (ID != MacroDefinitionOffsets.size()) {
+          if (ID > MacroDefinitionOffsets.size())
+            MacroDefinitionOffsets.resize(ID + 1);
           
-          MacroDefinitionOffsets[Position] = Stream.GetCurrentBitNo();            
+          MacroDefinitionOffsets[ID] = Stream.GetCurrentBitNo();            
         } else
           MacroDefinitionOffsets.push_back(Stream.GetCurrentBitNo());
         
-        Record.push_back(IndexBase + NumPreprocessingRecords++);
+        Record.push_back(NumPreprocessingRecords++);
         Record.push_back(ID);
         AddSourceLocation(MD->getSourceRange().getBegin(), Record);
         AddSourceLocation(MD->getSourceRange().getEnd(), Record);
@@ -1418,8 +1402,6 @@ void ASTWriter::WriteType(QualType T) {
   TypeIdx &Idx = TypeIdxs[T];
   if (Idx.getIndex() == 0) // we haven't seen this type before.
     Idx = TypeIdx(NextTypeID++);
-
-  assert(Idx.getIndex() >= FirstTypeID && "Re-writing a type from a prior AST");
 
   // Record the offset for this type.
   unsigned Index = Idx.getIndex() - FirstTypeID;
@@ -2214,8 +2196,7 @@ ASTWriter::ASTWriter(llvm::BitstreamWriter &Stream)
   : Stream(Stream), Chain(0), FirstDeclID(1), NextDeclID(FirstDeclID),
     FirstTypeID(NUM_PREDEF_TYPE_IDS), NextTypeID(FirstTypeID),
     FirstIdentID(1), NextIdentID(FirstIdentID), FirstSelectorID(1),
-    NextSelectorID(FirstSelectorID), FirstMacroID(1), NextMacroID(FirstMacroID),
-    CollectedStmts(&StmtsToEmit),
+    NextSelectorID(FirstSelectorID), CollectedStmts(&StmtsToEmit),
     NumStatements(0), NumMacros(0), NumLexicalDeclContexts(0),
     NumVisibleDeclContexts(0) {
 }
@@ -2448,12 +2429,10 @@ void ASTWriter::WriteASTChain(Sema &SemaRef, MemorizeStatCalls *StatCalls,
   FirstTypeID += Chain->getTotalNumTypes();
   FirstIdentID += Chain->getTotalNumIdentifiers();
   FirstSelectorID += Chain->getTotalNumSelectors();
-  FirstMacroID += Chain->getTotalNumMacroDefinitions();
   NextDeclID = FirstDeclID;
   NextTypeID = FirstTypeID;
   NextIdentID = FirstIdentID;
   NextSelectorID = FirstSelectorID;
-  NextMacroID = FirstMacroID;
 
   ASTContext &Context = SemaRef.Context;
   Preprocessor &PP = SemaRef.PP;
@@ -2711,8 +2690,10 @@ void ASTWriter::AddSourceRange(SourceRange Range, RecordData &Record) {
 
 void ASTWriter::AddAPInt(const llvm::APInt &Value, RecordData &Record) {
   Record.push_back(Value.getBitWidth());
-  const uint64_t *Words = Value.getRawData();
-  Record.append(Words, Words + Value.getNumWords());
+  unsigned N = Value.getNumWords();
+  const uint64_t* Words = Value.getRawData();
+  for (unsigned I = 0; I != N; ++I)
+    Record.push_back(Words[I]);
 }
 
 void ASTWriter::AddAPSInt(const llvm::APSInt &Value, RecordData &Record) {
@@ -2738,13 +2719,13 @@ IdentID ASTWriter::getIdentifierRef(const IdentifierInfo *II) {
   return ID;
 }
 
-MacroID ASTWriter::getMacroDefinitionID(MacroDefinition *MD) {
+IdentID ASTWriter::getMacroDefinitionID(MacroDefinition *MD) {
   if (MD == 0)
     return 0;
-
-  MacroID &ID = MacroDefinitions[MD];
+  
+  IdentID &ID = MacroDefinitions[MD];
   if (ID == 0)
-    ID = NextMacroID++;
+    ID = MacroDefinitions.size();
   return ID;
 }
 
@@ -2869,7 +2850,7 @@ DeclID ASTWriter::GetDeclRef(const Decl *D) {
   if (D == 0) {
     return 0;
   }
-  assert(!(reinterpret_cast<uintptr_t>(D) & 0x01) && "Invalid decl pointer");
+
   DeclID &ID = DeclIDs[D];
   if (ID == 0) {
     // We haven't seen this declaration before. Give it a new ID and
@@ -3117,7 +3098,6 @@ void ASTWriter::SetReader(ASTReader *Reader) {
          FirstTypeID == NextTypeID &&
          FirstIdentID == NextIdentID &&
          FirstSelectorID == NextSelectorID &&
-         FirstMacroID == NextMacroID &&
          "Setting chain after writing has started.");
   Chain = Reader;
 }
@@ -3127,14 +3107,7 @@ void ASTWriter::IdentifierRead(IdentID ID, IdentifierInfo *II) {
 }
 
 void ASTWriter::TypeRead(TypeIdx Idx, QualType T) {
-  // Always take the highest-numbered type index. This copes with an interesting
-  // case for chained AST writing where we schedule writing the type and then,
-  // later, deserialize the type from another AST. In this case, we want to 
-  // keep the higher-numbered entry so that we can properly write it out to
-  // the AST file.
-  TypeIdx &StoredIdx = TypeIdxs[T];
-  if (Idx.getIndex() >= StoredIdx.getIndex())
-    StoredIdx = Idx;
+  TypeIdxs[T] = Idx;
 }
 
 void ASTWriter::DeclRead(DeclID ID, const Decl *D) {
@@ -3143,9 +3116,4 @@ void ASTWriter::DeclRead(DeclID ID, const Decl *D) {
 
 void ASTWriter::SelectorRead(SelectorID ID, Selector S) {
   SelectorIDs[S] = ID;
-}
-
-void ASTWriter::MacroDefinitionRead(serialization::MacroID ID, 
-                                    MacroDefinition *MD) {
-  MacroDefinitions[MD] = ID;
 }

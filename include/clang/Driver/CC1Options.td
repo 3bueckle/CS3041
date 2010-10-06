@@ -42,10 +42,6 @@ def analysis_CFGView : Flag<"-cfg-view">,
   HelpText<"View Control-Flow Graphs using GraphViz">;
 def analysis_UnoptimizedCFG : Flag<"-unoptimized-cfg">,
   HelpText<"Generate unoptimized CFGs for all analyses">;
-def analysis_CFGAddImplicitDtors : Flag<"-cfg-add-implicit-dtors">,
-  HelpText<"Add C++ implicit destructors to CFGs for all analyses">;
-def analysis_CFGAddInitializers : Flag<"-cfg-add-initializers">,
-  HelpText<"Add C++ initializers to CFGs for all analyses">;
 def analysis_DisplayLiveVariables : Flag<"-dump-live-variables">,
   HelpText<"Print results of live variable analysis">;
 def analysis_LLVMConventionChecker : Flag<"-analyzer-check-llvm-conventions">,
@@ -68,8 +64,6 @@ def analysis_WarnSizeofPointer : Flag<"-warn-sizeof-pointer">,
   HelpText<"Warn about unintended use of sizeof() on pointer expressions">;
 def analysis_WarnIdempotentOps : Flag<"-analyzer-check-idempotent-operations">,
   HelpText<"Warn about idempotent operations">;
-def analysis_AnalyzerStats : Flag<"-analyzer-stats">,
-  HelpText<"Emit warnings with analyzer statistics">;
 
 def analyzer_store : Separate<"-analyzer-store">,
   HelpText<"Source Code Analysis - Abstract Memory Store Models">;
@@ -112,7 +106,7 @@ def analyzer_viz_egraph_ubigraph : Flag<"-analyzer-viz-egraph-ubigraph">,
 def analyzer_inline_call : Flag<"-analyzer-inline-call">,
   HelpText<"Experimental transfer function inlining callees when its definition is available.">;
 def analyzer_max_nodes : Separate<"-analyzer-max-nodes">,
-  HelpText<"The maximum number of nodes the analyzer can generate (150000 default, 0 = no limit)">;
+  HelpText<"The maximum number of nodes the analyzer can generate">;
 def analyzer_max_loop : Separate<"-analyzer-max-loop">,
   HelpText<"The maximum number of times the analyzer will go through a loop">;
 
@@ -131,8 +125,6 @@ def dwarf_debug_flags : Separate<"-dwarf-debug-flags">,
 def g : Flag<"-g">, HelpText<"Generate source level debug information">;
 def fcatch_undefined_behavior : Flag<"-fcatch-undefined-behavior">,
     HelpText<"Generate runtime checks for undefined behavior.">;
-def flimit_debug_info : Flag<"-flimit-debug-info">,
-  HelpText<"Limit debug information produced to reduce size of debug binary">;
 def fno_common : Flag<"-fno-common">,
   HelpText<"Compile common globals like normal definitions">;
 def no_implicit_float : Flag<"-no-implicit-float">,
@@ -461,9 +453,6 @@ def fobjc_nonfragile_abi2 : Flag<"-fobjc-nonfragile-abi2">,
   HelpText<"enable objective-c's enhanced nonfragile abi">;
 def ftrapv : Flag<"-ftrapv">,
   HelpText<"Trap on integer overflow">;
-def ftrapv_handler : Separate<"-ftrapv-handler">,
-  MetaVarName<"<function name>">,
-  HelpText<"Specify the function to be called on overflow.">;
 def fwrapv : Flag<"-fwrapv">,
   HelpText<"Treat signed integer overflow as two's complement">;
 def pic_level : Separate<"-pic-level">,
@@ -527,8 +516,6 @@ def iwithprefixbefore : JoinedOrSeparate<"-iwithprefixbefore">,
   HelpText<"Set directory to include search path with prefix">;
 def isysroot : JoinedOrSeparate<"-isysroot">, MetaVarName<"<dir>">,
   HelpText<"Set the system root directory (usually /)">;
-def cxx_system_include : Separate<"-cxx-system-include">,
-  HelpText<"Add a system #include directory for the C++ standard library">;
 def v : Flag<"-v">, HelpText<"Enable verbose output">;
 
 //===----------------------------------------------------------------------===//

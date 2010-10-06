@@ -436,8 +436,6 @@ public:
 
   void clearIDTables();
 
-  Diagnostic &getDiagnostics() const { return Diag; }
-
   //===--------------------------------------------------------------------===//
   // MainFileID creation and querying methods.
   //===--------------------------------------------------------------------===//

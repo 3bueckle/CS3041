@@ -31,13 +31,9 @@ static SourceLocation GetUnreachableLoc(const CFGBlock &b, SourceRange &R1,
   R1 = R2 = SourceRange();
 
 top:
-  if (sn < b.size()) {
-    CFGStmt CS = b[sn].getAs<CFGStmt>();
-    if (!CS)
-      goto top;
-    
-    S = CS.getStmt(); 
-  } else if (b.getTerminator())
+  if (sn < b.size())
+    S = b[sn].getStmt();
+  else if (b.getTerminator())
     S = b.getTerminator();
   else
     return SourceLocation();
@@ -47,7 +43,7 @@ top:
       const BinaryOperator *BO = cast<BinaryOperator>(S);
       if (BO->getOpcode() == BO_Comma) {
         if (sn+1 < b.size())
-          return b[sn+1].getAs<CFGStmt>().getStmt()->getLocStart();
+          return b[sn+1].getStmt()->getLocStart();
         const CFGBlock *n = &b;
         while (1) {
           if (n->getTerminator())
@@ -58,7 +54,7 @@ top:
           if (n->pred_size() != 1)
             return SourceLocation();
           if (!n->empty())
-            return n[0][0].getAs<CFGStmt>().getStmt()->getLocStart();
+            return n[0][0].getStmt()->getLocStart();
         }
       }
       R1 = BO->getLHS()->getSourceRange();
@@ -135,9 +131,6 @@ static SourceLocation MarkLiveTop(const CFGBlock *Start,
   }
 
   // Solve
-  CFGBlock::FilterOptions FO;
-  FO.IgnoreDefaultsWithCoveredEnums = 1;
-
   while (!WL.empty()) {
     const CFGBlock *item = WL.back();
     WL.pop_back();
@@ -154,8 +147,8 @@ static SourceLocation MarkLiveTop(const CFGBlock *Start,
         }
 
     reachable.set(item->getBlockID());
-    for (CFGBlock::filtered_succ_iterator I =
-	   item->filtered_succ_start_end(FO); I.hasMore(); ++I)
+    for (CFGBlock::const_succ_iterator I=item->succ_begin(), E=item->succ_end();
+         I != E; ++I)
       if (const CFGBlock *B = *I) {
         unsigned blockID = B->getBlockID();
         if (!reachable[blockID]) {
@@ -197,17 +190,14 @@ unsigned ScanReachableFromBlock(const CFGBlock &Start,
   ++count;
   WL.push_back(&Start);
 
-  // Find the reachable blocks from 'Start'.
-  CFGBlock::FilterOptions FO;
-  FO.IgnoreDefaultsWithCoveredEnums = 1;
-
+    // Find the reachable blocks from 'Start'.
   while (!WL.empty()) {
     const CFGBlock *item = WL.back();
     WL.pop_back();
 
       // Look at the successors and mark then reachable.
-    for (CFGBlock::filtered_succ_iterator I= item->filtered_succ_start_end(FO);
-         I.hasMore(); ++I)
+    for (CFGBlock::const_succ_iterator I=item->succ_begin(), E=item->succ_end();
+         I != E; ++I)
       if (const CFGBlock *B = *I) {
         unsigned blockID = B->getBlockID();
         if (!Reachable[blockID]) {

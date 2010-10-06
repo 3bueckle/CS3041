@@ -1739,12 +1739,12 @@ bool RecursiveASTVisitor<Derived>::TraverseInitListExpr(InitListExpr *S) {
 DEF_TRAVERSE_STMT(CXXScalarValueInitExpr, {
     // This is called for code like 'return T()' where T is a built-in
     // (i.e. non-class) type.
-    TRY_TO(TraverseTypeLoc(S->getTypeSourceInfo()->getTypeLoc()));
+    if (!S->isImplicit())
+      TRY_TO(TraverseType(S->getType()));
   })
 
 DEF_TRAVERSE_STMT(CXXNewExpr, {
-  // The child-iterator will pick up the other arguments.
-  TRY_TO(TraverseTypeLoc(S->getAllocatedTypeSourceInfo()->getTypeLoc()));
+    TRY_TO(TraverseType(S->getAllocatedType()));
   })
 
 DEF_TRAVERSE_STMT(OffsetOfExpr, {
@@ -1769,42 +1769,14 @@ DEF_TRAVERSE_STMT(CXXTypeidExpr, {
       TRY_TO(TraverseTypeLoc(S->getTypeOperandSourceInfo()->getTypeLoc()));
   })
 
-DEF_TRAVERSE_STMT(CXXUuidofExpr, {
-    // The child-iterator will pick up the arg if it's an expression,
-    // but not if it's a type.
-    if (S->isTypeOperand())
-      TRY_TO(TraverseTypeLoc(S->getTypeOperandSourceInfo()->getTypeLoc()));
-  })
-
 DEF_TRAVERSE_STMT(TypesCompatibleExpr, {
     TRY_TO(TraverseTypeLoc(S->getArgTInfo1()->getTypeLoc()));
     TRY_TO(TraverseTypeLoc(S->getArgTInfo2()->getTypeLoc()));
   })
 
 DEF_TRAVERSE_STMT(UnaryTypeTraitExpr, {
-    TRY_TO(TraverseTypeLoc(S->getQueriedTypeSourceInfo()->getTypeLoc()));
+    TRY_TO(TraverseType(S->getQueriedType()));
   })
-
-DEF_TRAVERSE_STMT(VAArgExpr, {
-    // The child-iterator will pick up the expression argument.
-    TRY_TO(TraverseTypeLoc(S->getWrittenTypeInfo()->getTypeLoc()));
-  })
-
-DEF_TRAVERSE_STMT(CXXTemporaryObjectExpr, {
-    // This is called for code like 'return T()' where T is a class type.
-    TRY_TO(TraverseTypeLoc(S->getTypeSourceInfo()->getTypeLoc()));
-  })
-
-DEF_TRAVERSE_STMT(CXXUnresolvedConstructExpr, {
-    // This is called for code like 'T()', where T is a template argument.
-    TRY_TO(TraverseTypeLoc(S->getTypeSourceInfo()->getTypeLoc()));
-  })
-
-// These expressions all might take explicit template arguments.
-// We traverse those if so.  FIXME: implement these.
-DEF_TRAVERSE_STMT(CXXConstructExpr, { })
-DEF_TRAVERSE_STMT(CallExpr, { })
-DEF_TRAVERSE_STMT(CXXMemberCallExpr, { })
 
 // These exprs (most of them), do not need any action except iterating
 // over the children.
@@ -1823,6 +1795,7 @@ DEF_TRAVERSE_STMT(CXXNullPtrLiteralExpr, { })
 DEF_TRAVERSE_STMT(CXXPseudoDestructorExpr, { })
 DEF_TRAVERSE_STMT(CXXThisExpr, { })
 DEF_TRAVERSE_STMT(CXXThrowExpr, { })
+DEF_TRAVERSE_STMT(CXXUnresolvedConstructExpr, { })
 DEF_TRAVERSE_STMT(DesignatedInitExpr, { })
 DEF_TRAVERSE_STMT(ExtVectorElementExpr, { })
 DEF_TRAVERSE_STMT(GNUNullExpr, { })
@@ -1843,6 +1816,19 @@ DEF_TRAVERSE_STMT(ShuffleVectorExpr, { })
 DEF_TRAVERSE_STMT(StmtExpr, { })
 DEF_TRAVERSE_STMT(UnresolvedLookupExpr, { })
 DEF_TRAVERSE_STMT(UnresolvedMemberExpr, { })
+DEF_TRAVERSE_STMT(VAArgExpr, {
+    // The child-iterator will pick up the expression argument.
+    TRY_TO(TraverseTypeLoc(S->getWrittenTypeInfo()->getTypeLoc()));
+  })
+DEF_TRAVERSE_STMT(CXXConstructExpr, { })
+
+DEF_TRAVERSE_STMT(CXXTemporaryObjectExpr, {
+    // This is called for code like 'return T()' where T is a class type.
+    TRY_TO(TraverseType(S->getType()));
+  })
+
+DEF_TRAVERSE_STMT(CallExpr, { })
+DEF_TRAVERSE_STMT(CXXMemberCallExpr, { })
 DEF_TRAVERSE_STMT(CXXOperatorCallExpr, { })
 
 // These operators (all of them) do not need any action except
@@ -1851,7 +1837,6 @@ DEF_TRAVERSE_STMT(ConditionalOperator, { })
 DEF_TRAVERSE_STMT(UnaryOperator, { })
 DEF_TRAVERSE_STMT(BinaryOperator, { })
 DEF_TRAVERSE_STMT(CompoundAssignOperator, { })
-DEF_TRAVERSE_STMT(CXXNoexceptExpr, { })
 
 // These literals (all of them) do not need any action.
 DEF_TRAVERSE_STMT(IntegerLiteral, { })
@@ -1876,6 +1861,7 @@ DEF_TRAVERSE_STMT(ObjCStringLiteral, { })
 //    http://clang.llvm.org/doxygen/classclang_1_1CXXTypeidExpr.html
 //    http://clang.llvm.org/doxygen/classclang_1_1SizeOfAlignOfExpr.html
 //    http://clang.llvm.org/doxygen/classclang_1_1TypesCompatibleExpr.html
+//    http://clang.llvm.org/doxygen/classclang_1_1CXXUnresolvedConstructExpr.html
 //    Every class that has getQualifier.
 
 #undef DEF_TRAVERSE_STMT

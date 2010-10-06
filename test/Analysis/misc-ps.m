@@ -794,7 +794,7 @@ int test_uninit_branch_c(void) {
 void test_bad_call_aux(int x);
 void test_bad_call(void) {
   int y;
-  test_bad_call_aux(y); // expected-warning{{Function call argument is an uninitialized value}}
+  test_bad_call_aux(y); // expected-warning{{Pass-by-value argument in function call is undefined}}
 }
 
 @interface TestBadArg {}
@@ -803,7 +803,7 @@ void test_bad_call(void) {
 
 void test_bad_msg(TestBadArg *p) {
   int y;
-  [p testBadArg:y]; // expected-warning{{Argument in message expression is an uninitialized value}}
+  [p testBadArg:y]; // expected-warning{{Pass-by-value argument in message expression is undefined}}
 }
 
 //===----------------------------------------------------------------------===//
@@ -1066,72 +1066,5 @@ struct PR8050;
 void pr8050(struct PR8050 **arg)
 {
     *arg = malloc(1);
-}
-
-// <rdar://problem/5880430> Switch on enum should not consider default case live
-//  if all enum values are covered
-enum Cases { C1, C2, C3, C4 };
-void test_enum_cases(enum Cases C) {
-  switch (C) {
-  case C1:
-  case C2:
-  case C4:
-  case C3:
-    return;
-  }
-  int *p = 0;
-  *p = 0xDEADBEEF; // no-warning
-}
-
-void test_enum_cases_positive(enum Cases C) {
-  switch (C) { // expected-warning{{enumeration value 'C4' not handled in switch}}
-  case C1:
-  case C2:
-  case C3:
-    return;
-  }
-  int *p = 0;
-  *p = 0xDEADBEEF; // expected-warning{{Dereference of null pointer}}
-}
-
-// <rdar://problem/6351970> rule request: warn if synchronization mutex can be nil
-void rdar6351970() {
-  id x = 0;
-  @synchronized(x) {} // expected-warning{{Nil value used as mutex for @synchronized() (no synchronization will occur)}}
-}
-
-void rdar6351970_b(id x) {
-  if (!x)
-    @synchronized(x) {} // expected-warning{{Nil value used as mutex for @synchronized() (no synchronization will occur)}}
-}
-
-void rdar6351970_c() {
-  id x;
-  @synchronized(x) {} // expected-warning{{Uninitialized value used as mutex for @synchronized}}
-}
-
-// <rdar://problem/6352035> rule request: direct structure member access null pointer dereference
-@interface RDar6352035 {
-  int c;
-}
-- (void)foo;
-- (void)bar;
-@end
-
-@implementation RDar6352035
-- (void)foo {
-  RDar6352035 *friend = 0;
-  friend->c = 7; // expected-warning{{Instance variable access (via 'friend') results in a null pointer dereference}}
-}
-- (void)bar {
-  self = 0;
-  c = 7; // expected-warning{{Instance variable access (via 'self') results in a null pointer dereference}}
-}
-@end
-
-// PR 8149 - GNU statement expression in condition of ForStmt.
-// This previously triggered an assertion failure in CFGBuilder.
-void pr8149(void) {
-  for (; ({ do { } while (0); 0; });) { }
 }
 

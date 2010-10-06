@@ -84,8 +84,7 @@ def OutOfLineDeclaration : DiagGroup<"out-of-line-declaration">;
 def : DiagGroup<"overflow">;
 def OverlengthStrings : DiagGroup<"overlength-strings">;
 def : DiagGroup<"overloaded-virtual">;
-def Packed : DiagGroup<"packed">;
-def Padded : DiagGroup<"padded">;
+def : DiagGroup<"packed">;
 def PointerArith : DiagGroup<"pointer-arith">;
 def PoundWarning : DiagGroup<"#warnings">,
                    DiagCategory<"#warning Directive">;
@@ -102,7 +101,6 @@ def SignCompare : DiagGroup<"sign-compare">;
 def : DiagGroup<"stack-protector">;
 def : DiagGroup<"switch-default">;
 def : DiagGroup<"synth">;
-def TautologicalCompare : DiagGroup<"tautological-compare">;
 
 // Preprocessor warnings.
 def : DiagGroup<"builtin-macro-redefined">;
@@ -226,12 +224,5 @@ def : DiagGroup<"comments", [Comment]>;         // -Wcomments = -Wcomment
 def NonGCC : DiagGroup<"non-gcc",
     [SignCompare, Conversion, LiteralRange]>;
 
-// A warning group for warnings about using C++0x features as extensions in
-// earlier C++ versions.
-def CXX0x : DiagGroup<"c++0x-extensions">;
-
 // A warning group for warnings about GCC extensions.
 def GNU : DiagGroup<"gnu", [GNUDesignator, VLA]>;
-
-// A warning group for warnings about Microsoft extensions.
-def Microsoft : DiagGroup<"microsoft">;

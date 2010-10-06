@@ -17,13 +17,13 @@ int4 align4(int4 a, int4 b) { return _mm_alignr_epi8(a, b, 32); }
 #define _mm_alignr_pi8(a, b, n) (__builtin_ia32_palignr((a), (b), (n)))
 typedef __attribute__((vector_size(8))) int int2;
 
-// CHECK: palignr
+// CHECK-NOT: palignr
 int2 align5(int2 a, int2 b) { return _mm_alignr_pi8(a, b, 8); }
 
-// CHECK: palignr
+// CHECK: psrlq
 int2 align6(int2 a, int2 b) { return _mm_alignr_pi8(a, b, 9); }
 
-// CHECK: palignr
+// CHECK: xor
 int2 align7(int2 a, int2 b) { return _mm_alignr_pi8(a, b, 16); }
 
 // CHECK: palignr

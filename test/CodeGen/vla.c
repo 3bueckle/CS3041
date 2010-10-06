@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 %s -emit-llvm -o - | FileCheck %s
+// RUN: %clang_cc1 %s -emit-llvm -o %t
 
 int b(char* x);
 
@@ -35,53 +35,3 @@ void g(int count) {
   int (*a[5])[count];
   int (*b)[][count];
 }
-
-// rdar://8403108
-// CHECK: define void @f_8403108
-void f_8403108(unsigned x) {
-  // CHECK: call i8* @llvm.stacksave()
-  char s1[x];
-  while (1) {
-    // CHECK: call i8* @llvm.stacksave()
-    char s2[x];
-    if (1)
-      break;
-  // CHECK: call void @llvm.stackrestore(i8*
-  }
-  // CHECK: call void @llvm.stackrestore(i8*
-}
-
-// pr7827
-void function(short width, int data[][width]) {} // expected-note {{passing argument to parameter 'data' here}}
-
-void test() {
-     int bork[4][13];
-     // CHECK: call void @function(i16 signext 1, i32* null)
-     function(1, 0);
-     // CHECK: call void @function(i16 signext 1, i32* inttoptr
-     function(1, 0xbadbeef); // expected-warning {{incompatible integer to pointer conversion passing}}
-     // CHECK: call void @function(i16 signext 1, i32* {{.*}})
-     function(1, bork);
-}
-
-void function1(short width, int data[][width][width]) {}
-void test1() {
-     int bork[4][13][15];
-     // CHECK: call void @function1(i16 signext 1, i32* {{.*}})
-     function1(1, bork);
-     // CHECK: call void @function(i16 signext 1, i32* {{.*}}) 
-     function(1, bork[2]);
-}
-
-// rdar://8476159
-static int GLOB;
-int test2(int n)
-{
-  GLOB = 0;
-  char b[1][n+3];			/* Variable length array.  */
-  // CHECK:  [[tmp_1:%.*]] = load i32* @GLOB, align 4
-  // CHECK-NEXT: add nsw i32 [[tmp_1]], 1
-  __typeof__(b[GLOB++]) c;
-  return GLOB;
-}
-

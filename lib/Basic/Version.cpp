@@ -20,44 +20,45 @@ using namespace std;
 
 namespace clang {
   
-std::string getClangRepositoryPath() {
-#ifdef SVN_REPOSITORY
-  llvm::StringRef URL(SVN_REPOSITORY);
-#else
-  llvm::StringRef URL("");
-#endif
+llvm::StringRef getClangRepositoryPath() {
+  static const char URL[] = "$URL$";
+  const char *URLEnd = URL + strlen(URL);
+
+  const char *End = strstr(URL, "/lib/Basic");
+  if (End)
+    URLEnd = End;
 
   // Strip off version from a build from an integration branch.
-  URL = URL.slice(0, URL.find("/src/tools/clang"));
+  End = strstr(URL, "/src/tools/clang");
+  if (End)
+    URLEnd = End;
 
-  // Trim path prefix off, assuming path came from standard cfe path.
-  size_t Start = URL.find("cfe/");
-  if (Start != llvm::StringRef::npos)
-    URL = URL.substr(Start + 4);
+  const char *Begin = strstr(URL, "cfe/");
+  if (Begin)
+    return llvm::StringRef(Begin + 4, URLEnd - Begin - 4);
 
-  return URL;
+  return llvm::StringRef(URL, URLEnd - URL);
 }
 
 std::string getClangRevision() {
 #ifdef SVN_REVISION
-  return SVN_REVISION;
-#else
-  return "";
+  if (SVN_REVISION[0] != '\0') {
+    std::string revision;
+    llvm::raw_string_ostream OS(revision);
+    OS << strtol(SVN_REVISION, 0, 10);
+    return OS.str();
+  }
 #endif
+  return "";
 }
 
 std::string getClangFullRepositoryVersion() {
   std::string buf;
   llvm::raw_string_ostream OS(buf);
-  std::string Path = getClangRepositoryPath();
-  std::string Revision = getClangRevision();
-  if (!Path.empty())
-    OS << Path;
-  if (!Revision.empty()) {
-    if (!Path.empty())
-      OS << ' ';
-    OS << Revision;
-  }
+  OS << getClangRepositoryPath();
+  const std::string &Revision = getClangRevision();
+  if (!Revision.empty())
+    OS << ' ' << Revision;
   return OS.str();
 }
   

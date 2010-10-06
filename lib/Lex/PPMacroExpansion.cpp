@@ -514,11 +514,10 @@ static bool HasFeature(const Preprocessor &PP, const IdentifierInfo *II) {
            .Case("cxx_attributes", LangOpts.CPlusPlus0x)
            .Case("cxx_auto_type", LangOpts.CPlusPlus0x)
            .Case("cxx_decltype", LangOpts.CPlusPlus0x)
-           .Case("cxx_deleted_functions", true) // Accepted as an extension.
+           .Case("cxx_deleted_functions", LangOpts.CPlusPlus0x)
            .Case("cxx_exceptions", LangOpts.Exceptions)
            .Case("cxx_rtti", LangOpts.RTTI)
            .Case("cxx_static_assert", LangOpts.CPlusPlus0x)
-           .Case("cxx_trailing_return", LangOpts.CPlusPlus0x)
            .Case("objc_nonfragile_abi", LangOpts.ObjCNonFragileABI)
            .Case("objc_weak_class", LangOpts.ObjCNonFragileABI)
            .Case("ownership_holds", true)

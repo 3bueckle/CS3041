@@ -110,7 +110,6 @@ def CXXDependentScopeMemberExpr : DStmt<Expr>;
 def OverloadExpr : DStmt<Expr, 1>;
 def UnresolvedLookupExpr : DStmt<OverloadExpr>;
 def UnresolvedMemberExpr : DStmt<OverloadExpr>;
-def CXXNoexceptExpr : DStmt<Expr>;
 
 // Obj-C Expressions.
 def ObjCStringLiteral : DStmt<Expr>;
@@ -128,7 +127,3 @@ def ObjCIsaExpr : DStmt<Expr>;
 def ShuffleVectorExpr : DStmt<Expr>;
 def BlockExpr : DStmt<Expr>;
 def BlockDeclRefExpr : DStmt<Expr>;
-
-// Microsoft Extensions.
-def CXXUuidofExpr : DStmt<Expr>; 
-

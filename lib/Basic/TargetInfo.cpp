@@ -283,10 +283,6 @@ bool TargetInfo::validateOutputConstraint(ConstraintInfo &Info) const {
       Info.setAllowsRegister();
       break;
     case 'm': // memory operand.
-    case 'o': // offsetable memory operand.
-    case 'V': // non-offsetable memory operand.
-    case '<': // autodecrement memory operand.
-    case '>': // autoincrement memory operand.
       Info.setAllowsMemory();
       break;
     case 'g': // general register, memory operand or immediate integer.
@@ -295,12 +291,13 @@ bool TargetInfo::validateOutputConstraint(ConstraintInfo &Info) const {
       Info.setAllowsMemory();
       break;
     case ',': // multiple alternative constraint.  Pass it.
+      Name++;
       // Handle additional optional '=' or '+' modifiers.
-      if (Name[1] == '=' || Name[1] == '+')
+      if (*Name == '=' || *Name == '+')
         Name++;
       break;
     case '?': // Disparage slightly code.
-    case '!': // Disparage severely.
+    case '!': // Disparage severly.
       break;  // Pass them.
     }
 
@@ -387,20 +384,14 @@ bool TargetInfo::validateInputConstraint(ConstraintInfo *OutputConstraints,
       Info.setAllowsRegister();
       break;
     case 'm': // memory operand.
-    case 'o': // offsettable memory operand.
-    case 'V': // non-offsettable memory operand.
-    case '<': // autodecrement memory operand.
-    case '>': // autoincrement memory operand.
+    case 'o': // offsettable memory operand
+    case 'V': // non-offsettable memory operand
       Info.setAllowsMemory();
       break;
     case 'g': // general register, memory operand or immediate integer.
     case 'X': // any operand.
       Info.setAllowsRegister();
       Info.setAllowsMemory();
-      break;
-    case 'E': // immediate floating point.
-    case 'F': // immediate floating point.
-    case 'p': // address operand.
       break;
     case ',': // multiple alternative constraint.  Ignore comma.
       break;

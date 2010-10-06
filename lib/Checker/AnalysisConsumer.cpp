@@ -179,8 +179,7 @@ public:
                                   Opts.VisualizeEGDot, Opts.VisualizeEGUbi,
                                   Opts.PurgeDead, Opts.EagerlyAssume,
                                   Opts.TrimGraph, Opts.InlineCall,
-                                  Opts.UnoptimizedCFG, Opts.CFGAddImplicitDtors,
-                                  Opts.CFGAddInitializers));
+                                  Opts.UnoptimizedCFG));
   }
 
   virtual void HandleTranslationUnit(ASTContext &C);
@@ -350,10 +349,6 @@ static void ActionGRExprEngine(AnalysisConsumer &C, AnalysisManager& mgr,
   if (C.Opts.IdempotentOps || C.Opts.EnableExperimentalChecks
       || C.Opts.EnableExperimentalInternalChecks)
     RegisterIdempotentOperationChecker(Eng);
-
-  // Enable AnalyzerStatsChecker if it was given as an argument
-  if (C.Opts.AnalyzerStats)
-    RegisterAnalyzerStatsChecker(Eng);
 
   // Set the graph auditor.
   llvm::OwningPtr<ExplodedNode::Auditor> Auditor;

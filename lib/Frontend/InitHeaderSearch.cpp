@@ -445,39 +445,41 @@ void InitHeaderSearch::AddDefaultCIncludePaths(const llvm::Triple &triple,
   }
   llvm::Triple::OSType os = triple.getOS();
   switch (os) {
-  case llvm::Triple::Win32: {
-    std::string VSDir;
-    std::string WindowsSDKDir;
-    if (getVisualStudioDir(VSDir)) {
-      AddPath(VSDir + "\\VC\\include", System, false, false, false);
-      if (getWindowsSDKDir(WindowsSDKDir))
-        AddPath(WindowsSDKDir + "\\include", System, false, false, false);
-      else
-        AddPath(VSDir + "\\VC\\PlatformSDK\\Include",
-                System, false, false, false);
-    } else {
-      // Default install paths.
-      AddPath("C:/Program Files/Microsoft Visual Studio 10.0/VC/include",
-              System, false, false, false);
-      AddPath("C:/Program Files/Microsoft Visual Studio 9.0/VC/include",
-              System, false, false, false);
-      AddPath(
+  case llvm::Triple::Win32:
+    {
+      std::string VSDir;
+      std::string WindowsSDKDir;
+      if (getVisualStudioDir(VSDir)) {
+        AddPath(VSDir + "\\VC\\include", System, false, false, false);
+        if (getWindowsSDKDir(WindowsSDKDir))
+          AddPath(WindowsSDKDir + "\\include", System, false, false, false);
+        else
+          AddPath(VSDir + "\\VC\\PlatformSDK\\Include",
+            System, false, false, false);
+      }
+      else {
+          // Default install paths.
+        AddPath("C:/Program Files/Microsoft Visual Studio 10.0/VC/include",
+          System, false, false, false);
+        AddPath("C:/Program Files/Microsoft Visual Studio 9.0/VC/include",
+          System, false, false, false);
+        AddPath(
         "C:/Program Files/Microsoft Visual Studio 9.0/VC/PlatformSDK/Include",
-        System, false, false, false);
-      AddPath("C:/Program Files/Microsoft Visual Studio 8/VC/include",
-              System, false, false, false);
-      AddPath(
+          System, false, false, false);
+        AddPath("C:/Program Files/Microsoft Visual Studio 8/VC/include",
+          System, false, false, false);
+        AddPath(
         "C:/Program Files/Microsoft Visual Studio 8/VC/PlatformSDK/Include",
-        System, false, false, false);
-      // For some clang developers.
-      AddPath("G:/Program Files/Microsoft Visual Studio 9.0/VC/include",
-              System, false, false, false);
-      AddPath(
+          System, false, false, false);
+          // For some clang developers.
+        AddPath("G:/Program Files/Microsoft Visual Studio 9.0/VC/include",
+          System, false, false, false);
+        AddPath(
         "G:/Program Files/Microsoft Visual Studio 9.0/VC/PlatformSDK/Include",
-        System, false, false, false);
+          System, false, false, false);
+      }
     }
     break;
-  }
   case llvm::Triple::Haiku:
     AddPath("/boot/common/include", System, true, false, false);
     AddPath("/boot/develop/headers/os", System, true, false, false);
@@ -704,10 +706,6 @@ AddDefaultCPlusPlusIncludePaths(const llvm::Triple &triple) {
                                 "i686-pc-linux-gnu", "", "", triple);
     AddGnuCPlusPlusIncludePaths("/usr/include/c++/4.3.1",
                                 "x86_64-unknown-linux-gnu", "", "", triple);
-    // Gentoo x86 2010.0 stable
-    AddGnuCPlusPlusIncludePaths(
-      "/usr/lib/gcc/i686-pc-linux-gnu/4.4.3/include/g++-v4",
-      "i686-pc-linux-gnu", "", "", triple);
     // Gentoo x86 2009.1 stable
     AddGnuCPlusPlusIncludePaths(
       "/usr/lib/gcc/i686-pc-linux-gnu/4.3.4/include/g++-v4",
@@ -776,13 +774,8 @@ AddDefaultCPlusPlusIncludePaths(const llvm::Triple &triple) {
 void InitHeaderSearch::AddDefaultSystemIncludePaths(const LangOptions &Lang,
                                                     const llvm::Triple &triple,
                                             const HeaderSearchOptions &HSOpts) {
-  if (Lang.CPlusPlus && HSOpts.UseStandardCXXIncludes) {
-    if (!HSOpts.CXXSystemIncludes.empty()) {
-      for (unsigned i = 0, e = HSOpts.CXXSystemIncludes.size(); i != e; ++i)
-        AddPath(HSOpts.CXXSystemIncludes[i], System, true, false, false);
-    } else
-      AddDefaultCPlusPlusIncludePaths(triple);
-  }
+  if (Lang.CPlusPlus && HSOpts.UseStandardCXXIncludes)
+    AddDefaultCPlusPlusIncludePaths(triple);
 
   AddDefaultCIncludePaths(triple, HSOpts);
 

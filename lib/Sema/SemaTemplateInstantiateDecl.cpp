@@ -251,6 +251,7 @@ Decl *TemplateDeclInstantiator::VisitTypedefDecl(TypedefDecl *D) {
 static bool InstantiateInitializationArguments(Sema &SemaRef,
                                                Expr **Args, unsigned NumArgs,
                            const MultiLevelTemplateArgumentList &TemplateArgs,
+                         llvm::SmallVectorImpl<SourceLocation> &FakeCommaLocs,
                            ASTOwningVector<Expr*> &InitArgs) {
   for (unsigned I = 0; I != NumArgs; ++I) {
     // When we hit the first defaulted argument, break out of the loop:
@@ -262,7 +263,12 @@ static bool InstantiateInitializationArguments(Sema &SemaRef,
     if (Arg.isInvalid())
       return true;
   
+    Expr *ArgExpr = (Expr *)Arg.get();
     InitArgs.push_back(Arg.release());
+    
+    // FIXME: We're faking all of the comma locations. Do we need them?
+    FakeCommaLocs.push_back(
+                          SemaRef.PP.getLocForEndOfToken(ArgExpr->getLocEnd()));
   }
   
   return false;
@@ -284,6 +290,7 @@ static bool InstantiateInitializationArguments(Sema &SemaRef,
 static bool InstantiateInitializer(Sema &S, Expr *Init,
                             const MultiLevelTemplateArgumentList &TemplateArgs,
                                    SourceLocation &LParenLoc,
+                               llvm::SmallVector<SourceLocation, 4> &CommaLocs,
                              ASTOwningVector<Expr*> &NewArgs,
                                    SourceLocation &RParenLoc) {
   NewArgs.clear();
@@ -307,7 +314,8 @@ static bool InstantiateInitializer(Sema &S, Expr *Init,
     RParenLoc = ParenList->getRParenLoc();
     return InstantiateInitializationArguments(S, ParenList->getExprs(),
                                               ParenList->getNumExprs(),
-                                              TemplateArgs, NewArgs);
+                                              TemplateArgs, CommaLocs, 
+                                              NewArgs);
   }
 
   if (CXXConstructExpr *Construct = dyn_cast<CXXConstructExpr>(Init)) {
@@ -315,12 +323,13 @@ static bool InstantiateInitializer(Sema &S, Expr *Init,
       if (InstantiateInitializationArguments(S,
                                              Construct->getArgs(),
                                              Construct->getNumArgs(),
-                                             TemplateArgs, NewArgs))
+                                             TemplateArgs,
+                                             CommaLocs, NewArgs))
         return true;
 
       // FIXME: Fake locations!
       LParenLoc = S.PP.getLocForEndOfToken(Init->getLocStart());
-      RParenLoc = LParenLoc;
+      RParenLoc = CommaLocs.empty()? LParenLoc : CommaLocs.back();
       return false;
     }
   }
@@ -349,12 +358,6 @@ Decl *TemplateDeclInstantiator::VisitVarDecl(VarDecl *D) {
   if (!DI)
     return 0;
 
-  if (DI->getType()->isFunctionType()) {
-    SemaRef.Diag(D->getLocation(), diag::err_variable_instantiates_to_function)
-      << D->isStaticDataMember() << DI->getType();
-    return 0;
-  }
-  
   // Build the instantiated declaration
   VarDecl *Var = VarDecl::Create(SemaRef.Context, Owner,
                                  D->getLocation(), D->getIdentifier(),
@@ -416,15 +419,17 @@ Decl *TemplateDeclInstantiator::VisitVarDecl(VarDecl *D) {
 
     // Instantiate the initializer.
     SourceLocation LParenLoc, RParenLoc;
+    llvm::SmallVector<SourceLocation, 4> CommaLocs;
     ASTOwningVector<Expr*> InitArgs(SemaRef);
     if (!InstantiateInitializer(SemaRef, D->getInit(), TemplateArgs, LParenLoc,
-                                InitArgs, RParenLoc)) {
+                                CommaLocs, InitArgs, RParenLoc)) {
       // Attach the initializer to the declaration.
       if (D->hasCXXDirectInitializer()) {
         // Add the direct initializer to the declaration.
         SemaRef.AddCXXDirectInitializerToDecl(Var,
                                               LParenLoc,
                                               move_arg(InitArgs),
+                                              CommaLocs.data(),
                                               RParenLoc);
       } else if (InitArgs.size() == 1) {
         Expr *Init = InitArgs.take()[0];
@@ -1035,8 +1040,7 @@ Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D,
 
   // Attach the parameters
   for (unsigned P = 0; P < Params.size(); ++P)
-    if (Params[P])
-      Params[P]->setOwningFunction(Function);
+    Params[P]->setOwningFunction(Function);
   Function->setParams(Params.data(), Params.size());
 
   SourceLocation InstantiateAtPOI;
@@ -1558,24 +1562,8 @@ Decl *TemplateDeclInstantiator::VisitUsingDirectiveDecl(UsingDirectiveDecl *D) {
 }
 
 Decl *TemplateDeclInstantiator::VisitUsingDecl(UsingDecl *D) {
-
-  // The nested name specifier may be dependent, for example
-  //     template <typename T> struct t {
-  //       struct s1 { T f1(); };
-  //       struct s2 : s1 { using s1::f1; };
-  //     };
-  //     template struct t<int>;
-  // Here, in using s1::f1, s1 refers to t<T>::s1;
-  // we need to substitute for t<int>::s1.
-  NestedNameSpecifier *NNS =
-      SemaRef.SubstNestedNameSpecifier(D->getTargetNestedNameDecl(),
-      D->getNestedNameRange(),
-      TemplateArgs);
-  if (!NNS)
-      return 0;
-
-  // The name info is non-dependent, so no transformation
-  // is required.
+  // The nested name specifier is non-dependent, so no transformation
+  // is required. The same holds for the name info.
   DeclarationNameInfo NameInfo = D->getNameInfo();
 
   // We only need to do redeclaration lookups if we're in a class
@@ -1589,12 +1577,12 @@ Decl *TemplateDeclInstantiator::VisitUsingDecl(UsingDecl *D) {
   UsingDecl *NewUD = UsingDecl::Create(SemaRef.Context, Owner,
                                        D->getNestedNameRange(),
                                        D->getUsingLocation(),
-                                       NNS,
+                                       D->getTargetNestedNameDecl(),
                                        NameInfo,
                                        D->isTypeName());
 
   CXXScopeSpec SS;
-  SS.setScopeRep(NNS);
+  SS.setScopeRep(D->getTargetNestedNameDecl());
   SS.setRange(D->getNestedNameRange());
 
   if (CheckRedeclaration) {
@@ -2012,9 +2000,10 @@ TemplateDeclInstantiator::InitMethodInstantiation(CXXMethodDecl *New,
   if (InitFunctionInstantiation(New, Tmpl))
     return true;
 
+  CXXRecordDecl *Record = cast<CXXRecordDecl>(Owner);
   New->setAccess(Tmpl->getAccess());
   if (Tmpl->isVirtualAsWritten())
-    New->setVirtualAsWritten(true);
+    Record->setMethodAsVirtual(New);
 
   // FIXME: attributes
   // FIXME: New needs a pointer to Tmpl
@@ -2292,10 +2281,11 @@ Sema::InstantiateMemInitializers(CXXConstructorDecl *New,
 
     SourceLocation LParenLoc, RParenLoc;
     ASTOwningVector<Expr*> NewArgs(*this);
+    llvm::SmallVector<SourceLocation, 4> CommaLocs;
 
     // Instantiate the initializer.
     if (InstantiateInitializer(*this, Init->getInit(), TemplateArgs, 
-                               LParenLoc, NewArgs, RParenLoc)) {
+                               LParenLoc, CommaLocs, NewArgs, RParenLoc)) {
       AnyErrors = true;
       continue;
     }

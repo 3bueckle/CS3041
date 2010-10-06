@@ -1,7 +1,5 @@
 set(LLVM_NO_RTTI 1)
 
-set(LLVM_USED_LIBS clangBasic clangAST clangLex clangAnalysis)
-
 add_clang_library(clangSema
   AnalysisBasedWarnings.cpp
   AttributeList.cpp

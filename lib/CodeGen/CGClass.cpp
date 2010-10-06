@@ -14,7 +14,6 @@
 #include "CGDebugInfo.h"
 #include "CodeGenFunction.h"
 #include "clang/AST/CXXInheritance.h"
-#include "clang/AST/EvaluatedExprVisitor.h"
 #include "clang/AST/RecordLayout.h"
 #include "clang/AST/StmtCXX.h"
 
@@ -335,29 +334,6 @@ namespace {
       CGF.EmitCXXDestructorCall(D, Dtor_Base, BaseIsVirtual, Addr);
     }
   };
-
-  /// A visitor which checks whether an initializer uses 'this' in a
-  /// way which requires the vtable to be properly set.
-  struct DynamicThisUseChecker : EvaluatedExprVisitor<DynamicThisUseChecker> {
-    typedef EvaluatedExprVisitor<DynamicThisUseChecker> super;
-
-    bool UsesThis;
-
-    DynamicThisUseChecker(ASTContext &C) : super(C), UsesThis(false) {}
-
-    // Black-list all explicit and implicit references to 'this'.
-    //
-    // Do we need to worry about external references to 'this' derived
-    // from arbitrary code?  If so, then anything which runs arbitrary
-    // external code might potentially access the vtable.
-    void VisitCXXThisExpr(CXXThisExpr *E) { UsesThis = true; }
-  };
-}
-
-static bool BaseInitializerUsesThis(ASTContext &C, const Expr *Init) {
-  DynamicThisUseChecker Checker(C);
-  Checker.Visit(const_cast<Expr*>(Init));
-  return Checker.UsesThis;
 }
 
 static void EmitBaseInitializer(CodeGenFunction &CGF, 
@@ -379,12 +355,6 @@ static void EmitBaseInitializer(CodeGenFunction &CGF,
   if (CtorType == Ctor_Base && isBaseVirtual)
     return;
 
-  // If the initializer for the base (other than the constructor
-  // itself) accesses 'this' in any way, we need to initialize the
-  // vtables.
-  if (BaseInitializerUsesThis(CGF.getContext(), BaseInit->getInit()))
-    CGF.InitializeVTablePointers(ClassDecl);
-
   // We can pretend to be a complete class because it only matters for
   // virtual bases, and we only do virtual bases for complete ctors.
   llvm::Value *V = 
@@ -392,9 +362,7 @@ static void EmitBaseInitializer(CodeGenFunction &CGF,
                                               BaseClassDecl,
                                               isBaseVirtual);
 
-  AggValueSlot AggSlot = AggValueSlot::forAddr(V, false, /*Lifetime*/ true);
-
-  CGF.EmitAggExpr(BaseInit->getInit(), AggSlot);
+  CGF.EmitAggExpr(BaseInit->getInit(), V, false, false, true);
   
   if (CGF.Exceptions && !BaseClassDecl->hasTrivialDestructor())
     CGF.EHStack.pushCleanup<CallBaseDtor>(EHCleanup, BaseClassDecl,
@@ -420,11 +388,11 @@ static void EmitAggMemberInitializer(CodeGenFunction &CGF,
       Next = CGF.Builder.CreateAdd(ArrayIndex, Next, "inc");
       CGF.Builder.CreateStore(Next, ArrayIndexVar);      
     }
-
-    AggValueSlot Slot = AggValueSlot::forAddr(Dest, LHS.isVolatileQualified(),
-                                              /*Lifetime*/ true);
     
-    CGF.EmitAggExpr(MemberInit->getInit(), Slot);
+    CGF.EmitAggExpr(MemberInit->getInit(), Dest, 
+                    LHS.isVolatileQualified(),
+                    /*IgnoreResult*/ false,
+                    /*IsInitializer*/ true);
     
     return;
   }

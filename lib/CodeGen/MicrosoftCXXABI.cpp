@@ -91,6 +91,8 @@ public:
   virtual void mangleCXXDtorThunk(const CXXDestructorDecl *DD, CXXDtorType Type,
                                   const ThisAdjustment &ThisAdjustment,
                                   llvm::SmallVectorImpl<char> &);
+  virtual void mangleGuardVariable(const VarDecl *D,
+                                   llvm::SmallVectorImpl<char> &);
   virtual void mangleCXXVTable(const CXXRecordDecl *RD,
                                llvm::SmallVectorImpl<char> &);
   virtual void mangleCXXVTT(const CXXRecordDecl *RD,
@@ -1172,6 +1174,10 @@ void MicrosoftMangleContext::mangleCXXDtorThunk(const CXXDestructorDecl *DD,
                                                 const ThisAdjustment &,
                                                 llvm::SmallVectorImpl<char> &) {
   assert(false && "Can't yet mangle destructor thunks!");
+}
+void MicrosoftMangleContext::mangleGuardVariable(const VarDecl *D,
+                                                 llvm::SmallVectorImpl<char> &) {
+  assert(false && "Can't yet mangle guard variables!");
 }
 void MicrosoftMangleContext::mangleCXXVTable(const CXXRecordDecl *RD,
                                              llvm::SmallVectorImpl<char> &) {

@@ -112,8 +112,6 @@ class AccessSpecDecl : public Decl {
     : Decl(AccessSpec, DC, ASLoc), ColonLoc(ColonLoc) {
     setAccess(AS);
   }
-  AccessSpecDecl(EmptyShell Empty)
-    : Decl(AccessSpec, Empty) { }
 public:
   /// getAccessSpecifierLoc - The location of the access specifier.
   SourceLocation getAccessSpecifierLoc() const { return getLocation(); }
@@ -133,9 +131,6 @@ public:
                                 DeclContext *DC, SourceLocation ASLoc,
                                 SourceLocation ColonLoc) {
     return new (C) AccessSpecDecl(AS, DC, ASLoc, ColonLoc);
-  }
-  static AccessSpecDecl *Create(ASTContext &C, EmptyShell Empty) {
-    return new (C) AccessSpecDecl(Empty);
   }
 
   // Implement isa/cast/dyncast/etc.
@@ -404,18 +399,6 @@ class CXXRecordDecl : public RecordDecl {
   void CheckConversionFunction(NamedDecl *D);
 #endif
   
-  friend class DeclContext;
-  
-  /// \brief Notify the class that member has been added.
-  ///
-  /// This routine helps maintain information about the class based on which 
-  /// members have been added. It will be invoked by DeclContext::addDecl()
-  /// whenever a member is added to this record.
-  void addedMember(Decl *D);
-
-  void markedVirtualFunctionPure();
-  friend void FunctionDecl::setPure(bool);
-  
 protected:
   CXXRecordDecl(Kind K, TagKind TK, DeclContext *DC,
                 SourceLocation L, IdentifierInfo *Id,
@@ -570,6 +553,12 @@ public:
     return data().DeclaredDefaultConstructor;
   }
   
+  /// \brief Note whether this class has already had its default constructor 
+  /// implicitly declared or doesn't need one.
+  void setDeclaredDefaultConstructor(bool DDC) {
+    data().DeclaredDefaultConstructor = DDC;
+  }
+  
   /// hasConstCopyConstructor - Determines whether this class has a
   /// copy constructor that accepts a const-qualified argument.
   bool hasConstCopyConstructor(ASTContext &Context) const;
@@ -590,6 +579,11 @@ public:
   /// a unique copy-assignment operator could not be found.
   CXXMethodDecl *getCopyAssignmentOperator(bool ArgIsConst) const;
   
+  /// addedConstructor - Notify the class that another constructor has
+  /// been added. This routine helps maintain information about the
+  /// class based on which constructors have been added.
+  void addedConstructor(ASTContext &Context, CXXConstructorDecl *ConDecl);
+
   /// hasUserDeclaredConstructor - Whether this class has any
   /// user-declared constructors. When true, a default constructor
   /// will not be implicitly declared.
@@ -612,6 +606,17 @@ public:
     return data().DeclaredCopyConstructor;
   }
   
+  /// \brief Note whether this class has already had its copy constructor 
+  /// declared.
+  void setDeclaredCopyConstructor(bool DCC) {
+    data().DeclaredCopyConstructor = DCC;
+  }
+  
+  /// addedAssignmentOperator - Notify the class that another assignment
+  /// operator has been added. This routine helps maintain information about the
+  /// class based on which operators have been added.
+  void addedAssignmentOperator(ASTContext &Context, CXXMethodDecl *OpDecl);
+
   /// hasUserDeclaredCopyAssignment - Whether this class has a
   /// user-declared copy assignment operator. When false, a copy
   /// assigment operator will be implicitly declared.
@@ -627,6 +632,12 @@ public:
     return data().DeclaredCopyAssignment;
   }
   
+  /// \brief Note whether this class has already had its copy assignment 
+  /// operator declared.
+  void setDeclaredCopyAssignment(bool DCA) {
+    data().DeclaredCopyAssignment = DCA;
+  }
+  
   /// hasUserDeclaredDestructor - Whether this class has a
   /// user-declared destructor. When false, a destructor will be
   /// implicitly declared.
@@ -634,11 +645,25 @@ public:
     return data().UserDeclaredDestructor;
   }
 
+  /// setUserDeclaredDestructor - Set whether this class has a
+  /// user-declared destructor. If not set by the time the class is
+  /// fully defined, a destructor will be implicitly declared.
+  void setUserDeclaredDestructor(bool UCD) {
+    data().UserDeclaredDestructor = UCD;
+    if (UCD)
+      data().DeclaredDestructor = true;
+  }
+
   /// \brief Determine whether this class has had its destructor declared,
   /// either via the user or via an implicit declaration.
   ///
   /// This value is used for lazy creation of destructors.
   bool hasDeclaredDestructor() const { return data().DeclaredDestructor; }
+  
+  /// \brief Note whether this class has already had its destructor declared.
+  void setDeclaredDestructor(bool DD) {
+    data().DeclaredDestructor = DD;
+  }
   
   /// getConversions - Retrieve the overload set containing all of the
   /// conversion functions in this class.
@@ -657,6 +682,13 @@ public:
     return getConversionFunctions()->end();
   }
 
+  /// Replaces a conversion function with a new declaration.
+  ///
+  /// Returns true if the old conversion was found.
+  bool replaceConversion(const NamedDecl* Old, NamedDecl *New) {
+    return getConversionFunctions()->replace(Old, New);
+  }
+
   /// Removes a conversion function from this class.  The conversion
   /// function must currently be a member of this class.  Furthermore,
   /// this class must currently be in the process of being defined.
@@ -666,11 +698,31 @@ public:
   /// in current class; including conversion function templates.
   const UnresolvedSetImpl *getVisibleConversionFunctions();
 
+  /// addConversionFunction - Registers a conversion function which
+  /// this class declares directly.
+  void addConversionFunction(NamedDecl *Decl) {
+#ifndef NDEBUG
+    CheckConversionFunction(Decl);
+#endif
+
+    // We intentionally don't use the decl's access here because it
+    // hasn't been set yet.  That's really just a misdesign in Sema.
+    data().Conversions.addDecl(Decl);
+  }
+
   /// isAggregate - Whether this class is an aggregate (C++
   /// [dcl.init.aggr]), which is a class with no user-declared
   /// constructors, no private or protected non-static data members,
   /// no base classes, and no virtual functions (C++ [dcl.init.aggr]p1).
   bool isAggregate() const { return data().Aggregate; }
+
+  /// setAggregate - Set whether this class is an aggregate (C++
+  /// [dcl.init.aggr]).
+  void setAggregate(bool Agg) { data().Aggregate = Agg; }
+
+  /// setMethodAsVirtual - Make input method virtual and set the necesssary 
+  /// special function bits and other bits accordingly.
+  void setMethodAsVirtual(FunctionDecl *Method);
 
   /// isPOD - Whether this class is a POD-type (C++ [class]p4), which is a class
   /// that is an aggregate that has no non-static non-POD data members, no
@@ -678,28 +730,51 @@ public:
   /// user-defined destructor.
   bool isPOD() const { return data().PlainOldData; }
 
+  /// setPOD - Set whether this class is a POD-type (C++ [class]p4).
+  void setPOD(bool POD) { data().PlainOldData = POD; }
+
   /// isEmpty - Whether this class is empty (C++0x [meta.unary.prop]), which
   /// means it has a virtual function, virtual base, data member (other than
   /// 0-width bit-field) or inherits from a non-empty class. Does NOT include
   /// a check for union-ness.
   bool isEmpty() const { return data().Empty; }
 
+  /// Set whether this class is empty (C++0x [meta.unary.prop])
+  void setEmpty(bool Emp) { data().Empty = Emp; }
+
   /// isPolymorphic - Whether this class is polymorphic (C++ [class.virtual]),
   /// which means that the class contains or inherits a virtual function.
   bool isPolymorphic() const { return data().Polymorphic; }
+
+  /// setPolymorphic - Set whether this class is polymorphic (C++
+  /// [class.virtual]).
+  void setPolymorphic(bool Poly) { data().Polymorphic = Poly; }
 
   /// isAbstract - Whether this class is abstract (C++ [class.abstract]),
   /// which means that the class contains or inherits a pure virtual function.
   bool isAbstract() const { return data().Abstract; }
 
+  /// setAbstract - Set whether this class is abstract (C++ [class.abstract])
+  void setAbstract(bool Abs) { data().Abstract = Abs; }
+
   // hasTrivialConstructor - Whether this class has a trivial constructor
   // (C++ [class.ctor]p5)
   bool hasTrivialConstructor() const { return data().HasTrivialConstructor; }
+
+  // setHasTrivialConstructor - Set whether this class has a trivial constructor
+  // (C++ [class.ctor]p5)
+  void setHasTrivialConstructor(bool TC) { data().HasTrivialConstructor = TC; }
 
   // hasTrivialCopyConstructor - Whether this class has a trivial copy
   // constructor (C++ [class.copy]p6)
   bool hasTrivialCopyConstructor() const {
     return data().HasTrivialCopyConstructor;
+  }
+
+  // setHasTrivialCopyConstructor - Set whether this class has a trivial
+  // copy constructor (C++ [class.copy]p6)
+  void setHasTrivialCopyConstructor(bool TC) {
+    data().HasTrivialCopyConstructor = TC;
   }
 
   // hasTrivialCopyAssignment - Whether this class has a trivial copy
@@ -708,9 +783,19 @@ public:
     return data().HasTrivialCopyAssignment;
   }
 
+  // setHasTrivialCopyAssignment - Set whether this class has a
+  // trivial copy assignment operator (C++ [class.copy]p11)
+  void setHasTrivialCopyAssignment(bool TC) {
+    data().HasTrivialCopyAssignment = TC;
+  }
+
   // hasTrivialDestructor - Whether this class has a trivial destructor
   // (C++ [class.dtor]p3)
   bool hasTrivialDestructor() const { return data().HasTrivialDestructor; }
+
+  // setHasTrivialDestructor - Set whether this class has a trivial destructor
+  // (C++ [class.dtor]p3)
+  void setHasTrivialDestructor(bool TC) { data().HasTrivialDestructor = TC; }
 
   /// \brief If this record is an instantiation of a member class,
   /// retrieves the member class from which it was instantiated.
@@ -769,6 +854,9 @@ public:
   
   /// \brief Set the kind of specialization or template instantiation this is.
   void setTemplateSpecializationKind(TemplateSpecializationKind TSK);
+  
+  /// getDefaultConstructor - Returns the default constructor for this class
+  CXXConstructorDecl *getDefaultConstructor();
 
   /// getDestructor - Returns the destructor decl for this class.
   CXXDestructorDecl *getDestructor() const;
@@ -960,27 +1048,6 @@ public:
     return (PathAccess > DeclAccess ? PathAccess : DeclAccess);
   }
 
-  /// \brief Indicates that the definition of this class is now complete.
-  virtual void completeDefinition();
-
-  /// \brief Indicates that the definition of this class is now complete, 
-  /// and provides a final overrider map to help determine
-  /// 
-  /// \param FinalOverriders The final overrider map for this class, which can
-  /// be provided as an optimization for abstract-class checking. If NULL,
-  /// final overriders will be computed if they are needed to complete the
-  /// definition.
-  void completeDefinition(CXXFinalOverriderMap *FinalOverriders);
-  
-  /// \brief Determine whether this class may end up being abstract, even though
-  /// it is not yet known to be abstract.
-  ///
-  /// \returns true if this class is not known to be abstract but has any
-  /// base classes that are abstract. In this case, \c completeDefinition()
-  /// will need to compute final overriders to determine whether the class is
-  /// actually abstract.
-  bool mayBeAbstract() const;
-  
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
   static bool classofKind(Kind K) {
     return K >= firstCXXRecord && K <= lastCXXRecord;
@@ -1393,23 +1460,6 @@ public:
   /// end() - Retrieve an iterator past the last initializer.
   init_const_iterator init_end() const {
     return BaseOrMemberInitializers + NumBaseOrMemberInitializers;
-  }
-
-  typedef std::reverse_iterator<init_iterator> init_reverse_iterator;
-  typedef std::reverse_iterator<init_const_iterator> init_const_reverse_iterator;
-
-  init_reverse_iterator init_rbegin() {
-    return init_reverse_iterator(init_end());
-  }
-  init_const_reverse_iterator init_rbegin() const {
-    return init_const_reverse_iterator(init_end());
-  }
-
-  init_reverse_iterator init_rend() {
-    return init_reverse_iterator(init_begin());
-  }
-  init_const_reverse_iterator init_rend() const {
-    return init_const_reverse_iterator(init_begin());
   }
 
   /// getNumArgs - Determine the number of arguments used to

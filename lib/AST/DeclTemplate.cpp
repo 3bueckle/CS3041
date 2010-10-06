@@ -92,7 +92,7 @@ RedeclarableTemplateDecl::CommonBase *RedeclarableTemplateDecl::getCommonPtr() {
   RedeclarableTemplateDecl *First = getCanonicalDecl();
 
   if (First->CommonOrPrev.isNull()) {
-    CommonBase *CommonPtr = First->newCommon(getASTContext());
+    CommonBase *CommonPtr = First->newCommon();
     First->CommonOrPrev = CommonPtr;
     CommonPtr->Latest = First;
   }
@@ -156,10 +156,9 @@ FunctionTemplateDecl *FunctionTemplateDecl::Create(ASTContext &C,
   return new (C) FunctionTemplateDecl(DC, L, Name, Params, Decl);
 }
 
-RedeclarableTemplateDecl::CommonBase *
-FunctionTemplateDecl::newCommon(ASTContext &C) {
-  Common *CommonPtr = new (C) Common;
-  C.AddDeallocation(DeallocateCommon, CommonPtr);
+RedeclarableTemplateDecl::CommonBase *FunctionTemplateDecl::newCommon() {
+  Common *CommonPtr = new (getASTContext()) Common;
+  getASTContext().AddDeallocation(DeallocateCommon, CommonPtr);
   return CommonPtr;
 }
 
@@ -189,10 +188,9 @@ ClassTemplateDecl *ClassTemplateDecl::Create(ASTContext &C,
   return New;
 }
 
-RedeclarableTemplateDecl::CommonBase *
-ClassTemplateDecl::newCommon(ASTContext &C) {
-  Common *CommonPtr = new (C) Common;
-  C.AddDeallocation(DeallocateCommon, CommonPtr);
+RedeclarableTemplateDecl::CommonBase *ClassTemplateDecl::newCommon() {
+  Common *CommonPtr = new (getASTContext()) Common;
+  getASTContext().AddDeallocation(DeallocateCommon, CommonPtr);
   return CommonPtr;
 }
 
@@ -575,6 +573,19 @@ ClassTemplatePartialSpecializationDecl *
 ClassTemplatePartialSpecializationDecl::Create(ASTContext &Context,
                                                EmptyShell Empty) {
   return new (Context)ClassTemplatePartialSpecializationDecl();
+}
+
+void ClassTemplatePartialSpecializationDecl::
+initTemplateArgsAsWritten(const TemplateArgumentListInfo &ArgInfos) {
+  assert(ArgsAsWritten == 0 && "ArgsAsWritten already set");
+  unsigned N = ArgInfos.size();
+  TemplateArgumentLoc *ClonedArgs
+    = new (getASTContext()) TemplateArgumentLoc[N];
+  for (unsigned I = 0; I != N; ++I)
+    ClonedArgs[I] = ArgInfos[I];
+  
+  ArgsAsWritten = ClonedArgs;
+  NumArgsAsWritten = N;
 }
 
 //===----------------------------------------------------------------------===//

@@ -21,7 +21,6 @@ clang_defaultSaveOptions
 clang_disposeCodeCompleteResults
 clang_disposeDiagnostic
 clang_disposeIndex
-clang_disposeOverriddenCursors
 clang_disposeString
 clang_disposeTokens
 clang_disposeTranslationUnit
@@ -42,17 +41,14 @@ clang_getCompletionPriority
 clang_getCursor
 clang_getCursorAvailability
 clang_getCursorDefinition
-clang_getCursorDisplayName
 clang_getCursorExtent
 clang_getCursorKind
 clang_getCursorKindSpelling
 clang_getCursorLanguage
-clang_getCursorLexicalParent
 clang_getCursorLinkage
 clang_getCursorLocation
 clang_getCursorReferenced
 clang_getCursorResultType
-clang_getCursorSemanticParent
 clang_getCursorSpelling
 clang_getCursorType
 clang_getCursorUSR
@@ -77,9 +73,6 @@ clang_getNullLocation
 clang_getNullRange
 clang_getNumCompletionChunks
 clang_getNumDiagnostics
-clang_getNumOverloadedDecls
-clang_getOverloadedDecl
-clang_getOverriddenCursors
 clang_getPointeeType
 clang_getRange
 clang_getRangeEnd

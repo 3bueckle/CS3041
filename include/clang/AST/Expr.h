@@ -253,7 +253,7 @@ public:
     bool isRValue() const { return Kind >= CL_XValue; }
     bool isModifiable() const { return getModifiable() == CM_Modifiable; }
   };
-  /// \brief Classify - Classify this expression according to the C++0x
+  /// \brief classify - Classify this expression according to the C++0x
   ///        expression taxonomy.
   ///
   /// C++0x defines ([basic.lval]) a new taxonomy of expressions to replace the
@@ -269,7 +269,7 @@ public:
     return ClassifyImpl(Ctx, 0);
   }
 
-  /// \brief ClassifyModifiable - Classify this expression according to the
+  /// \brief classifyModifiable - Classify this expression according to the
   ///        C++0x expression taxonomy, and see if it is valid on the left side
   ///        of an assignment.
   ///
@@ -367,7 +367,7 @@ public:
   bool isEvaluatable(ASTContext &Ctx) const;
 
   /// HasSideEffects - This routine returns true for all those expressions
-  /// which must be evaluated each time and must not be optimized away 
+  /// which must be evaluated each time and must not be optimization away 
   /// or evaluated at compile time. Example is a function call, volatile
   /// variable read.
   bool HasSideEffects(ASTContext &Ctx) const;
@@ -408,16 +408,6 @@ public:
   /// write barrier.
   bool isOBJCGCCandidate(ASTContext &Ctx) const;
 
-  /// \brief Result type of CanThrow().
-  enum CanThrowResult {
-    CT_Cannot,
-    CT_Dependent,
-    CT_Can
-  };
-  /// \brief Test if this expression, if evaluated, might throw, according to
-  ///        the rules of C++ [expr.unary.noexcept].
-  CanThrowResult CanThrow(ASTContext &C) const;
-
   /// IgnoreParens - Ignore parentheses.  If this Expr is a ParenExpr, return
   ///  its subexpression.  If that subexpression is also a ParenExpr,
   ///  then this method recursively returns its subexpression, and so forth.
@@ -431,10 +421,6 @@ public:
   /// IgnoreParenImpCasts - Ignore parentheses and implicit casts.  Strip off any
   /// ParenExpr or ImplicitCastExprs, returning their operand.
   Expr *IgnoreParenImpCasts();
-
-  const Expr *IgnoreParenImpCasts() const {
-    return const_cast<Expr*>(this)->IgnoreParenImpCasts();
-  }
 
   /// IgnoreParenNoopCasts - Ignore parentheses and casts that do not change the
   /// value (including ptr->int casts of the same size).  Strip off any
@@ -450,9 +436,14 @@ public:
   /// the expression is a default argument.
   bool isDefaultArgument() const;
   
-  /// \brief Determine whether the result of this expression is a
-  /// temporary object of the given class type.
-  bool isTemporaryObject(ASTContext &Ctx, const CXXRecordDecl *TempTy) const;
+  /// \brief Determine whether this expression directly creates a
+  /// temporary object (of class type).
+  bool isTemporaryObject() const { return getTemporaryObject() != 0; }
+
+  /// \brief If this expression directly creates a temporary object of
+  /// class type, return the expression that actually constructs that
+  /// temporary object.
+  const Expr *getTemporaryObject() const;
 
   const Expr *IgnoreParens() const {
     return const_cast<Expr*>(this)->IgnoreParens();
@@ -2300,7 +2291,6 @@ public:
   static OverloadedOperatorKind getOverloadedOperator(Opcode Opc);
 
   /// predicates to categorize the respective opcodes.
-  bool isPtrMemOp() const { return Opc == BO_PtrMemD || Opc == BO_PtrMemI; }
   bool isMultiplicativeOp() const { return Opc >= BO_Mul && Opc <= BO_Rem; }
   static bool isAdditiveOp(Opcode Opc) { return Opc == BO_Add || Opc==BO_Sub; }
   bool isAdditiveOp() const { return isAdditiveOp(getOpcode()); }
@@ -2434,7 +2424,7 @@ public:
   // getTrueExpr - Return the subexpression representing the value of the ?:
   //  expression if the condition evaluates to true.  
   Expr *getTrueExpr() const {
-    return cast<Expr>(SubExprs[LHS]);
+    return cast<Expr>(!Save ? SubExprs[LHS] : SubExprs[COND]);
   }
 
   // getFalseExpr - Return the subexpression representing the value of the ?:

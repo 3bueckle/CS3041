@@ -2325,12 +2325,10 @@ static OverloadingResult TryRefInitWithConversionFunction(Sema &S,
         if (ConstructorTmpl)
           S.AddTemplateOverloadCandidate(ConstructorTmpl, FoundDecl,
                                          /*ExplicitArgs*/ 0,
-                                         &Initializer, 1, CandidateSet,
-                                         /*SuppressUserConversions=*/true);
+                                         &Initializer, 1, CandidateSet);
         else
           S.AddOverloadCandidate(Constructor, FoundDecl,
-                                 &Initializer, 1, CandidateSet,
-                                 /*SuppressUserConversions=*/true);
+                                 &Initializer, 1, CandidateSet);
       }
     }    
   }
@@ -2391,7 +2389,7 @@ static OverloadingResult TryRefInitWithConversionFunction(Sema &S,
   // Perform overload resolution. If it fails, return the failed result.  
   OverloadCandidateSet::iterator Best;
   if (OverloadingResult Result 
-        = CandidateSet.BestViableFunction(S, DeclLoc, Best, true))
+        = CandidateSet.BestViableFunction(S, DeclLoc, Best))
     return Result;
 
   FunctionDecl *Function = Best->Function;
@@ -2983,7 +2981,7 @@ static void TryUserDefinedConversion(Sema &S,
   // Perform overload resolution. If it fails, return the failed result.  
   OverloadCandidateSet::iterator Best;
   if (OverloadingResult Result
-        = CandidateSet.BestViableFunction(S, DeclLoc, Best, true)) {
+        = CandidateSet.BestViableFunction(S, DeclLoc, Best)) {
     Sequence.SetOverloadFailure(
                         InitializationSequence::FK_UserConversionOverloadFailed, 
                                 Result);
@@ -3278,10 +3276,10 @@ static bool shouldDestroyTemporary(const InitializedEntity &Entity) {
 /// a temporary object, or an error expression if a copy could not be
 /// created.
 static ExprResult CopyObject(Sema &S,
-                             QualType T,
-                             const InitializedEntity &Entity,
-                             ExprResult CurInit,
-                             bool IsExtraneousCopy) {
+                                         QualType T,
+                                         const InitializedEntity &Entity,
+                                         ExprResult CurInit,
+                                         bool IsExtraneousCopy) {
   // Determine which class type we're copying to.
   Expr *CurInitExpr = (Expr *)CurInit.get();
   CXXRecordDecl *Class = 0; 
@@ -3305,7 +3303,8 @@ static ExprResult CopyObject(Sema &S,
   // elision for return statements and throw expressions are handled as part
   // of constructor initialization, while copy elision for exception handlers 
   // is handled by the run-time.
-  bool Elidable = CurInitExpr->isTemporaryObject(S.Context, Class);
+  bool Elidable = CurInitExpr->isTemporaryObject() &&
+     S.Context.hasSameUnqualifiedType(T, CurInitExpr->getType());
   SourceLocation Loc;
   switch (Entity.getKind()) {
   case InitializedEntity::EK_Result:
@@ -3844,14 +3843,10 @@ InitializationSequence::Perform(Sema &S,
         unsigned NumExprs = ConstructorArgs.size();
         Expr **Exprs = (Expr **)ConstructorArgs.take();
         S.MarkDeclarationReferenced(Loc, Constructor);
-            
-        TypeSourceInfo *TSInfo = Entity.getTypeSourceInfo();
-        if (!TSInfo)
-          TSInfo = S.Context.getTrivialTypeSourceInfo(Entity.getType(), Loc);
-            
         CurInit = S.Owned(new (S.Context) CXXTemporaryObjectExpr(S.Context,
                                                                  Constructor,
-                                                                 TSInfo,
+                                                              Entity.getType(),
+                                                                 Loc,
                                                                  Exprs, 
                                                                  NumExprs,
                                                 Kind.getParenRange().getEnd(),
@@ -3906,14 +3901,8 @@ InitializationSequence::Perform(Sema &S,
       } else if (Kind.getKind() == InitializationKind::IK_Value &&
                  S.getLangOptions().CPlusPlus &&
                  !Kind.isImplicitValueInit()) {
-        TypeSourceInfo *TSInfo = Entity.getTypeSourceInfo();
-        if (!TSInfo)
-          TSInfo = S.Context.getTrivialTypeSourceInfo(Step->Type, 
-                                                    Kind.getRange().getBegin());
-
-        CurInit = S.Owned(new (S.Context) CXXScalarValueInitExpr(
-                              TSInfo->getType().getNonLValueExprType(S.Context),
-                                                                 TSInfo,
+        CurInit = S.Owned(new (S.Context) CXXScalarValueInitExpr(Step->Type,
+                                                   Kind.getRange().getBegin(),
                                                     Kind.getRange().getEnd()));
       } else {
         CurInit = S.Owned(new (S.Context) ImplicitValueInitExpr(Step->Type));
@@ -4034,8 +4023,7 @@ bool InitializationSequence::Diagnose(Sema &S,
         << Args[0]->getSourceRange();
       OverloadCandidateSet::iterator Best;
       OverloadingResult Ovl
-        = FailedCandidateSet.BestViableFunction(S, Kind.getLocation(), Best,
-                                                true);
+        = FailedCandidateSet.BestViableFunction(S, Kind.getLocation(), Best);
       if (Ovl == OR_Deleted) {
         S.Diag(Best->Function->getLocation(), diag::note_unavailable_here)
           << Best->Function->isDeleted();
@@ -4096,18 +4084,13 @@ bool InitializationSequence::Diagnose(Sema &S,
     SourceRange R;
 
     if (InitListExpr *InitList = dyn_cast<InitListExpr>(Args[0]))
-      R = SourceRange(InitList->getInit(0)->getLocEnd(),
+      R = SourceRange(InitList->getInit(1)->getLocStart(),
                       InitList->getLocEnd());
-    else  
-      R = SourceRange(Args[0]->getLocEnd(), Args[NumArgs - 1]->getLocEnd());
-
-    R.setBegin(S.PP.getLocForEndOfToken(R.getBegin()));
-    if (Kind.isCStyleOrFunctionalCast())
-      S.Diag(Kind.getLocation(), diag::err_builtin_func_cast_more_than_one_arg)
-        << R;
     else
-      S.Diag(Kind.getLocation(), diag::err_excess_initializers)
-        << /*scalar=*/2 << R;
+      R = SourceRange(Args[0]->getLocStart(), Args[NumArgs - 1]->getLocEnd());
+
+    S.Diag(Kind.getLocation(), diag::err_excess_initializers)
+      << /*scalar=*/2 << R;
     break;
   }
 

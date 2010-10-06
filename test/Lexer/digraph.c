@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -fsyntax-only -verify -ffreestanding %s
+// RUN: %clang_cc1 -fsyntax-only -verify < %s
 
 %:include <stdint.h>
 

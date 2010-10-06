@@ -991,7 +991,6 @@ public:
   void insertNextClassCategory() {
     NextClassCategory = ClassInterface->getCategoryList();
     ClassInterface->setCategoryList(this);
-    ClassInterface->setChangedSinceDeserialization(true);
   }
 
   bool IsClassExtension() const { return getIdentifier() == 0; }

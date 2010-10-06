@@ -120,8 +120,6 @@ public:
   void SetEmittedTokensOnThisLine() { EmittedTokensOnThisLine = true; }
   bool hasEmittedTokensOnThisLine() const { return EmittedTokensOnThisLine; }
 
-  bool StartNewLineIfNeeded();
-  
   virtual void FileChanged(SourceLocation Loc, FileChangeReason Reason,
                            SrcMgr::CharacteristicKind FileType);
   virtual void Ident(SourceLocation Loc, const std::string &str);
@@ -140,7 +138,7 @@ public:
     return ConcatInfo.AvoidConcat(PrevPrevTok, PrevTok, Tok);
   }
   void WriteLineInfo(unsigned LineNo, const char *Extra=0, unsigned ExtraLen=0);
-  bool LineMarkersAreDisabled() const { return DisableLineMarkers; }
+
   void HandleNewlinesInToken(const char *TokStr, unsigned Len);
 
   /// MacroDefined - This hook is called whenever a macro definition is seen.
@@ -164,11 +162,11 @@ void PrintPPOutputPPCallbacks::WriteLineInfo(unsigned LineNo,
   // Emit #line directives or GNU line markers depending on what mode we're in.
   if (UseLineDirective) {
     OS << "#line" << ' ' << LineNo << ' ' << '"';
-    OS.write(CurFilename.data(), CurFilename.size());
+    OS.write(&CurFilename[0], CurFilename.size());
     OS << '"';
   } else {
     OS << '#' << ' ' << LineNo << ' ' << '"';
-    OS.write(CurFilename.data(), CurFilename.size());
+    OS.write(&CurFilename[0], CurFilename.size());
     OS << '"';
 
     if (ExtraLen)
@@ -215,17 +213,6 @@ bool PrintPPOutputPPCallbacks::MoveToLine(unsigned LineNo) {
   return true;
 }
 
-bool PrintPPOutputPPCallbacks::StartNewLineIfNeeded() {
-  if (EmittedTokensOnThisLine || EmittedMacroOnThisLine) {
-    OS << '\n';
-    EmittedTokensOnThisLine = false;
-    EmittedMacroOnThisLine = false;
-    ++CurLine;
-    return true;
-  }
-  
-  return false;
-}
 
 /// FileChanged - Whenever the preprocessor enters or exits a #include file
 /// it invokes this handler.  Update our conception of the current source
@@ -276,7 +263,6 @@ void PrintPPOutputPPCallbacks::FileChanged(SourceLocation Loc,
   // predefines buffer.
   if (DumpHeaderIncludes && HasProcessedPredefines &&
       Reason == PPCallbacks::EnterFile) {
-    // Write to a temporary string to avoid unnecessary flushing on errs().
     llvm::SmallString<256> Msg;
     llvm::raw_svector_ostream OS(Msg);
     for (unsigned i = 0; i != CurrentIncludeDepth; ++i)
@@ -451,14 +437,12 @@ struct UnknownPragmaHandler : public PragmaHandler {
 
   UnknownPragmaHandler(const char *prefix, PrintPPOutputPPCallbacks *callbacks)
     : Prefix(prefix), Callbacks(callbacks) {}
-  virtual void HandlePragma(Preprocessor &PP, PragmaIntroducerKind Introducer,
-                            Token &PragmaTok) {
+  virtual void HandlePragma(Preprocessor &PP, Token &PragmaTok) {
     // Figure out what line we went to and insert the appropriate number of
     // newline characters.
-    Callbacks->StartNewLineIfNeeded();
     Callbacks->MoveToLine(PragmaTok.getLocation());
     Callbacks->OS.write(Prefix, strlen(Prefix));
-    Callbacks->SetEmittedTokensOnThisLine();
+
     // Read and print all of the pragma tokens.
     while (PragmaTok.isNot(tok::eom)) {
       if (PragmaTok.hasLeadingSpace())
@@ -467,7 +451,7 @@ struct UnknownPragmaHandler : public PragmaHandler {
       Callbacks->OS.write(&TokSpell[0], TokSpell.size());
       PP.LexUnexpandedToken(PragmaTok);
     }
-    Callbacks->StartNewLineIfNeeded();
+    Callbacks->OS << '\n';
   }
 };
 } // end anonymous namespace

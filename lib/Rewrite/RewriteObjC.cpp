@@ -962,10 +962,6 @@ void RewriteObjC::RewriteProtocolDecl(ObjCProtocolDecl *PDecl) {
        I != E; ++I)
     RewriteMethodDeclaration(*I);
 
-  for (ObjCInterfaceDecl::prop_iterator I = PDecl->prop_begin(),
-       E = PDecl->prop_end(); I != E; ++I)
-    RewriteProperty(*I);
-  
   // Lastly, comment out the @end.
   SourceLocation LocEnd = PDecl->getAtEndRange().getBegin();
   ReplaceText(LocEnd, strlen("@end"), "/* @end */");
@@ -2108,10 +2104,6 @@ bool RewriteObjC::needToScanForQualifiers(QualType T) {
   if (T->isObjCObjectPointerType()) {
     T = T->getPointeeType();
     return T->isObjCQualifiedInterfaceType();
-  }
-  if (T->isArrayType()) {
-    QualType ElemTy = Context->getBaseElementType(T);
-    return needToScanForQualifiers(ElemTy);
   }
   return false;
 }
@@ -4381,12 +4373,6 @@ void RewriteObjC::SynthesizeBlockLiterals(SourceLocation FunLocStart,
         BlockByRefDeclsPtrSet.insert(VD);
         BlockByRefDecls.push_back(VD);
       }
-      // imported objects in the inner blocks not used in the outer
-      // blocks must be copied/disposed in the outer block as well.
-      if (Exp->isByRef() ||
-          VD->getType()->isObjCObjectPointerType() || 
-          VD->getType()->isBlockPointerType())
-        ImportedBlockDecls.insert(VD);
     }
 
     std::string ImplTag = "__" + FunName.str() + "_block_impl_" + utostr(i);

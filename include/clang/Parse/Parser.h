@@ -34,8 +34,7 @@ namespace clang {
   class Parser;
   class PragmaUnusedHandler;
   class ColonProtectionRAIIObject;
-  class InMessageExpressionRAIIObject;
-  
+
 /// PrettyStackTraceParserEntry - If a crash happens while the parser is active,
 /// an entry is printed for it.
 class PrettyStackTraceParserEntry : public llvm::PrettyStackTraceEntry {
@@ -76,7 +75,6 @@ namespace prec {
 class Parser : public CodeCompletionHandler {
   friend class PragmaUnusedHandler;
   friend class ColonProtectionRAIIObject;
-  friend class InMessageExpressionRAIIObject;
   friend class ParenBraceBracketBalancer;
   PrettyStackTraceParserEntry CrashInfo;
 
@@ -133,13 +131,6 @@ class Parser : public CodeCompletionHandler {
   /// ColonProtectionRAIIObject RAII object.
   bool ColonIsSacred;
 
-  /// \brief When true, we are directly inside an Ojective-C messsage 
-  /// send expression.
-  ///
-  /// This is managed by the \c InMessageExpressionRAIIObject class, and
-  /// should not be set directly.
-  bool InMessageExpression;
-  
   /// The "depth" of the template parameters currently being parsed.
   unsigned TemplateParameterDepth;
 
@@ -473,13 +464,6 @@ private:
                         const char *DiagMsg = "",
                         tok::TokenKind SkipToTok = tok::unknown);
 
-  /// \brief The parser expects a semicolon and, if present, will consume it.
-  ///
-  /// If the next token is not a semicolon, this emits the specified diagnostic,
-  /// or, if there's just some closing-delimiter noise (e.g., ')' or ']') prior
-  /// to the semicolon, consumes that extra token.
-  bool ExpectAndConsumeSemi(unsigned DiagID);
-  
   //===--------------------------------------------------------------------===//
   // Scope manipulation
 
@@ -1038,10 +1022,6 @@ private:
   ExprResult ParseCXXTypeid();
 
   //===--------------------------------------------------------------------===//
-  //  C++ : Microsoft __uuidof Expression
-  ExprResult ParseCXXUuidof();
-
-  //===--------------------------------------------------------------------===//
   // C++ 5.2.4: C++ Pseudo-Destructor Expressions
   ExprResult ParseCXXPseudoDestructor(ExprArg Base, SourceLocation OpLoc,
                                             tok::TokenKind OpKind,
@@ -1060,10 +1040,6 @@ private:
                                    llvm::SmallVectorImpl<ParsedType> &Exns,
                                    llvm::SmallVectorImpl<SourceRange> &Ranges,
                                    bool &hasAnyExceptionSpec);
-
-  //===--------------------------------------------------------------------===//
-  // C++0x 8: Function declaration trailing-return-type
-  TypeResult ParseTrailingReturnType();
 
   //===--------------------------------------------------------------------===//
   // C++ 2.13.5: C++ Boolean Literals
@@ -1141,11 +1117,9 @@ private:
   // C99 6.8: Statements and Blocks.
 
   StmtResult ParseStatement() {
-    StmtVector Stmts(Actions);
-    return ParseStatementOrDeclaration(Stmts, true);
+    return ParseStatementOrDeclaration(true);
   }
-  StmtResult ParseStatementOrDeclaration(StmtVector& Stmts,
-                                         bool OnlyStatement = false);
+  StmtResult ParseStatementOrDeclaration(bool OnlyStatement = false);
   StmtResult ParseLabeledStatement(AttributeList *Attr);
   StmtResult ParseCaseStatement(AttributeList *Attr);
   StmtResult ParseDefaultStatement(AttributeList *Attr);
@@ -1199,11 +1173,9 @@ private:
     DSC_top_level // top-level/namespace declaration context
   };
 
-  DeclGroupPtrTy ParseDeclaration(StmtVector &Stmts,
-                                  unsigned Context, SourceLocation &DeclEnd,
+  DeclGroupPtrTy ParseDeclaration(unsigned Context, SourceLocation &DeclEnd,
                                   CXX0XAttributeList Attr);
-  DeclGroupPtrTy ParseSimpleDeclaration(StmtVector &Stmts,
-                                        unsigned Context,
+  DeclGroupPtrTy ParseSimpleDeclaration(unsigned Context,
                                         SourceLocation &DeclEnd,
                                         AttributeList *Attr,
                                         bool RequireSemi);
@@ -1250,7 +1222,7 @@ private:
 
   void ParseStructDeclaration(DeclSpec &DS, FieldCallback &Callback);
 
-  bool isDeclarationSpecifier(bool DisambiguatingWithExpression = false);
+  bool isDeclarationSpecifier();
   bool isTypeSpecifierQualifier();
   bool isTypeQualifier() const;
   
@@ -1265,7 +1237,7 @@ private:
   bool isDeclarationStatement() {
     if (getLang().CPlusPlus)
       return isCXXDeclarationStatement();
-    return isDeclarationSpecifier(true);
+    return isDeclarationSpecifier();
   }
 
   /// isSimpleDeclaration - Disambiguates between a declaration or an
@@ -1275,13 +1247,9 @@ private:
   bool isSimpleDeclaration() {
     if (getLang().CPlusPlus)
       return isCXXSimpleDeclaration();
-    return isDeclarationSpecifier(true);
+    return isDeclarationSpecifier();
   }
 
-  /// \brief Determine whether we are currently at the start of an Objective-C
-  /// class message that appears to be missing the open bracket '['.
-  bool isStartOfObjCClassMessageMissingOpenBracket();
-  
   /// \brief Starting with a scope specifier, identifier, or
   /// template-id that refers to the current class, determine whether
   /// this is a constructor declarator.

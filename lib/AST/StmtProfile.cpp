@@ -687,12 +687,6 @@ void StmtProfiler::VisitCXXTypeidExpr(CXXTypeidExpr *S) {
     VisitType(S->getTypeOperand());
 }
 
-void StmtProfiler::VisitCXXUuidofExpr(CXXUuidofExpr *S) {
-  VisitExpr(S);
-  if (S->isTypeOperand())
-    VisitType(S->getTypeOperand());
-}
-
 void StmtProfiler::VisitCXXThisExpr(CXXThisExpr *S) {
   VisitExpr(S);
 }
@@ -828,10 +822,6 @@ void StmtProfiler::VisitUnresolvedMemberExpr(UnresolvedMemberExpr *S) {
   ID.AddBoolean(S->hasExplicitTemplateArgs());
   if (S->hasExplicitTemplateArgs())
     VisitTemplateArguments(S->getTemplateArgs(), S->getNumTemplateArgs());
-}
-
-void StmtProfiler::VisitCXXNoexceptExpr(CXXNoexceptExpr *S) {
-  VisitExpr(S);
 }
 
 void StmtProfiler::VisitObjCStringLiteral(ObjCStringLiteral *S) {

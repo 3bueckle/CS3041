@@ -14,11 +14,10 @@
 #define LLVM_CLANG_SEMA_EXTERNAL_SEMA_SOURCE_H
 
 #include "clang/AST/ExternalASTSource.h"
-#include <utility>
+#include "clang/Sema/ObjCMethodList.h"
 
 namespace clang {
 
-struct ObjCMethodList;
 class Sema;
 
 /// \brief An abstract interface that should be implemented by
@@ -45,7 +44,10 @@ public:
   ///
   /// \returns a pair of Objective-C methods lists containing the
   /// instance and factory methods, respectively, with this selector.
-  virtual std::pair<ObjCMethodList,ObjCMethodList> ReadMethodPool(Selector Sel);
+  virtual std::pair<ObjCMethodList, ObjCMethodList>
+  ReadMethodPool(Selector Sel) {
+    return std::pair<ObjCMethodList, ObjCMethodList>();
+  }
 
   // isa/cast/dyn_cast support
   static bool classof(const ExternalASTSource *Source) {

@@ -301,19 +301,3 @@ void pr7981(wint_t c, wchar_t c2) {
   printf("%lc", c2); // no-warning
 }
 
-// <rdar://problem/8269537> -Wformat-security says NULL is not a string literal
-void rdar8269537() {
-  // This is likely to crash in most cases, but -Wformat-nonliteral technically
-  // doesn't warn in this case.
-  printf(0); // no-warning
-}
-
-// Handle functions with multiple format attributes.
-extern void rdar8332221_vprintf_scanf(const char *, va_list, const char *, ...)
-     __attribute__((__format__(__printf__, 1, 0)))
-     __attribute__((__format__(__scanf__, 3, 4)));
-     
-void rdar8332221(va_list ap, int *x, long *y) {
-  rdar8332221_vprintf_scanf("%", ap, "%d", x); // expected-warning{{incomplete format specifier}}
-}
-

@@ -237,7 +237,7 @@ int* f10(int* p, signed char x, int y) {
 // Test case from <rdar://problem/6407949>
 void f11(unsigned i) {
   int *x = 0;
-  if (i >= 0) { // expected-warning{{always true}}
+  if (i >= 0) {
     // always true
   } else {
     *x = 42; // no-warning
@@ -288,7 +288,7 @@ void pr4759_aux(int *p) __attribute__((nonnull));
 
 void pr4759() {
   int *p;
-  pr4759_aux(p); // expected-warning{{Function call argument is an uninitialized value}}
+  pr4759_aux(p); // expected-warning{{undefined}}
 }
 
 

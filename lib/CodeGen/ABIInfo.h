@@ -70,12 +70,11 @@ namespace clang {
     Kind TheKind;
     llvm::PATypeHolder TypeData;
     unsigned UIntData;
-    bool BoolData0;
-    bool BoolData1;
+    bool BoolData;
 
     ABIArgInfo(Kind K, const llvm::Type *TD=0,
-               unsigned UI=0, bool B0 = false, bool B1 = false) 
-      : TheKind(K), TypeData(TD), UIntData(UI), BoolData0(B0), BoolData1(B1) {}
+               unsigned UI=0, bool B = false) 
+      : TheKind(K), TypeData(TD), UIntData(UI), BoolData(B) {}
 
   public:
     ABIArgInfo() : TheKind(Direct), TypeData(0), UIntData(0) {}
@@ -89,9 +88,8 @@ namespace clang {
     static ABIArgInfo getIgnore() {
       return ABIArgInfo(Ignore);
     }
-    static ABIArgInfo getIndirect(unsigned Alignment, bool ByVal = true
-                                  , bool Realign = false) {
-      return ABIArgInfo(Indirect, 0, Alignment, ByVal, Realign);
+    static ABIArgInfo getIndirect(unsigned Alignment, bool ByVal = true) {
+      return ABIArgInfo(Indirect, 0, Alignment, ByVal);
     }
     static ABIArgInfo getExpand() {
       return ABIArgInfo(Expand);
@@ -131,12 +129,7 @@ namespace clang {
 
     bool getIndirectByVal() const {
       assert(TheKind == Indirect && "Invalid kind!");
-      return BoolData0;
-    }
-
-    bool getIndirectRealign() const {
-      assert(TheKind == Indirect && "Invalid kind!");
-      return BoolData1;
+      return BoolData;
     }
     
     void dump() const;

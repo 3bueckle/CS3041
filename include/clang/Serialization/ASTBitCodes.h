@@ -112,13 +112,10 @@ namespace clang {
     typedef llvm::DenseMap<QualType, TypeIdx, UnsafeQualTypeDenseMapInfo>
         TypeIdxMap;
 
-    /// \brief An ID number that refers to an identifier in an AST file.
+    /// \brief An ID number that refers to an identifier in an AST
+    /// file.
     typedef uint32_t IdentID;
 
-    /// \brief An ID number that refers to a macro in an AST file.
-    typedef uint32_t MacroID;
-
-    /// \brief An ID number that refers to an ObjC selctor in an AST file.
     typedef uint32_t SelectorID;
 
     /// \brief Describes the various kinds of blocks that occur within
@@ -878,8 +875,6 @@ namespace clang {
       EXPR_CXX_NULL_PTR_LITERAL,  // CXXNullPtrLiteralExpr
       EXPR_CXX_TYPEID_EXPR,       // CXXTypeidExpr (of expr).
       EXPR_CXX_TYPEID_TYPE,       // CXXTypeidExpr (of type).
-      EXPR_CXX_UUIDOF_EXPR,       // CXXUuidofExpr (of expr).
-      EXPR_CXX_UUIDOF_TYPE,       // CXXUuidofExpr (of type).
       EXPR_CXX_THIS,              // CXXThisExpr
       EXPR_CXX_THROW,             // CXXThrowExpr
       EXPR_CXX_DEFAULT_ARG,       // CXXDefaultArgExpr
@@ -890,16 +885,15 @@ namespace clang {
       EXPR_CXX_DELETE,            // CXXDeleteExpr
       EXPR_CXX_PSEUDO_DESTRUCTOR, // CXXPseudoDestructorExpr
       
-      EXPR_CXX_EXPR_WITH_TEMPORARIES,    // CXXExprWithTemporaries
+      EXPR_CXX_EXPR_WITH_TEMPORARIES, // CXXExprWithTemporaries
       
-      EXPR_CXX_DEPENDENT_SCOPE_MEMBER,   // CXXDependentScopeMemberExpr
-      EXPR_CXX_DEPENDENT_SCOPE_DECL_REF, // DependentScopeDeclRefExpr
-      EXPR_CXX_UNRESOLVED_CONSTRUCT,     // CXXUnresolvedConstructExpr
-      EXPR_CXX_UNRESOLVED_MEMBER,        // UnresolvedMemberExpr
-      EXPR_CXX_UNRESOLVED_LOOKUP,        // UnresolvedLookupExpr
+      EXPR_CXX_DEPENDENT_SCOPE_MEMBER, // CXXDependentScopeMemberExpr
+      EXPR_CXX_DEPENDENT_SCOPE_DECL_REF,   // DependentScopeDeclRefExpr
+      EXPR_CXX_UNRESOLVED_CONSTRUCT, // CXXUnresolvedConstructExpr
+      EXPR_CXX_UNRESOLVED_MEMBER,    // UnresolvedMemberExpr
+      EXPR_CXX_UNRESOLVED_LOOKUP,     // UnresolvedLookupExpr
 
-      EXPR_CXX_UNARY_TYPE_TRAIT,  // UnaryTypeTraitExpr
-      EXPR_CXX_NOEXCEPT           // CXXNoexceptExpr
+      EXPR_CXX_UNARY_TYPE_TRAIT   // UnaryTypeTraitExpr  
     };
 
     /// \brief The kinds of designators that can occur in a

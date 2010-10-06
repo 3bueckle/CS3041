@@ -292,31 +292,7 @@ public:
 /// which is a FunctionDecl that has been explicitly specialization or
 /// instantiated from a function template.
 class FunctionTemplateSpecializationInfo : public llvm::FoldingSetNode {
-  FunctionTemplateSpecializationInfo(FunctionDecl *FD,
-                                     FunctionTemplateDecl *Template,
-                                     TemplateSpecializationKind TSK,
-                                     const TemplateArgumentList *TemplateArgs,
-                          const TemplateArgumentListInfo *TemplateArgsAsWritten,
-                                     SourceLocation POI)
-  : Function(FD),
-    Template(Template, TSK - 1),
-    TemplateArguments(TemplateArgs),
-    TemplateArgumentsAsWritten(TemplateArgsAsWritten),
-    PointOfInstantiation(POI) { }
-
 public:
-  static FunctionTemplateSpecializationInfo *
-  Create(ASTContext &C, FunctionDecl *FD, FunctionTemplateDecl *Template,
-         TemplateSpecializationKind TSK,
-         const TemplateArgumentList *TemplateArgs,
-         const TemplateArgumentListInfo *TemplateArgsAsWritten,
-         SourceLocation POI) {
-    return new (C) FunctionTemplateSpecializationInfo(FD, Template, TSK,
-                                                      TemplateArgs,
-                                                      TemplateArgsAsWritten,
-                                                      POI);
-  }
-
   /// \brief The function template specialization that this structure
   /// describes.
   FunctionDecl *Function;
@@ -608,7 +584,7 @@ protected:
   /// for the common pointer.
   CommonBase *getCommonPtr();
 
-  virtual CommonBase *newCommon(ASTContext &C) = 0;
+  virtual CommonBase *newCommon() = 0;
 
   // Construct a template decl with name, parameters, and templated element.
   RedeclarableTemplateDecl(Kind DK, DeclContext *DC, SourceLocation L,
@@ -813,13 +789,19 @@ protected:
                        TemplateParameterList *Params, NamedDecl *Decl)
     : RedeclarableTemplateDecl(FunctionTemplate, DC, L, Name, Params, Decl) { }
 
-  CommonBase *newCommon(ASTContext &C);
+  CommonBase *newCommon();
 
   Common *getCommonPtr() {
     return static_cast<Common *>(RedeclarableTemplateDecl::getCommonPtr());
   }
 
-  friend class FunctionDecl;
+  friend void FunctionDecl::setFunctionTemplateSpecialization(
+                                       FunctionTemplateDecl *Template,
+                                       const TemplateArgumentList *TemplateArgs,
+                                       void *InsertPos,
+                                       TemplateSpecializationKind TSK,
+                          const TemplateArgumentListInfo *TemplateArgsAsWritten,
+                                       SourceLocation PointOfInstantiation);
 
   /// \brief Retrieve the set of function template specializations of this
   /// function template.
@@ -1280,6 +1262,14 @@ public:
     return TemplateArgs;
   }
 
+  /// \brief Initialize the template arguments of the class template
+  /// specialization.
+  void initTemplateArgs(TemplateArgument *Args, unsigned NumArgs) {
+    assert(TemplateArgs.flat_size() == 0 &&
+           "Template arguments already initialized!");
+    TemplateArgs.init(getASTContext(), Args, NumArgs);
+  }
+
   /// \brief Determine the kind of specialization that this
   /// declaration represents.
   TemplateSpecializationKind getSpecializationKind() const {
@@ -1367,6 +1357,18 @@ public:
     SpecializedTemplate = PS;
   }
 
+  /// \brief Note that this class template specialization is actually an
+  /// instantiation of the given class template partial specialization whose
+  /// template arguments have been deduced.
+  void setInstantiationOf(ClassTemplatePartialSpecializationDecl *PartialSpec,
+                          TemplateArgument *TemplateArgs,
+                          unsigned NumTemplateArgs) {
+    ASTContext &Ctx = getASTContext();
+    setInstantiationOf(PartialSpec,
+                       new (Ctx) TemplateArgumentList(Ctx, TemplateArgs,
+                                                      NumTemplateArgs));
+  }
+
   /// \brief Note that this class template specialization is an instantiation
   /// of the given class template.
   void setInstantiationOf(ClassTemplateDecl *TemplDecl) {
@@ -1438,9 +1440,6 @@ public:
   static bool classof(const ClassTemplatePartialSpecializationDecl *) {
     return true;
   }
-  
-  friend class ASTDeclReader;
-  friend class ASTDeclWriter;
 };
 
 class ClassTemplatePartialSpecializationDecl
@@ -1513,10 +1512,17 @@ public:
     return TemplateParams;
   }
 
+  void initTemplateParameters(TemplateParameterList *Params) {
+    assert(TemplateParams == 0 && "TemplateParams already set");
+    TemplateParams = Params;
+  }
+
   /// Get the template arguments as written.
   TemplateArgumentLoc *getTemplateArgsAsWritten() const {
     return ArgsAsWritten;
   }
+
+  void initTemplateArgsAsWritten(const TemplateArgumentListInfo &ArgInfos);
 
   /// Get the number of template arguments as written.
   unsigned getNumTemplateArgsAsWritten() const {
@@ -1526,7 +1532,8 @@ public:
   /// \brief Get the sequence number for this class template partial
   /// specialization.
   unsigned getSequenceNumber() const { return SequenceNumber; }
-
+  void setSequenceNumber(unsigned N) { SequenceNumber = N; }
+    
   /// \brief Retrieve the member class template partial specialization from
   /// which this particular class template partial specialization was
   /// instantiated.
@@ -1610,9 +1617,6 @@ public:
   static bool classof(const ClassTemplatePartialSpecializationDecl *) {
     return true;
   }
-
-  friend class ASTDeclReader;
-  friend class ASTDeclWriter;
 };
 
 /// Declaration of a class template.
@@ -1655,7 +1659,7 @@ protected:
                     TemplateParameterList *Params, NamedDecl *Decl)
     : RedeclarableTemplateDecl(ClassTemplate, DC, L, Name, Params, Decl) { }
 
-  CommonBase *newCommon(ASTContext &C);
+  CommonBase *newCommon();
 
   Common *getCommonPtr() {
     return static_cast<Common *>(RedeclarableTemplateDecl::getCommonPtr());

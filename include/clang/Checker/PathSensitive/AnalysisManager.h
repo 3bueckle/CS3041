@@ -50,8 +50,8 @@ class AnalysisManager : public BugReporterData {
   // The maximum number of exploded nodes the analyzer will generate.
   unsigned MaxNodes;
 
-  // The maximum number of times the analyzer visit a block.
-  unsigned MaxVisit;
+  // The maximum number of times the analyzer will go through a loop.
+  unsigned MaxLoop;
 
   bool VisualizeEGDot;
   bool VisualizeEGUbi;
@@ -74,15 +74,14 @@ public:
                   StoreManagerCreator storemgr,
                   ConstraintManagerCreator constraintmgr, 
                   idx::Indexer *idxer,
-                  unsigned maxnodes, unsigned maxvisit,
+                  unsigned maxnodes, unsigned maxloop,
                   bool vizdot, bool vizubi, bool purge, bool eager, bool trim,
-                  bool inlinecall, bool useUnoptimizedCFG,
-                  bool addImplicitDtors, bool addInitializers)
+                  bool inlinecall, bool useUnoptimizedCFG)
 
-    : AnaCtxMgr(useUnoptimizedCFG, addImplicitDtors, addInitializers),
-      Ctx(ctx), Diags(diags), LangInfo(lang), PD(pd),
+    : AnaCtxMgr(useUnoptimizedCFG), Ctx(ctx), Diags(diags), LangInfo(lang),
+      PD(pd),
       CreateStoreMgr(storemgr), CreateConstraintMgr(constraintmgr),Idxer(idxer),
-      AScope(ScopeDecl), MaxNodes(maxnodes), MaxVisit(maxvisit),
+      AScope(ScopeDecl), MaxNodes(maxnodes), MaxLoop(maxloop),
       VisualizeEGDot(vizdot), VisualizeEGUbi(vizubi), PurgeDead(purge),
       EagerlyAssume(eager), TrimGraph(trim), InlineCall(inlinecall) {}
   
@@ -134,7 +133,7 @@ public:
 
   unsigned getMaxNodes() const { return MaxNodes; }
 
-  unsigned getMaxVisit() const { return MaxVisit; }
+  unsigned getMaxLoop() const { return MaxLoop; }
 
   bool shouldVisualizeGraphviz() const { return VisualizeEGDot; }
 

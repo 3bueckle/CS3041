@@ -630,8 +630,7 @@ namespace clang {
 
     /// Find the best viable function on this overload set, if it exists.
     OverloadingResult BestViableFunction(Sema &S, SourceLocation Loc,
-                                         OverloadCandidateSet::iterator& Best,
-                                         bool UserDefinedConversion = false);
+                                         OverloadCandidateSet::iterator& Best);
 
     void NoteCandidates(Sema &S,
                         OverloadCandidateDisplayKind OCD,
@@ -643,8 +642,7 @@ namespace clang {
   bool isBetterOverloadCandidate(Sema &S,
                                  const OverloadCandidate& Cand1,
                                  const OverloadCandidate& Cand2,
-                                 SourceLocation Loc,
-                                 bool UserDefinedConversion = false);
+                                 SourceLocation Loc);
 } // end namespace clang
 
 #endif // LLVM_CLANG_SEMA_OVERLOAD_H

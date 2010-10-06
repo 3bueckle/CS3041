@@ -352,7 +352,7 @@ llvm::Value *CodeGenFunction::BuildBlockLiteralTmp(const BlockExpr *BE) {
                         SourceLocation());
       }
 
-      RValue r = EmitAnyExpr(E, AggValueSlot::forAddr(Addr, false, true));
+      RValue r = EmitAnyExpr(E, Addr, false);
       if (r.isScalar()) {
         llvm::Value *Loc = r.getScalarVal();
         const llvm::Type *Ty = Types[i+BlockFields];
@@ -757,7 +757,7 @@ CodeGenFunction::GenerateBlockFunction(GlobalDecl GD, const BlockExpr *BExpr,
 
   // Capture block layout info. here.
   if (CGM.getContext().getLangOptions().ObjC1)
-    BlockVarLayout = CGM.getObjCRuntime().GCBlockLayout(*this, BlockLayout);
+    BlockVarLayout = CGM.getObjCRuntime().GCBlockLayout(*this, Info.DeclRefs);
   else
     BlockVarLayout = llvm::Constant::getNullValue(PtrToInt8Ty);
   

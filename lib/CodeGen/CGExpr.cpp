@@ -78,31 +78,35 @@ llvm::Value *CodeGenFunction::EvaluateExprAsBool(const Expr *E) {
   return EmitComplexToScalarConversion(EmitComplexExpr(E), E->getType(),BoolTy);
 }
 
-/// EmitAnyExpr - Emit code to compute the specified expression which
-/// can have any type.  The result is returned as an RValue struct.
-/// If this is an aggregate expression, AggSlot indicates where the
+/// EmitAnyExpr - Emit code to compute the specified expression which can have
+/// any type.  The result is returned as an RValue struct.  If this is an
+/// aggregate expression, the aggloc/agglocvolatile arguments indicate where the
 /// result should be returned.
-RValue CodeGenFunction::EmitAnyExpr(const Expr *E, AggValueSlot AggSlot,
-                                    bool IgnoreResult) {
+RValue CodeGenFunction::EmitAnyExpr(const Expr *E, llvm::Value *AggLoc,
+                                    bool IsAggLocVolatile, bool IgnoreResult,
+                                    bool IsInitializer) {
   if (!hasAggregateLLVMType(E->getType()))
     return RValue::get(EmitScalarExpr(E, IgnoreResult));
   else if (E->getType()->isAnyComplexType())
     return RValue::getComplex(EmitComplexExpr(E, false, false,
                                               IgnoreResult, IgnoreResult));
 
-  EmitAggExpr(E, AggSlot, IgnoreResult);
-  return AggSlot.asRValue();
+  EmitAggExpr(E, AggLoc, IsAggLocVolatile, IgnoreResult, IsInitializer);
+  return RValue::getAggregate(AggLoc, IsAggLocVolatile);
 }
 
 /// EmitAnyExprToTemp - Similary to EmitAnyExpr(), however, the result will
 /// always be accessible even if no aggregate location is provided.
-RValue CodeGenFunction::EmitAnyExprToTemp(const Expr *E) {
-  AggValueSlot AggSlot = AggValueSlot::ignored();
+RValue CodeGenFunction::EmitAnyExprToTemp(const Expr *E,
+                                          bool IsAggLocVolatile,
+                                          bool IsInitializer) {
+  llvm::Value *AggLoc = 0;
 
   if (hasAggregateLLVMType(E->getType()) &&
       !E->getType()->isAnyComplexType())
-    AggSlot = CreateAggTemp(E->getType(), "agg.tmp");
-  return EmitAnyExpr(E, AggSlot);
+    AggLoc = CreateMemTemp(E->getType(), "agg.tmp");
+  return EmitAnyExpr(E, AggLoc, IsAggLocVolatile, /*IgnoreResult=*/false,
+                     IsInitializer);
 }
 
 /// EmitAnyExprToMem - Evaluate an expression into a given memory
@@ -114,7 +118,7 @@ void CodeGenFunction::EmitAnyExprToMem(const Expr *E,
   if (E->getType()->isComplexType())
     EmitComplexExprIntoAddr(E, Location, IsLocationVolatile);
   else if (hasAggregateLLVMType(E->getType()))
-    EmitAggExpr(E, AggValueSlot::forAddr(Location, IsLocationVolatile, IsInit));
+    EmitAggExpr(E, Location, IsLocationVolatile, /*Ignore*/ false, IsInit);
   else {
     RValue RV = RValue::get(EmitScalarExpr(E, /*Ignore*/ false));
     LValue LV = MakeAddrLValue(Location, E->getType());
@@ -176,7 +180,7 @@ CreateReferenceTemporary(CodeGenFunction& CGF, QualType Type,
 }
 
 static llvm::Value *
-EmitExprForReferenceBinding(CodeGenFunction &CGF, const Expr *E,
+EmitExprForReferenceBinding(CodeGenFunction& CGF, const Expr* E,
                             llvm::Value *&ReferenceTemporary,
                             const CXXDestructorDecl *&ReferenceTemporaryDtor,
                             const NamedDecl *InitializedDecl) {
@@ -196,15 +200,7 @@ EmitExprForReferenceBinding(CodeGenFunction &CGF, const Expr *E,
   if (E->isLvalue(CGF.getContext()) == Expr::LV_Valid) {
     // Emit the expression as an lvalue.
     LValue LV = CGF.EmitLValue(E);
-    if (LV.isPropertyRef() || LV.isKVCRef()) {
-      QualType QT = E->getType();
-      RValue RV = 
-        LV.isPropertyRef() ? CGF.EmitLoadOfPropertyRefLValue(LV, QT) 
-                           : CGF.EmitLoadOfKVCRefLValue(LV, QT);
-      assert(RV.isScalar() && "EmitExprForReferenceBinding");
-      return RV.getScalarVal();
-    }
-    
+
     if (LV.isSimple())
       return LV.getAddress();
     
@@ -251,16 +247,13 @@ EmitExprForReferenceBinding(CodeGenFunction &CGF, const Expr *E,
     }
     
     // Create a reference temporary if necessary.
-    AggValueSlot AggSlot = AggValueSlot::ignored();
     if (CGF.hasAggregateLLVMType(E->getType()) &&
-        !E->getType()->isAnyComplexType()) {
+        !E->getType()->isAnyComplexType())
       ReferenceTemporary = CreateReferenceTemporary(CGF, E->getType(), 
                                                     InitializedDecl);
-      AggSlot = AggValueSlot::forAddr(ReferenceTemporary, false,
-                                      InitializedDecl != 0);
-    }
       
-    RV = CGF.EmitAnyExpr(E, AggSlot);
+    RV = CGF.EmitAnyExpr(E, ReferenceTemporary, /*IsAggLocVolatile=*/false,
+                         /*IgnoreResult=*/false, InitializedDecl);
 
     if (InitializedDecl) {
       // Get the destructor for the reference temporary.
@@ -335,7 +328,7 @@ EmitExprForReferenceBinding(CodeGenFunction &CGF, const Expr *E,
 }
 
 RValue
-CodeGenFunction::EmitReferenceBindingToExpr(const Expr *E,
+CodeGenFunction::EmitReferenceBindingToExpr(const Expr* E,
                                             const NamedDecl *InitializedDecl) {
   llvm::Value *ReferenceTemporary = 0;
   const CXXDestructorDecl *ReferenceTemporaryDtor = 0;
@@ -495,11 +488,6 @@ LValue CodeGenFunction::EmitCheckedLValue(const Expr *E) {
 /// length type, this is not possible.
 ///
 LValue CodeGenFunction::EmitLValue(const Expr *E) {
-  llvm::DenseMap<const Expr *, LValue>::iterator I = 
-                                      CGF.ConditionalSaveLValueExprs.find(E);
-  if (I != CGF.ConditionalSaveLValueExprs.end())
-    return I->second;
-  
   switch (E->getStmtClass()) {
   default: return EmitUnsupportedLValue(E, "l-value expression");
 
@@ -1128,7 +1116,7 @@ static LValue EmitGlobalVarDeclLValue(CodeGenFunction &CGF,
 
 static LValue EmitFunctionDeclLValue(CodeGenFunction &CGF,
                                       const Expr *E, const FunctionDecl *FD) {
-  llvm::Value *V = CGF.CGM.GetAddrOfFunction(FD);
+  llvm::Value* V = CGF.CGM.GetAddrOfFunction(FD);
   if (!FD->hasPrototype()) {
     if (const FunctionProtoType *Proto =
             FD->getType()->getAs<FunctionProtoType>()) {
@@ -1150,7 +1138,7 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
   unsigned Alignment = CGF.getContext().getDeclAlign(ND).getQuantity();
 
   if (ND->hasAttr<WeakRefAttr>()) {
-    const ValueDecl *VD = cast<ValueDecl>(ND);
+    const ValueDecl* VD = cast<ValueDecl>(ND);
     llvm::Constant *Aliasee = CGM.GetWeakRefReference(VD);
     return MakeAddrLValue(Aliasee, E->getType(), Alignment);
   }
@@ -1164,7 +1152,8 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
     bool NonGCable = VD->hasLocalStorage() && !VD->hasAttr<BlocksAttr>();
 
     llvm::Value *V = LocalDeclMap[VD];
-    if (!V && VD->isStaticLocal()) 
+    if (!V && getContext().getLangOptions().CPlusPlus &&
+        VD->isStaticLocal()) 
       V = CGM.getStaticLocalDeclAddress(VD);
     assert(V && "DeclRefExpr not entered in LocalDeclMap?");
 
@@ -1585,8 +1574,8 @@ LValue CodeGenFunction::EmitMemberExpr(const MemberExpr *E) {
   return LValue();
 }
 
-LValue CodeGenFunction::EmitLValueForBitfield(llvm::Value *BaseValue,
-                                              const FieldDecl *Field,
+LValue CodeGenFunction::EmitLValueForBitfield(llvm::Value* BaseValue,
+                                              const FieldDecl* Field,
                                               unsigned CVRQualifiers) {
   const CGRecordLayout &RL =
     CGM.getTypes().getCGRecordLayout(Field->getParent());
@@ -1624,8 +1613,8 @@ LValue CodeGenFunction::EmitLValueForAnonRecordField(llvm::Value *BaseValue,
   }
 }
 
-LValue CodeGenFunction::EmitLValueForField(llvm::Value *BaseValue,
-                                           const FieldDecl *Field,
+LValue CodeGenFunction::EmitLValueForField(llvm::Value* BaseValue,
+                                           const FieldDecl* Field,
                                            unsigned CVRQualifiers) {
   if (Field->isBitField())
     return EmitLValueForBitfield(BaseValue, Field, CVRQualifiers);
@@ -1639,7 +1628,7 @@ LValue CodeGenFunction::EmitLValueForField(llvm::Value *BaseValue,
   if (Field->getParent()->isUnion()) {
     const llvm::Type *FieldTy =
       CGM.getTypes().ConvertTypeForMem(Field->getType());
-    const llvm::PointerType *BaseTy =
+    const llvm::PointerType * BaseTy =
       cast<llvm::PointerType>(BaseValue->getType());
     unsigned AS = BaseTy->getAddressSpace();
     V = Builder.CreateBitCast(V,
@@ -1661,8 +1650,8 @@ LValue CodeGenFunction::EmitLValueForField(llvm::Value *BaseValue,
 }
 
 LValue 
-CodeGenFunction::EmitLValueForFieldInitialization(llvm::Value *BaseValue, 
-                                                  const FieldDecl *Field,
+CodeGenFunction::EmitLValueForFieldInitialization(llvm::Value* BaseValue, 
+                                                  const FieldDecl* Field,
                                                   unsigned CVRQualifiers) {
   QualType FieldType = Field->getType();
   
@@ -1680,18 +1669,18 @@ CodeGenFunction::EmitLValueForFieldInitialization(llvm::Value *BaseValue,
   return MakeAddrLValue(V, FieldType, Alignment);
 }
 
-LValue CodeGenFunction::EmitCompoundLiteralLValue(const CompoundLiteralExpr *E){
+LValue CodeGenFunction::EmitCompoundLiteralLValue(const CompoundLiteralExpr* E){
   llvm::Value *DeclPtr = CreateMemTemp(E->getType(), ".compoundliteral");
-  const Expr *InitExpr = E->getInitializer();
+  const Expr* InitExpr = E->getInitializer();
   LValue Result = MakeAddrLValue(DeclPtr, E->getType());
 
-  EmitAnyExprToMem(InitExpr, DeclPtr, /*Volatile*/ false, /*Init*/ true);
+  EmitAnyExprToMem(InitExpr, DeclPtr, /*Volatile*/ false);
 
   return Result;
 }
 
 LValue 
-CodeGenFunction::EmitConditionalOperatorLValue(const ConditionalOperator *E) {
+CodeGenFunction::EmitConditionalOperatorLValue(const ConditionalOperator* E) {
   if (E->isLvalue(getContext()) == Expr::LV_Valid) {
     if (int Cond = ConstantFoldsToSimpleInteger(E->getCond())) {
       Expr *Live = Cond == 1 ? E->getLHS() : E->getRHS();
@@ -1699,26 +1688,19 @@ CodeGenFunction::EmitConditionalOperatorLValue(const ConditionalOperator *E) {
         return EmitLValue(Live);
     }
 
+    if (!E->getLHS())
+      return EmitUnsupportedLValue(E, "conditional operator with missing LHS");
+
     llvm::BasicBlock *LHSBlock = createBasicBlock("cond.true");
     llvm::BasicBlock *RHSBlock = createBasicBlock("cond.false");
     llvm::BasicBlock *ContBlock = createBasicBlock("cond.end");
     
-    if (E->getLHS())
-      EmitBranchOnBoolExpr(E->getCond(), LHSBlock, RHSBlock);
-    else {
-      Expr *save = E->getSAVE();
-      assert(save && "VisitConditionalOperator - save is null");
-      // Intentianlly not doing direct assignment to ConditionalSaveExprs[save]
-      LValue SaveVal = EmitLValue(save);
-      ConditionalSaveLValueExprs[save] = SaveVal;
-      EmitBranchOnBoolExpr(E->getCond(), LHSBlock, RHSBlock);
-    }
+    EmitBranchOnBoolExpr(E->getCond(), LHSBlock, RHSBlock);
     
     // Any temporaries created here are conditional.
     BeginConditionalBranch();
     EmitBlock(LHSBlock);
-    LValue LHS = EmitLValue(E->getTrueExpr());
-
+    LValue LHS = EmitLValue(E->getLHS());
     EndConditionalBranch();
     
     if (!LHS.isSimple())
@@ -1984,11 +1966,9 @@ LValue CodeGenFunction::EmitVAArgExprLValue(const VAArgExpr *E) {
 }
 
 LValue CodeGenFunction::EmitCXXConstructLValue(const CXXConstructExpr *E) {
-  assert(E->getType()->getAsCXXRecordDecl()->hasTrivialDestructor()
-         && "binding l-value to type which needs a temporary");
-  AggValueSlot Slot = CreateAggTemp(E->getType(), "tmp");
-  EmitCXXConstructExpr(E, Slot);
-  return MakeAddrLValue(Slot.getAddr(), E->getType());
+  llvm::Value *Temp = CreateMemTemp(E->getType(), "tmp");
+  EmitCXXConstructExpr(Temp, E);
+  return MakeAddrLValue(Temp, E->getType());
 }
 
 LValue
@@ -1998,11 +1978,9 @@ CodeGenFunction::EmitCXXTypeidLValue(const CXXTypeidExpr *E) {
 
 LValue
 CodeGenFunction::EmitCXXBindTemporaryLValue(const CXXBindTemporaryExpr *E) {
-  AggValueSlot Slot = CreateAggTemp(E->getType(), "temp.lvalue");
-  Slot.setLifetimeExternallyManaged();
-  EmitAggExpr(E->getSubExpr(), Slot);
-  EmitCXXTemporary(E->getTemporary(), Slot.getAddr());
-  return MakeAddrLValue(Slot.getAddr(), E->getType());
+  LValue LV = EmitLValue(E->getSubExpr());
+  EmitCXXTemporary(E->getTemporary(), LV.getAddress());
+  return LV;
 }
 
 LValue CodeGenFunction::EmitObjCMessageExprLValue(const ObjCMessageExpr *E) {

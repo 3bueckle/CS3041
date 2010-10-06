@@ -172,7 +172,6 @@ def Constructor : Attr {
 
 def Deprecated : Attr {
   let Spellings = ["deprecated"];
-  let Args = [StringArgument<"Message">];
 }
 
 def Destructor : Attr {
@@ -244,10 +243,6 @@ def MaxFieldAlignment : Attr {
 def MSP430Interrupt : Attr {
   let Spellings = [];
   let Args = [UnsignedArgument<"Number">];
-}
-
-def Naked : Attr {
-  let Spellings = ["naked"];
 }
 
 def NoDebug : Attr {
@@ -374,7 +369,6 @@ def TransparentUnion : Attr {
 
 def Unavailable : Attr {
   let Spellings = ["unavailable"];
-  let Args = [StringArgument<"Message">];
 }
 
 def Unused : Attr {

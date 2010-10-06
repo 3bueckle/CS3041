@@ -23,7 +23,6 @@ td {
 <li><a href="#has_include">Include File Checking Macros</a></li>
 <li><a href="#builtinmacros">Builtin Macros</a></li>
 <li><a href="#vectors">Vectors and Extended Vectors</a></li>
-<li><a href="#deprecated">Deprecated and Unavailable attribute with Message</a></li>
 <li><a href="#checking_language_features">Checks for Standard Language Features</a></li>
   <ul>
   <li><a href="#cxx_exceptions">C++ exceptions</a></li>
@@ -42,7 +41,6 @@ td {
   <li><a href="#cxx_auto_type">C++0x type inference</a></li>
   <li><a href="#cxx_variadic_templates">C++0x variadic templates</a></li>
   <li><a href="#cxx_inline_namespaces">C++0x inline namespaces</a></li>
-  <li><a href="#cxx_trailing_return">C++0x trailing return type</a></li>
   </ul>
 <li><a href="#blocks">Blocks</a></li>
 <li><a href="#overloading-in-c">Function Overloading in C</a></li>
@@ -268,14 +266,6 @@ float4 foo(float2 a, float2 b) {
 <p>See also <a href="#__builtin_shufflevector">__builtin_shufflevector</a>.</p>
 
 <!-- ======================================================================= -->
-<h2 id="deprecated">Deprecated and Unavailable attribute with Message</h2>
-<!-- ======================================================================= -->
-
-<p> Optional string message can be added to Deprecated and Available attributes. </p>
-
-<p> Message will be added to deprecated warning or unavailable error if present. </p>
-
-<!-- ======================================================================= -->
 <h2 id="checking_language_features">Checks for Standard Language Features</h2>
 <!-- ======================================================================= -->
 
@@ -362,11 +352,6 @@ enabled. clang does not yet fully implement this feature.</p>
 
 <p>Use <tt>__has_feature(cxx_inline_namespaces)</tt> to determine if support for
 inline namespaces is enabled.</p>
-
-<h3 id="cxx_trailing_return">C++0x trailing return type</h3>
-
-<p>Use <tt>__has_feature(cxx_trailing_return)</tt> to determine if support for
-the alternate function declaration syntax with trailing return type is enabled.</p>
 
 <!-- ======================================================================= -->
 <h2 id="blocks">Blocks</h2>

@@ -28,47 +28,6 @@ using namespace clang;
 using llvm::StringRef;
 
 //===----------------------------------------------------------------------===//
-// Code completion context implementation
-//===----------------------------------------------------------------------===//
-
-bool CodeCompletionContext::wantConstructorResults() const {
-  switch (Kind) {
-  case CCC_Recovery:
-  case CCC_Statement:
-  case CCC_Expression:
-  case CCC_ObjCMessageReceiver:
-  case CCC_ParenthesizedExpression:
-    return true;
-    
-  case CCC_TopLevel:
-  case CCC_ObjCInterface:
-  case CCC_ObjCImplementation:
-  case CCC_ObjCIvarList:
-  case CCC_ClassStructUnion:
-  case CCC_MemberAccess:
-  case CCC_EnumTag:
-  case CCC_UnionTag:
-  case CCC_ClassOrStructTag:
-  case CCC_ObjCProtocolName:
-  case CCC_Namespace:
-  case CCC_Type:
-  case CCC_Name:
-  case CCC_PotentiallyQualifiedName:
-  case CCC_MacroName:
-  case CCC_MacroNameUse:
-  case CCC_PreprocessorExpression:
-  case CCC_PreprocessorDirective:
-  case CCC_NaturalLanguage:
-  case CCC_SelectorName:
-  case CCC_TypeQualifiers:
-  case CCC_Other:
-    return false;
-  }
-  
-  return false;
-}
-
-//===----------------------------------------------------------------------===//
 // Code completion string implementation
 //===----------------------------------------------------------------------===//
 CodeCompletionString::Chunk::Chunk(ChunkKind Kind, llvm::StringRef Text) 
@@ -430,15 +389,8 @@ unsigned CodeCompletionResult::getPriorityFromDecl(NamedDecl *ND) {
   
   // Context-based decisions.
   DeclContext *DC = ND->getDeclContext()->getRedeclContext();
-  if (DC->isFunctionOrMethod() || isa<BlockDecl>(DC)) {
-    // _cmd is relatively rare
-    if (ImplicitParamDecl *ImplicitParam = dyn_cast<ImplicitParamDecl>(ND))
-      if (ImplicitParam->getIdentifier() &&
-          ImplicitParam->getIdentifier()->isStr("_cmd"))
-        return CCP_ObjC_cmd;
-    
+  if (DC->isFunctionOrMethod() || isa<BlockDecl>(DC))
     return CCP_LocalDeclaration;
-  }
   if (DC->isRecord() || isa<ObjCContainerDecl>(DC))
     return CCP_MemberDeclaration;
   
@@ -447,7 +399,6 @@ unsigned CodeCompletionResult::getPriorityFromDecl(NamedDecl *ND) {
     return CCP_Constant;
   if (isa<TypeDecl>(ND) || isa<ObjCInterfaceDecl>(ND))
     return CCP_Type;
-  
   return CCP_Declaration;
 }
 

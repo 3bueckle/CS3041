@@ -96,23 +96,3 @@ namespace PR7971 {
     static bool g(int, char);
   };
 }
-
-namespace PR8033 {
-  template <typename T1, typename T2> int f(T1 *, const T2 *); // expected-note{{candidate function [with T1 = const int, T2 = int]}}
-  template <typename T1, typename T2> int f(const T1 *, T2 *); // expected-note{{candidate function [with T1 = int, T2 = const int]}}
-  int (*p)(const int *, const int *) = f; // expected-error{{address of overloaded function 'f' is ambiguous}} \
-  // expected-error{{cannot initialize a variable of type}}
-
-}
-
-namespace PR8196 {
-  template <typename T> struct mcdata {
-    typedef int result_type;
-  };
-  template <class T> 
-    typename mcdata<T>::result_type wrap_mean(mcdata<T> const&);
-  void add_property(double(*)(mcdata<double> const &)); // expected-note{{candidate function not viable: no overload of 'wrap_mean' matching}}
-  void f() {
-    add_property(&wrap_mean); // expected-error{{no matching function for call to 'add_property'}}
-  }
-}

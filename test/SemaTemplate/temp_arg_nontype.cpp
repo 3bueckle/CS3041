@@ -58,7 +58,7 @@ template<X const &AnX> struct A4; // expected-note 2{{template parameter is decl
 X an_X;
 A4<an_X> *a15_1; // okay
 A4<*X_volatile_ptr> *a15_2; // expected-error{{non-type template argument does not refer to any declaration}}
-A4<y> *15_3; //  expected-error{{non-type template parameter of reference type 'const X &' cannot bind to template argument of type 'struct Y'}} \
+A4<y> *15_3; //  expected-error{{non-type template parameter of reference type 'X const &' cannot bind to template argument of type 'struct Y'}} \
             // FIXME: expected-error{{expected unqualified-id}}
 
 template<int (&fr)(int)> struct A5; // expected-note{{template parameter is declared here}}
@@ -87,7 +87,7 @@ template<int Z::*pm> struct A7c;
 A7<&Z::int_member> *a18_1;
 A7c<&Z::int_member> *a18_2;
 A7<&Z::float_member> *a18_3; // expected-error{{non-type template argument of type 'float Z::*' cannot be converted to a value of type 'int Z::*'}}
-A7c<(&Z::int_member)> *a18_4; // expected-warning{{address non-type template argument cannot be surrounded by parentheses}}
+A7c<(&Z::int_member)> *a18_3; // expected-error{{non-type template argument cannot be surrounded by parentheses}}
 
 template<unsigned char C> struct Overflow; // expected-note{{template parameter is declared here}}
 

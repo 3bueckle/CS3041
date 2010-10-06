@@ -17,22 +17,9 @@
 
 using namespace clang;
 
-namespace {
-class CallExprWLItem {
-public:
-  CallExpr::const_arg_iterator I;
-  ExplodedNode *N;
-
-  CallExprWLItem(const CallExpr::const_arg_iterator &i, ExplodedNode *n)
-    : I(i), N(n) {}
-};
-}
-
 void GRExprEngine::EvalArguments(ConstExprIterator AI, ConstExprIterator AE,
                                  const FunctionProtoType *FnType, 
                                  ExplodedNode *Pred, ExplodedNodeSet &Dst) {
-
-
   llvm::SmallVector<CallExprWLItem, 20> WorkList;
   WorkList.reserve(AE - AI);
   WorkList.push_back(CallExprWLItem(AI, Pred));
@@ -46,13 +33,10 @@ void GRExprEngine::EvalArguments(ConstExprIterator AI, ConstExprIterator AE,
       continue;
     }
 
-    // Evaluate the argument.
     ExplodedNodeSet Tmp;
     const unsigned ParamIdx = Item.I - AI;
-    const bool VisitAsLvalue = FnType && ParamIdx < FnType->getNumArgs() 
-      ? FnType->getArgType(ParamIdx)->isReferenceType()
-      : false;
-
+    bool VisitAsLvalue = FnType? FnType->getArgType(ParamIdx)->isReferenceType()
+                               : false;
     if (VisitAsLvalue)
       VisitLValue(*Item.I, Item.N, Tmp);
     else
@@ -157,21 +141,13 @@ void GRExprEngine::VisitCXXMemberCallExpr(const CXXMemberCallExpr *MCE,
       VisitLValue(ObjArgExpr, *I, AllArgsEvaluated);
   }
 
-  // Allow checkers to pre-visit the member call.
-  ExplodedNodeSet PreVisitChecks;
-  CheckerVisit(MCE, PreVisitChecks, AllArgsEvaluated, PreVisitStmtCallback);
-
-  // Now evaluate the call itself.
   const CXXMethodDecl *MD = cast<CXXMethodDecl>(ME->getMemberDecl());
   assert(MD && "not a CXXMethodDecl?");
 
-  if (!(MD->isThisDeclarationADefinition() && AMgr.shouldInlineCall())) {
+  if (!(MD->isThisDeclarationADefinition() && AMgr.shouldInlineCall()))
     // FIXME: conservative method call evaluation.
-    CheckerVisit(MCE, Dst, PreVisitChecks, PostVisitStmtCallback);
     return;
-  }
 
-  ExplodedNodeSet SetupThis;
   const StackFrameContext *SFC = AMgr.getStackFrame(MD, 
                                                     Pred->getLocationContext(),
                                                     MCE, 
@@ -179,20 +155,15 @@ void GRExprEngine::VisitCXXMemberCallExpr(const CXXMemberCallExpr *MCE,
                                                     Builder->getIndex());
   const CXXThisRegion *ThisR = getCXXThisRegion(MD, SFC);
   CallEnter Loc(MCE, SFC->getAnalysisContext(), Pred->getLocationContext());
-  for (ExplodedNodeSet::iterator I = PreVisitChecks.begin(),
-         E = PreVisitChecks.end(); I != E; ++I) {
+  for (ExplodedNodeSet::iterator I = AllArgsEvaluated.begin(),
+         E = AllArgsEvaluated.end(); I != E; ++I) {
     // Set up 'this' region.
     const GRState *state = GetState(*I);
     state = state->bindLoc(loc::MemRegionVal(ThisR),state->getSVal(ObjArgExpr));
-    SetupThis.Add(Builder->generateNode(Loc, state, *I));
+    ExplodedNode *N = Builder->generateNode(Loc, state, *I);
+    if (N)
+      Dst.Add(N);
   }
-
-  // FIXME: Perform the actual method call.  Right now all we do is evaluate
-  // the arguments.
-
-  // Perform post-visit.
-  CheckerVisit(MCE, Dst, /* FIXME: don't forget to update later */ SetupThis,
-               PostVisitStmtCallback);
 }
 
 void GRExprEngine::VisitCXXNewExpr(const CXXNewExpr *CNE, ExplodedNode *Pred,

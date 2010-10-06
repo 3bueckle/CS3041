@@ -213,7 +213,7 @@ public:
                                       const ObjCInterfaceDecl *Interface,
                                       const ObjCIvarDecl *Ivar);
   virtual llvm::Constant *GCBlockLayout(CodeGen::CodeGenFunction &CGF,
-              const llvm::SmallVectorImpl<const Expr *> &) {
+              const llvm::SmallVectorImpl<const BlockDeclRefExpr *> &) {
     return NULLPtr;
   }
 };

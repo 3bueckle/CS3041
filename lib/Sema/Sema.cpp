@@ -20,7 +20,6 @@
 #include "llvm/ADT/APFloat.h"
 #include "clang/Sema/CXXFieldCollector.h"
 #include "clang/Sema/ExternalSemaSource.h"
-#include "clang/Sema/ObjCMethodList.h"
 #include "clang/Sema/PrettyDeclStackTrace.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/ScopeInfo.h"
@@ -135,8 +134,7 @@ Sema::Sema(Preprocessor &pp, ASTContext &ctxt, ASTConsumer &consumer,
     Diags(PP.getDiagnostics()), SourceMgr(PP.getSourceManager()),
     ExternalSource(0), CodeCompleter(CodeCompleter), CurContext(0), 
     PackContext(0), VisContext(0), ParsingDeclDepth(0),
-    IdResolver(pp.getLangOptions()), CXXTypeInfoDecl(0), MSVCGuidDecl(0),
-    GlobalNewDeleteDeclared(false), 
+    IdResolver(pp.getLangOptions()), GlobalNewDeleteDeclared(false), 
     CompleteTranslationUnit(CompleteTranslationUnit),
     NumSFINAEErrors(0), SuppressAccessChecking(false),
     NonInstantiationEntries(0), CurrentInstantiationScope(0), TyposCorrected(0),
@@ -553,11 +551,6 @@ BlockScopeInfo *Sema::getCurBlock() {
 
 // Pin this vtable to this file.
 ExternalSemaSource::~ExternalSemaSource() {}
-
-std::pair<ObjCMethodList, ObjCMethodList>
-ExternalSemaSource::ReadMethodPool(Selector Sel) {
-  return std::pair<ObjCMethodList, ObjCMethodList>();
-}
 
 void PrettyDeclStackTraceEntry::print(llvm::raw_ostream &OS) const {
   SourceLocation Loc = this->Loc;

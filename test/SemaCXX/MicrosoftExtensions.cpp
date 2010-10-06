@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 %s -fsyntax-only -Wmicrosoft -verify -fms-extensions -fexceptions
+// RUN: %clang_cc1 %s -fsyntax-only -verify -fms-extensions -fexceptions
 
 
 // ::type_info is predeclared with forward class declartion
@@ -30,48 +30,6 @@ struct Derived : Base {
   virtual void f3();
 };
 
-
-// MSVC allows type definition in anonymous union and struct
-struct A
-{
-  union 
-  {
-    int a;
-    struct B  // expected-warning {{types declared in an anonymous union are a Microsoft extension}}
-    { 
-      int c;
-    } d;
-
-    union C   // expected-warning {{types declared in an anonymous union are a Microsoft extension}}
-    {
-      int e;
-      int ee;
-    } f;
-
-    typedef int D;  // expected-warning {{types declared in an anonymous union are a Microsoft extension}}
-    struct F;  // expected-warning {{types declared in an anonymous union are a Microsoft extension}}
-  };
-
-  struct
-  {
-    int a2;
-
-    struct B2  // expected-warning {{types declared in an anonymous struct are a Microsoft extension}}
-    {
-      int c2;
-    } d2;
-    
-	union C2  // expected-warning {{types declared in an anonymous struct are a Microsoft extension}}
-    {
-      int e2;
-      int ee2;
-    } f2;
-
-    typedef int D2;  // expected-warning {{types declared in an anonymous struct are a Microsoft extension}}
-    struct F2;  // expected-warning {{types declared in an anonymous struct are a Microsoft extension}}
-  };
-};
-
 // __stdcall handling
 struct M {
     int __stdcall addP();
@@ -84,7 +42,3 @@ void m1() {
   h1<int>(&M::addP);
   h1(&M::subtractP);
 } 
-
-//MSVC allows forward enum declaration
-enum ENUM; // expected-warning {{forward references to 'enum' types are a Microsoft extension}}
-ENUM *var;     

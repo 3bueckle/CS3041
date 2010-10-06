@@ -1483,9 +1483,6 @@ public:
     IntMaxType = SignedLongLong;
     UIntMaxType = UnsignedLongLong;
     Int64Type = SignedLongLong;
-    SizeType = UnsignedLongLong;
-    PtrDiffType = SignedLongLong;
-    IntPtrType = SignedLongLong;
   }
   virtual void getTargetDefines(const LangOptions &Opts,
                                 MacroBuilder &Builder) const {

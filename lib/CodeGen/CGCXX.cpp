@@ -1,4 +1,4 @@
-//===--- CGCXX.cpp - Emit LLVM Code for declarations ----------------------===//
+//===--- CGDecl.cpp - Emit LLVM Code for declarations ---------------------===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -321,7 +321,7 @@ CodeGenFunction::BuildVirtualCall(const CXXDestructorDecl *DD, CXXDtorType Type,
 /// Implementation for CGCXXABI.  Possibly this should be moved into
 /// the incomplete ABI implementations?
 
-void CGCXXABI::_anchor() {}
+CGCXXABI::~CGCXXABI() {}
 
 static void ErrorUnsupportedABI(CodeGenFunction &CGF,
                                 llvm::StringRef S) {
@@ -468,10 +468,4 @@ void CGCXXABI::ReadArrayCookie(CodeGenFunction &CGF, llvm::Value *Ptr,
   NumElements = 0;
   AllocPtr = llvm::Constant::getNullValue(CGF.Builder.getInt8PtrTy());
   CookieSize = CharUnits::Zero();
-}
-
-void CGCXXABI::EmitStaticLocalInit(CodeGenFunction &CGF,
-                                   const VarDecl &D,
-                                   llvm::GlobalVariable *GV) {
-  ErrorUnsupportedABI(CGF, "static local variable initialization");
 }

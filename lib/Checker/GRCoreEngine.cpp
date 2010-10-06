@@ -159,16 +159,8 @@ bool GRCoreEngine::ExecuteWorkList(const LocationContext *L, unsigned Steps,
       GenerateNode(StartLoc, InitState, 0);
   }
 
-  // Check if we have a steps limit
-  bool UnlimitedSteps = Steps == 0;
-
-  while (WList->hasWork()) {
-    if (!UnlimitedSteps) {
-      if (Steps == 0)
-        break;
-      --Steps;
-    }
-
+  while (Steps && WList->hasWork()) {
+    --Steps;
     const GRWorkListUnit& WU = WList->Dequeue();
 
     // Set the current block counter.
@@ -711,16 +703,14 @@ void GRCallEnterNodeBuilder::GenerateNode(const GRState *state,
                          OldMgr.getStoreManagerCreator(),
                          OldMgr.getConstraintManagerCreator(),
                          OldMgr.getIndexer(),
-                         OldMgr.getMaxNodes(), OldMgr.getMaxVisit(),
+                         OldMgr.getMaxNodes(), OldMgr.getMaxLoop(),
                          OldMgr.shouldVisualizeGraphviz(),
                          OldMgr.shouldVisualizeUbigraph(),
                          OldMgr.shouldPurgeDead(),
                          OldMgr.shouldEagerlyAssume(),
                          OldMgr.shouldTrimGraph(),
                          OldMgr.shouldInlineCall(),
-                     OldMgr.getAnalysisContextManager().getUseUnoptimizedCFG(),
-                     OldMgr.getAnalysisContextManager().getAddImplicitDtors(),
-                     OldMgr.getAnalysisContextManager().getAddInitializers());
+                     OldMgr.getAnalysisContextManager().getUseUnoptimizedCFG());
     llvm::OwningPtr<GRTransferFuncs> TF(MakeCFRefCountTF(AMgr.getASTContext(),
                                                          /* GCEnabled */ false,
                                                         AMgr.getLangOptions()));

@@ -59,11 +59,7 @@ CFG *AnalysisContext::getCFG() {
     return getUnoptimizedCFG();
 
   if (!builtCFG) {
-    CFG::BuildOptions B;
-    B.AddEHEdges = AddEHEdges;
-    B.AddImplicitDtors = AddImplicitDtors;
-    B.AddInitializers = AddInitializers;
-    cfg = CFG::buildCFG(D, getBody(), &D->getASTContext(), B);
+    cfg = CFG::buildCFG(D, getBody(), &D->getASTContext(), true, AddEHEdges);
     // Even when the cfg is not successfully built, we don't
     // want to try building it again.
     builtCFG = true;
@@ -73,12 +69,8 @@ CFG *AnalysisContext::getCFG() {
 
 CFG *AnalysisContext::getUnoptimizedCFG() {
   if (!builtCompleteCFG) {
-    CFG::BuildOptions B;
-    B.PruneTriviallyFalseEdges = false;
-    B.AddEHEdges = AddEHEdges;
-    B.AddImplicitDtors = AddImplicitDtors;
-    B.AddInitializers = AddInitializers;
-    completeCFG = CFG::buildCFG(D, getBody(), &D->getASTContext(), B);
+    completeCFG = CFG::buildCFG(D, getBody(), &D->getASTContext(),
+                                false, AddEHEdges);
     // Even when the cfg is not successfully built, we don't
     // want to try building it again.
     builtCompleteCFG = true;
@@ -130,8 +122,7 @@ AnalysisContext *AnalysisContextManager::getContext(const Decl *D,
                                                     idx::TranslationUnit *TU) {
   AnalysisContext *&AC = Contexts[D];
   if (!AC)
-    AC = new AnalysisContext(D, TU, UseUnoptimizedCFG, false,
-        AddImplicitDtors, AddInitializers);
+    AC = new AnalysisContext(D, TU, UseUnoptimizedCFG);
 
   return AC;
 }

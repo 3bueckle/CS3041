@@ -25,7 +25,6 @@
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/TypeOrdering.h"
 #include "clang/Basic/PartialDiagnostic.h"
-#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/ADT/STLExtras.h"
 #include <algorithm>
@@ -1195,8 +1194,7 @@ bool Sema::IsIntegralPromotion(Expr *From, QualType FromType, QualType ToType) {
 
   // We pre-calculate the promotion type for enum types.
   if (const EnumType *FromEnumType = FromType->getAs<EnumType>())
-    if (ToType->isIntegerType() && 
-        !RequireCompleteType(From->getLocStart(), FromType, PDiag()))
+    if (ToType->isIntegerType())
       return Context.hasSameUnqualifiedType(ToType,
                                 FromEnumType->getDecl()->getPromotionType());
 
@@ -1728,11 +1726,10 @@ bool Sema::CheckPointerConversion(Expr *From, QualType ToType,
                                   CXXCastPath& BasePath,
                                   bool IgnoreBaseAccess) {
   QualType FromType = From->getType();
-  bool IsCStyleOrFunctionalCast = IgnoreBaseAccess;
 
   if (CXXBoolLiteralExpr* LitBool
                           = dyn_cast<CXXBoolLiteralExpr>(From->IgnoreParens()))
-    if (!IsCStyleOrFunctionalCast && LitBool->getValue() == false)
+    if (LitBool->getValue() == false)
       Diag(LitBool->getExprLoc(), diag::warn_init_pointer_from_false)
         << ToType;
 
@@ -2042,7 +2039,7 @@ IsUserDefinedConversion(Sema &S, Expr *From, QualType ToType,
   }
 
   OverloadCandidateSet::iterator Best;
-  switch (CandidateSet.BestViableFunction(S, From->getLocStart(), Best, true)) {
+  switch (CandidateSet.BestViableFunction(S, From->getLocStart(), Best)) {
   case OR_Success:
     // Record the standard conversion we used and the conversion function.
     if (CXXConstructorDecl *Constructor
@@ -2770,7 +2767,7 @@ FindConversionForRefInit(Sema &S, ImplicitConversionSequence &ICS,
   }
 
   OverloadCandidateSet::iterator Best;
-  switch (CandidateSet.BestViableFunction(S, DeclLoc, Best, true)) {
+  switch (CandidateSet.BestViableFunction(S, DeclLoc, Best)) {
   case OR_Success:
     // C++ [over.ics.ref]p1:
     //
@@ -4529,44 +4526,6 @@ Sema::AddBuiltinOperatorCandidates(OverloadedOperatorKind Op,
                                           Op == OO_PipePipe),
                                          VisibleTypeConversionsQuals);
 
-  // C++ [over.built]p1:
-  //   If there is a user-written candidate with the same name and parameter
-  //   types as a built-in candidate operator function, the built-in operator 
-  //   function is hidden and is not included in the set of candidate functions.
-  //
-  // The text is actually in a note, but if we don't implement it then we end
-  // up with ambiguities when the user provides an overloaded operator for
-  // an enumeration type. Note that only enumeration types have this problem,
-  // so we track which enumeration types we've seen operators for.
-  llvm::DenseSet<std::pair<CanQualType, CanQualType> > 
-    UserDefinedBinaryOperators;
-  
-  if (CandidateTypes.enumeration_begin() != CandidateTypes.enumeration_end()) {
-    for (OverloadCandidateSet::iterator C = CandidateSet.begin(),
-                                     CEnd = CandidateSet.end();
-         C != CEnd; ++C) {
-      if (!C->Viable || !C->Function || C->Function->getNumParams() != 2)
-        continue;
-      
-      // Check if the first parameter is of enumeration type.
-      QualType FirstParamType
-        = C->Function->getParamDecl(0)->getType().getUnqualifiedType();
-      if (!FirstParamType->isEnumeralType())
-        continue;
-      
-      // Check if the second parameter is of enumeration type.
-      QualType SecondParamType
-        = C->Function->getParamDecl(1)->getType().getUnqualifiedType();
-      if (!SecondParamType->isEnumeralType())
-        continue;
-
-      // Add this operator to the set of known user-defined operators.
-      UserDefinedBinaryOperators.insert(
-                  std::make_pair(Context.getCanonicalType(FirstParamType),
-                                 Context.getCanonicalType(SecondParamType)));
-    }
-  }
-  
   bool isComparison = false;
   switch (Op) {
   case OO_None:
@@ -4819,10 +4778,7 @@ Sema::AddBuiltinOperatorCandidates(OverloadedOperatorKind Op,
            = CandidateTypes.enumeration_begin();
          Enum != CandidateTypes.enumeration_end(); ++Enum) {
       QualType ParamTypes[2] = { *Enum, *Enum };
-      CanQualType CanonType = Context.getCanonicalType(*Enum);
-      if (!UserDefinedBinaryOperators.count(
-                                          std::make_pair(CanonType, CanonType)))
-        AddBuiltinCandidate(Context.BoolTy, ParamTypes, Args, 2, CandidateSet);
+      AddBuiltinCandidate(Context.BoolTy, ParamTypes, Args, 2, CandidateSet);
     }
 
     // Fall through.
@@ -5330,8 +5286,7 @@ bool
 isBetterOverloadCandidate(Sema &S,
                           const OverloadCandidate& Cand1,
                           const OverloadCandidate& Cand2,
-                          SourceLocation Loc,
-                          bool UserDefinedConversion) {
+                          SourceLocation Loc) {
   // Define viable functions to be better candidates than non-viable
   // functions.
   if (!Cand2.Viable)
@@ -5406,7 +5361,7 @@ isBetterOverloadCandidate(Sema &S,
   //      the type of the entity being initialized) is a better
   //      conversion sequence than the standard conversion sequence
   //      from the return type of F2 to the destination type.
-  if (UserDefinedConversion && Cand1.Function && Cand2.Function &&
+  if (Cand1.Function && Cand2.Function &&
       isa<CXXConversionDecl>(Cand1.Function) &&
       isa<CXXConversionDecl>(Cand2.Function)) {
     switch (CompareStandardConversionSequences(S,
@@ -5443,14 +5398,12 @@ isBetterOverloadCandidate(Sema &S,
 /// \returns The result of overload resolution.
 OverloadingResult
 OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
-                                         iterator& Best,
-                                         bool UserDefinedConversion) {
+                                         iterator& Best) {
   // Find the best viable function.
   Best = end();
   for (iterator Cand = begin(); Cand != end(); ++Cand) {
     if (Cand->Viable)
-      if (Best == end() || isBetterOverloadCandidate(S, *Cand, *Best, Loc, 
-                                                     UserDefinedConversion))
+      if (Best == end() || isBetterOverloadCandidate(S, *Cand, *Best, Loc))
         Best = Cand;
   }
 
@@ -5463,8 +5416,7 @@ OverloadCandidateSet::BestViableFunction(Sema &S, SourceLocation Loc,
   for (iterator Cand = begin(); Cand != end(); ++Cand) {
     if (Cand->Viable &&
         Cand != Best &&
-        !isBetterOverloadCandidate(S, *Best, *Cand, Loc, 
-                                   UserDefinedConversion)) {
+        !isBetterOverloadCandidate(S, *Best, *Cand, Loc)) {
       Best = end();
       return OR_Ambiguous;
     }
@@ -5526,7 +5478,7 @@ OverloadCandidateKind ClassifyOverloadCandidate(Sema &S,
     if (!Meth->isImplicit())
       return isTemplate ? oc_method_template : oc_method;
 
-    assert(Meth->isCopyAssignmentOperator()
+    assert(Meth->isCopyAssignment()
            && "implicit method is not copy assignment operator?");
     return oc_implicit_copy_assignment;
   }
@@ -6348,8 +6300,8 @@ Sema::ResolveAddressOfOverloadedFunction(Expr *From, QualType ToType,
         // FIXME: make a note of the failed deduction for diagnostics.
         (void)Result;
       } else {
-        // Template argument deduction ensures that we have an exact match.
-        // This function template specicalization works.
+        // FIXME: If the match isn't exact, shouldn't we just drop this as
+        // a candidate? Find a testcase before changing the code.
         assert(FunctionType
                  == Context.getCanonicalType(Specialization->getType()));
         Matches.push_back(std::make_pair(I.getPair(),
@@ -6431,9 +6383,7 @@ Sema::ResolveAddressOfOverloadedFunction(Expr *From, QualType ToType,
                                << Matches[0].second->getDeclName(),
                            PDiag(diag::note_ovl_candidate)
                                << (unsigned) oc_function_template);
-    if (Result == MatchesCopy.end())
-      return 0;
-    
+    assert(Result != MatchesCopy.end() && "no most-specialized template");
     MarkDeclarationReferenced(From->getLocStart(), *Result);
     FoundResult = Matches[Result - MatchesCopy.begin()].first;
     if (Complain) {
@@ -6639,6 +6589,7 @@ BuildRecoveryCallExpr(Sema &SemaRef, Scope *S, Expr *Fn,
                       UnresolvedLookupExpr *ULE,
                       SourceLocation LParenLoc,
                       Expr **Args, unsigned NumArgs,
+                      SourceLocation *CommaLocs,
                       SourceLocation RParenLoc) {
 
   CXXScopeSpec SS;
@@ -6678,7 +6629,8 @@ BuildRecoveryCallExpr(Sema &SemaRef, Scope *S, Expr *Fn,
   // an expression with non-empty lookup results, which should never
   // end up here.
   return SemaRef.ActOnCallExpr(/*Scope*/ 0, NewFn.take(), LParenLoc,
-                               MultiExprArg(Args, NumArgs), RParenLoc);
+                               MultiExprArg(Args, NumArgs),
+                               CommaLocs, RParenLoc);
 }
 
 /// ResolveOverloadedCallFn - Given the call expression that calls Fn
@@ -6692,6 +6644,7 @@ ExprResult
 Sema::BuildOverloadedCallExpr(Scope *S, Expr *Fn, UnresolvedLookupExpr *ULE,
                               SourceLocation LParenLoc,
                               Expr **Args, unsigned NumArgs,
+                              SourceLocation *CommaLocs,
                               SourceLocation RParenLoc) {
 #ifndef NDEBUG
   if (ULE->requiresADL()) {
@@ -6722,7 +6675,7 @@ Sema::BuildOverloadedCallExpr(Scope *S, Expr *Fn, UnresolvedLookupExpr *ULE,
   // bailout out if it fails.
   if (CandidateSet.empty())
     return BuildRecoveryCallExpr(*this, S, Fn, ULE, LParenLoc, Args, NumArgs,
-                                 RParenLoc);
+                                 CommaLocs, RParenLoc);
 
   OverloadCandidateSet::iterator Best;
   switch (CandidateSet.BestViableFunction(*this, Fn->getLocStart(), Best)) {
@@ -6865,7 +6818,6 @@ Sema::CreateOverloadedUnaryOp(SourceLocation OpLoc, unsigned OpcIn,
         // Convert the arguments.
         ExprResult InputInit
           = PerformCopyInitialization(InitializedEntity::InitializeParameter(
-                                                      Context,
                                                       FnDecl->getParamDecl(0)),
                                       SourceLocation(), 
                                       Input);
@@ -7047,7 +6999,6 @@ Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
           ExprResult Arg1
             = PerformCopyInitialization(
                                         InitializedEntity::InitializeParameter(
-                                                        Context,
                                                         FnDecl->getParamDecl(0)),
                                         SourceLocation(),
                                         Owned(Args[1]));
@@ -7064,7 +7015,6 @@ Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
           ExprResult Arg0
             = PerformCopyInitialization(
                                         InitializedEntity::InitializeParameter(
-                                                        Context,
                                                         FnDecl->getParamDecl(0)),
                                         SourceLocation(),
                                         Owned(Args[0]));
@@ -7074,7 +7024,6 @@ Sema::CreateOverloadedBinOp(SourceLocation OpLoc,
           ExprResult Arg1
             = PerformCopyInitialization(
                                         InitializedEntity::InitializeParameter(
-                                                        Context,
                                                         FnDecl->getParamDecl(1)),
                                         SourceLocation(),
                                         Owned(Args[1]));
@@ -7234,7 +7183,6 @@ Sema::CreateOverloadedArraySubscriptExpr(SourceLocation LLoc,
         // Convert the arguments.
         ExprResult InputInit
           = PerformCopyInitialization(InitializedEntity::InitializeParameter(
-                                                      Context,
                                                       FnDecl->getParamDecl(0)),
                                       SourceLocation(), 
                                       Owned(Args[1]));
@@ -7321,7 +7269,8 @@ Sema::CreateOverloadedArraySubscriptExpr(SourceLocation LLoc,
 ExprResult
 Sema::BuildCallToMemberFunction(Scope *S, Expr *MemExprE,
                                 SourceLocation LParenLoc, Expr **Args,
-                                unsigned NumArgs, SourceLocation RParenLoc) {
+                                unsigned NumArgs, SourceLocation *CommaLocs,
+                                SourceLocation RParenLoc) {
   // Dig out the member expression. This holds both the object
   // argument and the member function we're referring to.
   Expr *NakedMemExpr = MemExprE->IgnoreParens();
@@ -7466,6 +7415,7 @@ ExprResult
 Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Object,
                                    SourceLocation LParenLoc,
                                    Expr **Args, unsigned NumArgs,
+                                   SourceLocation *CommaLocs,
                                    SourceLocation RParenLoc) {
   assert(Object->getType()->isRecordType() && "Requires object type argument");
   const RecordType *Record = Object->getType()->getAs<RecordType>();
@@ -7601,7 +7551,7 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Object,
                                                    Conv);
       
     return ActOnCallExpr(S, CE, LParenLoc, MultiExprArg(Args, NumArgs),
-                         RParenLoc);
+                         CommaLocs, RParenLoc);
   }
 
   CheckMemberOperatorAccess(LParenLoc, Object, 0, Best->FoundDecl);
@@ -7672,7 +7622,6 @@ Sema::BuildCallToObjectOfClassType(Scope *S, Expr *Object,
 
       ExprResult InputInit
         = PerformCopyInitialization(InitializedEntity::InitializeParameter(
-                                                    Context,
                                                     Method->getParamDecl(i)),
                                     SourceLocation(), Arg);
       

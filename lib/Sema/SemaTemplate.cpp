@@ -2410,15 +2410,13 @@ CheckTemplateArgumentAddressOfObjectOrFunction(Sema &S,
   //        corresponding template-parameter is a reference; or
   DeclRefExpr *DRE = 0;
 
-  // In C++98/03 mode, give an extension warning on any extra parentheses.
-  // See http://www.open-std.org/jtc1/sc22/wg21/docs/cwg_defects.html#773
-  bool ExtraParens = false;
+  // Ignore (and complain about) any excess parentheses.
   while (ParenExpr *Parens = dyn_cast<ParenExpr>(Arg)) {
-    if (!Invalid && !ExtraParens && !S.getLangOptions().CPlusPlus0x) {
+    if (!Invalid) {
       S.Diag(Arg->getSourceRange().getBegin(),
-             diag::ext_template_arg_extra_parens)
+             diag::err_template_arg_extra_parens)
         << Arg->getSourceRange();
-      ExtraParens = true;
+      Invalid = true;
     }
 
     Arg = Parens->getSubExpr();
@@ -2660,15 +2658,13 @@ bool Sema::CheckTemplateArgumentPointerToMember(Expr *Arg,
   //     -- a pointer to member expressed as described in 5.3.1.
   DeclRefExpr *DRE = 0;
 
-  // In C++98/03 mode, give an extension warning on any extra parentheses.
-  // See http://www.open-std.org/jtc1/sc22/wg21/docs/cwg_defects.html#773
-  bool ExtraParens = false;
+  // Ignore (and complain about) any excess parentheses.
   while (ParenExpr *Parens = dyn_cast<ParenExpr>(Arg)) {
-    if (!Invalid && !ExtraParens && !getLangOptions().CPlusPlus0x) {
+    if (!Invalid) {
       Diag(Arg->getSourceRange().getBegin(),
-           diag::ext_template_arg_extra_parens)
+           diag::err_template_arg_extra_parens)
         << Arg->getSourceRange();
-      ExtraParens = true;
+      Invalid = true;
     }
 
     Arg = Parens->getSubExpr();
@@ -3445,32 +3441,17 @@ static bool CheckTemplateSpecializationScope(Sema &S,
   if ((!PrevDecl || 
        getTemplateSpecializationKind(PrevDecl) == TSK_Undeclared ||
        getTemplateSpecializationKind(PrevDecl) == TSK_ImplicitInstantiation)){
-    // C++ [temp.exp.spec]p2:
-    //   An explicit specialization shall be declared in the namespace of which
-    //   the template is a member, or, for member templates, in the namespace 
-    //   of which the enclosing class or enclosing class template is a member.
-    //   An explicit specialization of a member function, member class or 
-    //   static data member of a class template shall be declared in the 
-    //   namespace of which the class template is a member.
-    //
-    // C++0x [temp.expl.spec]p2:
-    //   An explicit specialization shall be declared in a namespace enclosing 
-    //   the specialized template.
-    if (!DC->InEnclosingNamespaceSetOf(SpecializedContext) &&
-        !(S.getLangOptions().CPlusPlus0x && DC->Encloses(SpecializedContext))) {
-      bool IsCPlusPlus0xExtension
-        = !S.getLangOptions().CPlusPlus0x && DC->Encloses(SpecializedContext);
+    // There is no prior declaration of this entity, so this
+    // specialization must be in the same context as the template
+    // itself, or in the enclosing namespace set.
+    if (!DC->InEnclosingNamespaceSetOf(SpecializedContext)) {
       if (isa<TranslationUnitDecl>(SpecializedContext))
-        S.Diag(Loc, IsCPlusPlus0xExtension
-                      ? diag::ext_template_spec_decl_out_of_scope_global
-                      : diag::err_template_spec_decl_out_of_scope_global)
-          << EntityKind << Specialized;
+        S.Diag(Loc, diag::err_template_spec_decl_out_of_scope_global)
+        << EntityKind << Specialized;
       else if (isa<NamespaceDecl>(SpecializedContext))
-        S.Diag(Loc, IsCPlusPlus0xExtension
-                      ? diag::ext_template_spec_decl_out_of_scope
-                      : diag::err_template_spec_decl_out_of_scope)
-          << EntityKind << Specialized
-          << cast<NamedDecl>(SpecializedContext);
+        S.Diag(Loc, diag::err_template_spec_decl_out_of_scope)
+        << EntityKind << Specialized
+        << cast<NamedDecl>(SpecializedContext);
       
       S.Diag(Specialized->getLocation(), diag::note_specialized_entity);
       ComplainedAboutScope = true;

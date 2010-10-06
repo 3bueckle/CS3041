@@ -624,7 +624,7 @@ MemRegionManager::getCompoundLiteralRegion(const CompoundLiteralExpr* CL,
 }
 
 const ElementRegion*
-MemRegionManager::getElementRegion(QualType elementType, NonLoc Idx,
+MemRegionManager::getElementRegion(QualType elementType, SVal Idx,
                                    const MemRegion* superRegion,
                                    ASTContext& Ctx){
 

@@ -236,10 +236,6 @@ namespace clang {
     /// \brief Set the external source for preprocessed entities.
     void SetExternalSource(ExternalPreprocessingRecordSource &Source,
                            unsigned NumPreallocatedEntities);
-
-    unsigned getNumPreallocatedEntities() const {
-      return NumPreallocatedEntities;
-    }
     
     /// \brief Set the preallocated entry at the given index to the given
     /// preprocessed entity.

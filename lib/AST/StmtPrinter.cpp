@@ -18,7 +18,6 @@
 #include "clang/AST/PrettyPrinter.h"
 #include "llvm/Support/Format.h"
 #include "clang/AST/Expr.h"
-#include "clang/AST/ExprCXX.h"
 using namespace clang;
 
 //===----------------------------------------------------------------------===//
@@ -1002,16 +1001,6 @@ void StmtPrinter::VisitCXXTypeidExpr(CXXTypeidExpr *Node) {
   OS << ")";
 }
 
-void StmtPrinter::VisitCXXUuidofExpr(CXXUuidofExpr *Node) {
-  OS << "__uuidof(";
-  if (Node->isTypeOperand()) {
-    OS << Node->getTypeOperand().getAsString(Policy);
-  } else {
-    PrintExpr(Node->getExprOperand());
-  }
-  OS << ")";
-}
-
 void StmtPrinter::VisitCXXBoolLiteralExpr(CXXBoolLiteralExpr *Node) {
   OS << (Node->getValue() ? "true" : "false");
 }
@@ -1062,10 +1051,7 @@ void StmtPrinter::VisitCXXTemporaryObjectExpr(CXXTemporaryObjectExpr *Node) {
 }
 
 void StmtPrinter::VisitCXXScalarValueInitExpr(CXXScalarValueInitExpr *Node) {
-  if (TypeSourceInfo *TSInfo = Node->getTypeSourceInfo())
-    OS << TSInfo->getType().getAsString(Policy) << "()";
-  else
-    OS << Node->getType().getAsString(Policy) << "()";
+  OS << Node->getType().getAsString(Policy) << "()";
 }
 
 void StmtPrinter::VisitCXXNewExpr(CXXNewExpr *E) {
@@ -1233,12 +1219,6 @@ static const char *getTypeTraitName(UnaryTypeTrait UTT) {
 void StmtPrinter::VisitUnaryTypeTraitExpr(UnaryTypeTraitExpr *E) {
   OS << getTypeTraitName(E->getTrait()) << "("
      << E->getQueriedType().getAsString(Policy) << ")";
-}
-
-void StmtPrinter::VisitCXXNoexceptExpr(CXXNoexceptExpr *E) {
-  OS << "noexcept(";
-  PrintExpr(E->getOperand());
-  OS << ")";
 }
 
 // Obj-C

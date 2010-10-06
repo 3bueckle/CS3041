@@ -84,9 +84,6 @@ ASTUnit::~ASTUnit() {
 
   ClearCachedCompletionResults();
   
-  if (TimerGroup)
-    TimerGroup->printAll(llvm::errs());
-
   for (unsigned I = 0, N = Timers.size(); I != N; ++I)
     delete Timers[I];
 }
@@ -118,8 +115,7 @@ static unsigned getDeclShowContexts(NamedDecl *ND,
                 | (1 << (CodeCompletionContext::CCC_ObjCIvarList - 1))
                 | (1 << (CodeCompletionContext::CCC_ClassStructUnion - 1))
                 | (1 << (CodeCompletionContext::CCC_Statement - 1))
-                | (1 << (CodeCompletionContext::CCC_Type - 1))
-              | (1 << (CodeCompletionContext::CCC_ParenthesizedExpression - 1));
+                | (1 << (CodeCompletionContext::CCC_Type - 1));
 
     // In C++, types can appear in expressions contexts (for functional casts).
     if (LangOpts.CPlusPlus)
@@ -145,13 +141,12 @@ static unsigned getDeclShowContexts(NamedDecl *ND,
       
       if (LangOpts.CPlusPlus)
         IsNestedNameSpecifier = true;
-    } else if (isa<ClassTemplateDecl>(ND))
+    } else if (isa<ClassTemplateDecl>(ND) || isa<TemplateTemplateParmDecl>(ND))
       IsNestedNameSpecifier = true;
   } else if (isa<ValueDecl>(ND) || isa<FunctionTemplateDecl>(ND)) {
     // Values can appear in these contexts.
     Contexts = (1 << (CodeCompletionContext::CCC_Statement - 1))
              | (1 << (CodeCompletionContext::CCC_Expression - 1))
-             | (1 << (CodeCompletionContext::CCC_ParenthesizedExpression - 1))
              | (1 << (CodeCompletionContext::CCC_ObjCMessageReceiver - 1));
   } else if (isa<ObjCProtocolDecl>(ND)) {
     Contexts = (1 << (CodeCompletionContext::CCC_ObjCProtocolName - 1));
@@ -242,8 +237,7 @@ void ASTUnit::CacheCodeCompletionResults() {
           | (1 << (CodeCompletionContext::CCC_UnionTag - 1))
           | (1 << (CodeCompletionContext::CCC_ClassOrStructTag - 1))
           | (1 << (CodeCompletionContext::CCC_Type - 1))
-          | (1 << (CodeCompletionContext::CCC_PotentiallyQualifiedName - 1))
-          | (1 << (CodeCompletionContext::CCC_ParenthesizedExpression - 1));
+          | (1 << (CodeCompletionContext::CCC_PotentiallyQualifiedName - 1));
 
         if (isa<NamespaceDecl>(Results[I].Declaration) ||
             isa<NamespaceAliasDecl>(Results[I].Declaration))
@@ -285,9 +279,7 @@ void ASTUnit::CacheCodeCompletionResults() {
         | (1 << (CodeCompletionContext::CCC_Expression - 1))
         | (1 << (CodeCompletionContext::CCC_ObjCMessageReceiver - 1))
         | (1 << (CodeCompletionContext::CCC_MacroNameUse - 1))
-        | (1 << (CodeCompletionContext::CCC_PreprocessorExpression - 1))
-        | (1 << (CodeCompletionContext::CCC_ParenthesizedExpression - 1));
-
+        | (1 << (CodeCompletionContext::CCC_PreprocessorExpression - 1));
       
       CachedResult.Priority = Results[I].Priority;
       CachedResult.Kind = Results[I].CursorKind;
@@ -479,7 +471,7 @@ ASTUnit *ASTUnit::LoadFromASTFile(const std::string &Filename,
   Reader->setListener(new ASTInfoCollector(LangInfo, HeaderInfo, TargetTriple,
                                            Predefines, Counter));
 
-  switch (Reader->ReadAST(Filename, ASTReader::MainFile)) {
+  switch (Reader->ReadAST(Filename)) {
   case ASTReader::Success:
     break;
 
@@ -798,7 +790,6 @@ error:
     PreprocessorOpts.DisablePCHValidation = true;
     PreprocessorOpts.ImplicitPCHInclude = PriorImplicitPCHInclude;
     delete OverrideMainBuffer;
-    SavedMainFileBuffer = 0;
   }
   
   Clang.takeSourceManager();
@@ -812,27 +803,15 @@ static std::string GetPreamblePCHPath() {
   // FIXME: This is lame; sys::Path should provide this function (in particular,
   // it should know how to find the temporary files dir).
   // FIXME: This is really lame. I copied this code from the Driver!
-  // FIXME: This is a hack so that we can override the preamble file during
-  // crash-recovery testing, which is the only case where the preamble files
-  // are not necessarily cleaned up. 
-  const char *TmpFile = ::getenv("CINDEXTEST_PREAMBLE_FILE");
-  if (TmpFile)
-    return TmpFile;
-  
   std::string Error;
   const char *TmpDir = ::getenv("TMPDIR");
   if (!TmpDir)
     TmpDir = ::getenv("TEMP");
   if (!TmpDir)
     TmpDir = ::getenv("TMP");
-#ifdef LLVM_ON_WIN32
-  if (!TmpDir)
-    TmpDir = ::getenv("USERPROFILE");
-#endif
   if (!TmpDir)
     TmpDir = "/tmp";
   llvm::sys::Path P(TmpDir);
-  P.createDirectoryOnDisk(true);
   P.appendComponent("preamble");
   P.appendSuffix("pch");
   if (P.createTemporaryFileOnDisk())
@@ -1109,15 +1088,6 @@ llvm::MemoryBuffer *ASTUnit::getMainBufferWithPrecompiledPreamble(
     return 0;
   }
 
-  // Create a temporary file for the precompiled preamble. In rare 
-  // circumstances, this can fail.
-  std::string PreamblePCHPath = GetPreamblePCHPath();
-  if (PreamblePCHPath.empty()) {
-    // Try again next time.
-    PreambleRebuildCounter = 1;
-    return 0;
-  }
-  
   // We did not previously compute a preamble, or it can't be reused anyway.
   llvm::Timer *PreambleTimer = 0;
   if (TimerGroup.get()) {
@@ -1159,9 +1129,11 @@ llvm::MemoryBuffer *ASTUnit::getMainBufferWithPrecompiledPreamble(
   
   // Tell the compiler invocation to generate a temporary precompiled header.
   FrontendOpts.ProgramAction = frontend::GeneratePCH;
-  FrontendOpts.ChainedPCH = true;
+  // FIXME: Set ChainedPCH unconditionally, once it is ready.
+  if (::getenv("LIBCLANG_CHAINING"))
+    FrontendOpts.ChainedPCH = true;
   // FIXME: Generate the precompiled header into memory?
-  FrontendOpts.OutputFile = PreamblePCHPath;
+  FrontendOpts.OutputFile = GetPreamblePCHPath();
   
   // Create the compiler instance to use for building the precompiled preamble.
   CompilerInstance Clang;
@@ -1306,7 +1278,10 @@ unsigned ASTUnit::getMaxPCHLevel() const {
   if (!getOnlyLocalDecls())
     return Decl::MaxPCHLevel;
 
-  return 0;
+  unsigned Result = 0;
+  if (isMainFileAST() || SavedMainFileBuffer)
+    ++Result;
+  return Result;
 }
 
 ASTUnit *ASTUnit::LoadFromCompilerInvocation(CompilerInvocation *CI,
@@ -1521,10 +1496,8 @@ namespace {
         | (1 << (CodeCompletionContext::CCC_Expression - 1))
         | (1 << (CodeCompletionContext::CCC_ObjCMessageReceiver - 1))
         | (1 << (CodeCompletionContext::CCC_MemberAccess - 1))
-        | (1 << (CodeCompletionContext::CCC_ObjCProtocolName - 1))
-        | (1 << (CodeCompletionContext::CCC_ParenthesizedExpression - 1))
-        | (1 << (CodeCompletionContext::CCC_Recovery - 1));
-
+        | (1 << (CodeCompletionContext::CCC_ObjCProtocolName - 1));
+      
       if (AST.getASTContext().getLangOptions().CPlusPlus)
         NormalContexts |= (1 << (CodeCompletionContext::CCC_EnumTag - 1))
                     | (1 << (CodeCompletionContext::CCC_UnionTag - 1))
@@ -1553,7 +1526,7 @@ void CalculateHiddenNames(const CodeCompletionContext &Context,
                           llvm::StringSet<> &HiddenNames) {
   bool OnlyTagNames = false;
   switch (Context.getKind()) {
-  case CodeCompletionContext::CCC_Recovery:
+  case CodeCompletionContext::CCC_Other:
   case CodeCompletionContext::CCC_TopLevel:
   case CodeCompletionContext::CCC_ObjCInterface:
   case CodeCompletionContext::CCC_ObjCImplementation:
@@ -1567,7 +1540,6 @@ void CalculateHiddenNames(const CodeCompletionContext &Context,
   case CodeCompletionContext::CCC_Type:
   case CodeCompletionContext::CCC_Name:
   case CodeCompletionContext::CCC_PotentiallyQualifiedName:
-  case CodeCompletionContext::CCC_ParenthesizedExpression:
     break;
     
   case CodeCompletionContext::CCC_EnumTag:
@@ -1584,7 +1556,6 @@ void CalculateHiddenNames(const CodeCompletionContext &Context,
   case CodeCompletionContext::CCC_NaturalLanguage:
   case CodeCompletionContext::CCC_SelectorName:
   case CodeCompletionContext::CCC_TypeQualifiers:
-  case CodeCompletionContext::CCC_Other:
     // We're looking for nothing, or we're looking for names that cannot
     // be hidden.
     return;
@@ -1629,7 +1600,7 @@ void AugmentedCodeCompleteConsumer::ProcessCodeCompleteResults(Sema &S,
   // Merge the results we were given with the results we cached.
   bool AddedResult = false;
   unsigned InContexts  
-    = (Context.getKind() == CodeCompletionContext::CCC_Recovery? NormalContexts
+    = (Context.getKind() == CodeCompletionContext::CCC_Other? NormalContexts
                                             : (1 << (Context.getKind() - 1)));
 
   // Contains the set of names that are hidden by "local" completion results.
@@ -1667,7 +1638,6 @@ void AugmentedCodeCompleteConsumer::ProcessCodeCompleteResults(Sema &S,
     if (!Context.getPreferredType().isNull()) {
       if (C->Kind == CXCursor_MacroDefinition) {
         Priority = getMacroUsagePriority(C->Completion->getTypedText(),
-                                         S.getLangOptions(),
                                Context.getPreferredType()->isAnyPointerType());        
       } else if (C->Type) {
         CanQualType Expected

@@ -155,8 +155,6 @@ public:
 
   virtual types::ID LookupTypeForExtension(const char *Ext) const;
 
-  virtual bool HasNativeLLVMSupport() const;
-
   virtual DerivedArgList *TranslateArgs(const DerivedArgList &Args,
                                         const char *BoundArch) const;
 
@@ -222,12 +220,6 @@ public:
 
   virtual void AddLinkRuntimeLibArgs(const ArgList &Args,
                                      ArgStringList &CmdArgs) const;
-
-  virtual void AddCXXStdlibLibArgs(const ArgList &Args,
-                                   ArgStringList &CmdArgs) const;
-
-  virtual void AddCCKextLibArgs(const ArgList &Args,
-                                ArgStringList &CmdArgs) const;
 
   /// }
 };

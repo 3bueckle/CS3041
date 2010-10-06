@@ -189,12 +189,12 @@ CodeGenFunction::AddInitializerToGlobalBlockVarDecl(const VarDecl &D,
   if (!Init) {
     if (!getContext().getLangOptions().CPlusPlus)
       CGM.ErrorUnsupported(D.getInit(), "constant l-value expression");
-    else if (Builder.GetInsertBlock()) {
+    else {
       // Since we have a static initializer, this global variable can't 
       // be constant.
       GV->setConstant(false);
-
-      EmitCXXStaticLocalInit(D, GV);
+      
+      EmitStaticCXXBlockVarDeclInit(D, GV);
     }
     return GV;
   }
@@ -244,10 +244,6 @@ void CodeGenFunction::EmitStaticBlockVarDecl(const VarDecl &D,
   // Make sure to evaluate VLA bounds now so that we have them for later.
   if (D.getType()->isVariablyModifiedType())
     EmitVLASize(D.getType());
-  
-  // Local static block variables must be treated as globals as they may be
-  // referenced in their RHS initializer block-literal expresion.
-  CGM.setStaticLocalDeclAddress(&D, GV);
 
   // If this value has an initializer, emit it.
   if (D.getInit())
@@ -270,6 +266,9 @@ void CodeGenFunction::EmitStaticBlockVarDecl(const VarDecl &D,
   if (D.hasAttr<UsedAttr>())
     CGM.AddUsedGlobal(GV);
 
+  if (getContext().getLangOptions().CPlusPlus)
+    CGM.setStaticLocalDeclAddress(&D, GV);
+  
   // We may have to cast the constant because of the initializer
   // mismatch above.
   //
@@ -761,7 +760,7 @@ void CodeGenFunction::EmitLocalBlockVarDecl(const VarDecl &D,
     } else if (Init->getType()->isAnyComplexType()) {
       EmitComplexExprIntoAddr(Init, Loc, isVolatile);
     } else {
-      EmitAggExpr(Init, AggValueSlot::forAddr(Loc, isVolatile, true));
+      EmitAggExpr(Init, Loc, isVolatile);
     }
   }
 
@@ -806,8 +805,9 @@ void CodeGenFunction::EmitLocalBlockVarDecl(const VarDecl &D,
   }
 
   // If this is a block variable, clean it up.
+  // FIXME: this should be an EH cleanup as well.  rdar://problem/8224178
   if (needsDispose && CGM.getLangOptions().getGCMode() != LangOptions::GCOnly)
-    EHStack.pushCleanup<CallBlockRelease>(NormalAndEHCleanup, DeclPtr);
+    EHStack.pushCleanup<CallBlockRelease>(NormalCleanup, DeclPtr);
 }
 
 /// Emit an alloca (or GlobalValue depending on target)

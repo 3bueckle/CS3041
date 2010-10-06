@@ -745,14 +745,6 @@ DefinedOrUnknownSVal RegionStoreManager::getSizeInElements(const GRState *state,
     return UnknownVal();
 
   CharUnits RegionSize = CharUnits::fromQuantity(SizeInt->getSExtValue());
-
-  if (Ctx.getAsVariableArrayType(EleTy)) {
-    // FIXME: We need to track extra state to properly record the size
-    // of VLAs.  Returning UnknownVal here, however, is a stop-gap so that
-    // we don't have a divide-by-zero below.
-    return UnknownVal();
-  }
-
   CharUnits EleSize = Ctx.getTypeSizeInChars(EleTy);
 
   // If a variable is reinterpreted as a type that doesn't fit into a larger
@@ -786,7 +778,7 @@ SVal RegionStoreManager::ArrayToPointer(Loc Array) {
   ArrayType *AT = cast<ArrayType>(T);
   T = AT->getElementType();
 
-  NonLoc ZeroIdx = ValMgr.makeZeroArrayIndex();
+  SVal ZeroIdx = ValMgr.makeZeroArrayIndex();
   return loc::MemRegionVal(MRMgr.getElementRegion(T, ZeroIdx, ArrayR, Ctx));
 }
 
@@ -828,14 +820,14 @@ SVal RegionStoreManager::EvalBinOp(BinaryOperator::Opcode Op, Loc L, NonLoc R,
       else
         EleTy = T->getAs<ObjCObjectPointerType>()->getPointeeType();
 
-      const NonLoc &ZeroIdx = ValMgr.makeZeroArrayIndex();
+      SVal ZeroIdx = ValMgr.makeZeroArrayIndex();
       ER = MRMgr.getElementRegion(EleTy, ZeroIdx, SR, Ctx);
       break;
     }
     case MemRegion::AllocaRegionKind: {
       const AllocaRegion *AR = cast<AllocaRegion>(MR);
       QualType EleTy = Ctx.CharTy; // Create an ElementRegion of bytes.
-      NonLoc ZeroIdx = ValMgr.makeZeroArrayIndex();
+      SVal ZeroIdx = ValMgr.makeZeroArrayIndex();
       ER = MRMgr.getElementRegion(EleTy, ZeroIdx, AR, Ctx);
       break;
     }
@@ -889,12 +881,8 @@ SVal RegionStoreManager::EvalBinOp(BinaryOperator::Opcode Op, Loc L, NonLoc R,
       SVal NewIdx =
         Base->evalBinOp(ValMgr, Op,
                 cast<nonloc::ConcreteInt>(ValMgr.convertToArrayIndex(*Offset)));
-
-      if (!isa<NonLoc>(NewIdx))
-        return UnknownVal();
-
       const MemRegion* NewER =
-        MRMgr.getElementRegion(ER->getElementType(), cast<NonLoc>(NewIdx),
+        MRMgr.getElementRegion(ER->getElementType(), NewIdx,
                                ER->getSuperRegion(), Ctx);
       return ValMgr.makeLoc(NewER);
     }
@@ -1310,7 +1298,7 @@ SVal RegionStoreManager::RetrieveStruct(Store store, const TypedRegion* R) {
 }
 
 SVal RegionStoreManager::RetrieveArray(Store store, const TypedRegion * R) {
-  assert(Ctx.getAsConstantArrayType(R->getValueType()));
+  assert(isa<ConstantArrayType>(R->getValueType()));
   return ValMgr.makeLazyCompoundVal(store, R);
 }
 
@@ -1453,7 +1441,7 @@ Store RegionStoreManager::BindArray(Store store, const TypedRegion* R,
     if (VI == VE)
       break;
 
-    const NonLoc &Idx = ValMgr.makeArrayIndex(i);
+    SVal Idx = ValMgr.makeArrayIndex(i);
     const ElementRegion *ER = MRMgr.getElementRegion(ElementTy, Idx, R, Ctx);
 
     if (ElementTy->isStructureOrClassType())

@@ -32,8 +32,6 @@
 #include "llvm/Support/raw_ostream.h"
 #include "clang/Basic/TargetBuiltins.h"
 #include "clang/Basic/TargetInfo.h"
-#include "clang/Basic/ConvertUTF.h"
-
 #include <limits>
 using namespace clang;
 using namespace sema;
@@ -131,24 +129,6 @@ ExprResult
 Sema::CheckBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
   ExprResult TheCallResult(Owned(TheCall));
 
-  // Find out if any arguments are required to be integer constant expressions.
-  unsigned ICEArguments = 0;
-  ASTContext::GetBuiltinTypeError Error;
-  Context.GetBuiltinType(BuiltinID, Error, &ICEArguments);
-  if (Error != ASTContext::GE_None)
-    ICEArguments = 0;  // Don't diagnose previously diagnosed errors.
-  
-  // If any arguments are required to be ICE's, check and diagnose.
-  for (unsigned ArgNo = 0; ICEArguments != 0; ++ArgNo) {
-    // Skip arguments not required to be ICE's.
-    if ((ICEArguments & (1 << ArgNo)) == 0) continue;
-    
-    llvm::APSInt Result;
-    if (SemaBuiltinConstantArg(TheCall, ArgNo, Result))
-      return true;
-    ICEArguments &= ~(1 << ArgNo);
-  }
-  
   switch (BuiltinID) {
   case Builtin::BI__builtin___CFStringMakeConstantString:
     assert(TheCall->getNumArgs() == 1 &&
@@ -182,6 +162,19 @@ Sema::CheckBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
     if (SemaBuiltinFPClassification(TheCall, 1))
       return ExprError();
     break;
+  case Builtin::BI__builtin_return_address:
+  case Builtin::BI__builtin_frame_address: {
+    llvm::APSInt Result;
+    if (SemaBuiltinConstantArg(TheCall, 0, Result))
+      return ExprError();
+    break;
+  }
+  case Builtin::BI__builtin_eh_return_data_regno: {
+    llvm::APSInt Result;
+    if (SemaBuiltinConstantArg(TheCall, 0, Result))
+      return ExprError();
+    break;
+  }
   case Builtin::BI__builtin_shufflevector:
     return SemaBuiltinShuffleVector(TheCall);
     // TheCall will be freed by the smart pointer here, but that's fine, since
@@ -224,12 +217,30 @@ Sema::CheckBuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
         if (CheckARMBuiltinFunctionCall(BuiltinID, TheCall))
           return ExprError();
         break;
+      case llvm::Triple::x86:
+      case llvm::Triple::x86_64:
+        if (CheckX86BuiltinFunctionCall(BuiltinID, TheCall))
+          return ExprError();
+        break;
       default:
         break;
     }
   }
 
   return move(TheCallResult);
+}
+
+bool Sema::CheckX86BuiltinFunctionCall(unsigned BuiltinID, CallExpr *TheCall) {
+  switch (BuiltinID) {
+  case X86::BI__builtin_ia32_palignr128:
+  case X86::BI__builtin_ia32_palignr: {
+    llvm::APSInt Result;
+    if (SemaBuiltinConstantArg(TheCall, 2, Result))
+      return true;
+    break;
+  }
+  }
+  return false;
 }
 
 // Get the valid immediate range for the specified NEON type code.
@@ -328,12 +339,8 @@ bool Sema::CheckFunctionCall(FunctionDecl *FDecl, CallExpr *TheCall) {
   // more efficient. For example, just map function ids to custom
   // handlers.
 
-  // Printf and scanf checking.
-  for (specific_attr_iterator<FormatAttr>
-         i = FDecl->specific_attr_begin<FormatAttr>(),
-         e = FDecl->specific_attr_end<FormatAttr>(); i != e ; ++i) {
-
-    const FormatAttr *Format = *i;
+  // Printf checking.
+  if (const FormatAttr *Format = FDecl->getAttr<FormatAttr>()) {
     const bool b = Format->getType() == "scanf";
     if (b || CheckablePrintfAttr(Format, TheCall)) {
       bool HasVAListArg = Format->getFirstArg() == 0;
@@ -344,11 +351,12 @@ bool Sema::CheckFunctionCall(FunctionDecl *FDecl, CallExpr *TheCall) {
     }
   }
 
-  for (specific_attr_iterator<NonNullAttr>
-         i = FDecl->specific_attr_begin<NonNullAttr>(),
-         e = FDecl->specific_attr_end<NonNullAttr>(); i != e; ++i) {
+  specific_attr_iterator<NonNullAttr>
+    i = FDecl->specific_attr_begin<NonNullAttr>(),
+    e = FDecl->specific_attr_end<NonNullAttr>();
+
+  for (; i != e; ++i)
     CheckNonNullArguments(*i, TheCall);
-  }
 
   return false;
 }
@@ -414,7 +422,7 @@ Sema::SemaBuiltinAtomicOverloaded(ExprResult TheCallResult) {
 
   QualType ValType =
     FirstArg->getType()->getAs<PointerType>()->getPointeeType();
-  if (!ValType->isIntegerType() && !ValType->isAnyPointerType() &&
+  if (!ValType->isIntegerType() && !ValType->isPointerType() &&
       !ValType->isBlockPointerType()) {
     Diag(DRE->getLocStart(), diag::err_atomic_builtin_must_be_pointer_intptr)
       << FirstArg->getType() << FirstArg->getSourceRange();
@@ -573,6 +581,9 @@ Sema::SemaBuiltinAtomicOverloaded(ExprResult TheCallResult) {
 
 /// CheckObjCString - Checks that the argument to the builtin
 /// CFString constructor is correct
+/// FIXME: GCC currently emits the following warning:
+/// "warning: input conversion stopped due to an input byte that does not
+///           belong to the input codeset UTF-8"
 /// Note: It might also make sense to do the UTF-16 conversion here (would
 /// simplify the backend).
 bool Sema::CheckObjCString(Expr *Arg) {
@@ -591,21 +602,7 @@ bool Sema::CheckObjCString(Expr *Arg) {
          diag::warn_cfstring_literal_contains_nul_character)
       << Arg->getSourceRange();
   }
-  if (Literal->containsNonAsciiOrNull()) {
-    llvm::StringRef String = Literal->getString();
-    unsigned NumBytes = String.size();
-    llvm::SmallVector<UTF16, 128> ToBuf(NumBytes);
-    const UTF8 *FromPtr = (UTF8 *)String.data();
-    UTF16 *ToPtr = &ToBuf[0];
-    
-    ConversionResult Result = ConvertUTF8toUTF16(&FromPtr, FromPtr + NumBytes,
-                                                 &ToPtr, ToPtr + NumBytes,
-                                                 strictConversion);
-    // Check for conversion failure.
-    if (Result != conversionOK)
-      Diag(Arg->getLocStart(),
-           diag::warn_cfstring_truncated) << Arg->getSourceRange();
-  }
+
   return false;
 }
 
@@ -932,7 +929,7 @@ bool Sema::SemaCheckStringLiteral(const Expr *E, const CallExpr *TheCall,
                                   bool HasVAListArg,
                                   unsigned format_idx, unsigned firstDataArg,
                                   bool isPrintf) {
- tryAgain:
+
   if (E->isTypeDependent() || E->isValueDependent())
     return false;
 
@@ -945,21 +942,16 @@ bool Sema::SemaCheckStringLiteral(const Expr *E, const CallExpr *TheCall,
                                   format_idx, firstDataArg, isPrintf);
   }
 
-  case Stmt::IntegerLiteralClass:
-    // Technically -Wformat-nonliteral does not warn about this case.
-    // The behavior of printf and friends in this case is implementation
-    // dependent.  Ideally if the format string cannot be null then
-    // it should have a 'nonnull' attribute in the function prototype.
-    return true;
-
   case Stmt::ImplicitCastExprClass: {
-    E = cast<ImplicitCastExpr>(E)->getSubExpr();
-    goto tryAgain;
+    const ImplicitCastExpr *Expr = cast<ImplicitCastExpr>(E);
+    return SemaCheckStringLiteral(Expr->getSubExpr(), TheCall, HasVAListArg,
+                                  format_idx, firstDataArg, isPrintf);
   }
 
   case Stmt::ParenExprClass: {
-    E = cast<ParenExpr>(E)->getSubExpr();
-    goto tryAgain;
+    const ParenExpr *Expr = cast<ParenExpr>(E);
+    return SemaCheckStringLiteral(Expr->getSubExpr(), TheCall, HasVAListArg,
+                                  format_idx, firstDataArg, isPrintf);
   }
 
   case Stmt::DeclRefExprClass: {
@@ -2436,54 +2428,28 @@ bool IsSameFloatAfterCast(const APValue &value,
 
 void AnalyzeImplicitConversions(Sema &S, Expr *E);
 
-static bool IsZero(Sema &S, Expr *E) {
-  // Suppress cases where we are comparing against an enum constant.
-  if (const DeclRefExpr *DR =
-      dyn_cast<DeclRefExpr>(E->IgnoreParenImpCasts()))
-    if (isa<EnumConstantDecl>(DR->getDecl()))
-      return false;
-
-  // Suppress cases where the '0' value is expanded from a macro.
-  if (E->getLocStart().isMacroID())
-    return false;
-
+bool IsZero(Sema &S, Expr *E) {
   llvm::APSInt Value;
   return E->isIntegerConstantExpr(Value, S.Context) && Value == 0;
-}
-
-static bool HasEnumType(Expr *E) {
-  // Strip off implicit integral promotions.
-  while (ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(E)) {
-    switch (ICE->getCastKind()) {
-    case CK_IntegralCast:
-    case CK_NoOp:
-      E = ICE->getSubExpr();
-      continue;
-    default:
-      break;
-    }
-  }
-
-  return E->getType()->isEnumeralType();
 }
 
 void CheckTrivialUnsignedComparison(Sema &S, BinaryOperator *E) {
   BinaryOperatorKind op = E->getOpcode();
   if (op == BO_LT && IsZero(S, E->getRHS())) {
     S.Diag(E->getOperatorLoc(), diag::warn_lunsigned_always_true_comparison)
-      << "< 0" << "false" << HasEnumType(E->getLHS())
+      << "< 0" << "false"
       << E->getLHS()->getSourceRange() << E->getRHS()->getSourceRange();
   } else if (op == BO_GE && IsZero(S, E->getRHS())) {
     S.Diag(E->getOperatorLoc(), diag::warn_lunsigned_always_true_comparison)
-      << ">= 0" << "true" << HasEnumType(E->getLHS())
+      << ">= 0" << "true"
       << E->getLHS()->getSourceRange() << E->getRHS()->getSourceRange();
   } else if (op == BO_GT && IsZero(S, E->getLHS())) {
     S.Diag(E->getOperatorLoc(), diag::warn_runsigned_always_true_comparison)
-      << "0 >" << "false" << HasEnumType(E->getRHS())
+      << "0 >" << "false" 
       << E->getLHS()->getSourceRange() << E->getRHS()->getSourceRange();
   } else if (op == BO_LE && IsZero(S, E->getLHS())) {
     S.Diag(E->getOperatorLoc(), diag::warn_runsigned_always_true_comparison)
-      << "0 <=" << "true" << HasEnumType(E->getRHS())
+      << "0 <=" << "true" 
       << E->getLHS()->getSourceRange() << E->getRHS()->getSourceRange();
   }
 }

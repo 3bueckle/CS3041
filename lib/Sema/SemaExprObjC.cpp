@@ -241,8 +241,7 @@ bool Sema::CheckMessageArgumentTypes(Expr **Args, unsigned NumArgs,
                               << argExpr->getSourceRange()))
       return true;
 
-    InitializedEntity Entity = InitializedEntity::InitializeParameter(Context,
-                                                                      Param);
+    InitializedEntity Entity = InitializedEntity::InitializeParameter(Param);
     ExprResult ArgE = PerformCopyInitialization(Entity,
                                                       SourceLocation(),
                                                       Owned(argExpr->Retain()));
@@ -627,12 +626,12 @@ Sema::ObjCMessageKind Sema::getObjCMessageKind(Scope *S,
 }
 
 ExprResult Sema::ActOnSuperMessage(Scope *S, 
-                                   SourceLocation SuperLoc,
-                                   Selector Sel,
-                                   SourceLocation LBracLoc,
-                                   SourceLocation SelectorLoc,
-                                   SourceLocation RBracLoc,
-                                   MultiExprArg Args) {
+                                               SourceLocation SuperLoc,
+                                               Selector Sel,
+                                               SourceLocation LBracLoc,
+                                               SourceLocation SelectorLoc,
+                                               SourceLocation RBracLoc,
+                                               MultiExprArg Args) {
   // Determine whether we are inside a method or not.
   ObjCMethodDecl *Method = getCurMethodDecl();
   if (!Method) {
@@ -703,21 +702,13 @@ ExprResult Sema::ActOnSuperMessage(Scope *S,
 ///
 /// \param Args The message arguments.
 ExprResult Sema::BuildClassMessage(TypeSourceInfo *ReceiverTypeInfo,
-                                   QualType ReceiverType,
-                                   SourceLocation SuperLoc,
-                                   Selector Sel,
-                                   ObjCMethodDecl *Method,
-                                   SourceLocation LBracLoc, 
-                                   SourceLocation RBracLoc,
-                                   MultiExprArg ArgsIn) {
-  SourceLocation Loc = SuperLoc.isValid()? SuperLoc
-    : ReceiverTypeInfo->getTypeLoc().getSourceRange().getBegin();
-  if (LBracLoc.isInvalid()) {
-    Diag(Loc, diag::err_missing_open_square_message_send)
-      << FixItHint::CreateInsertion(Loc, "[");
-    LBracLoc = Loc;
-  }
-  
+                                               QualType ReceiverType,
+                                               SourceLocation SuperLoc,
+                                               Selector Sel,
+                                               ObjCMethodDecl *Method,
+                                               SourceLocation LBracLoc, 
+                                               SourceLocation RBracLoc,
+                                               MultiExprArg ArgsIn) {
   if (ReceiverType->isDependentType()) {
     // If the receiver type is dependent, we can't type-check anything
     // at this point. Build a dependent expression.
@@ -729,6 +720,9 @@ ExprResult Sema::BuildClassMessage(TypeSourceInfo *ReceiverTypeInfo,
                                          Args, NumArgs, RBracLoc));
   }
   
+  SourceLocation Loc = SuperLoc.isValid()? SuperLoc
+             : ReceiverTypeInfo->getTypeLoc().getLocalSourceRange().getBegin();
+
   // Find the class to which we are sending this message.
   ObjCInterfaceDecl *Class = 0;
   const ObjCObjectType *ClassType = ReceiverType->getAs<ObjCObjectType>();
@@ -787,12 +781,12 @@ ExprResult Sema::BuildClassMessage(TypeSourceInfo *ReceiverTypeInfo,
 // ArgExprs is optional - if it is present, the number of expressions
 // is obtained from Sel.getNumArgs().
 ExprResult Sema::ActOnClassMessage(Scope *S, 
-                                   ParsedType Receiver,
-                                   Selector Sel,
-                                   SourceLocation LBracLoc,
-                                   SourceLocation SelectorLoc,
-                                   SourceLocation RBracLoc,
-                                   MultiExprArg Args) {
+                                               ParsedType Receiver,
+                                               Selector Sel,
+                                               SourceLocation LBracLoc,
+                                               SourceLocation SelectorLoc,
+                                               SourceLocation RBracLoc,
+                                               MultiExprArg Args) {
   TypeSourceInfo *ReceiverTypeInfo;
   QualType ReceiverType = GetTypeFromParser(Receiver, &ReceiverTypeInfo);
   if (ReceiverType.isNull())
@@ -843,15 +837,6 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
                                                   SourceLocation LBracLoc, 
                                                   SourceLocation RBracLoc,
                                                   MultiExprArg ArgsIn) {
-  // The location of the receiver.
-  SourceLocation Loc = SuperLoc.isValid()? SuperLoc : Receiver->getLocStart();
-  
-  if (LBracLoc.isInvalid()) {
-    Diag(Loc, diag::err_missing_open_square_message_send)
-      << FixItHint::CreateInsertion(Loc, "[");
-    LBracLoc = Loc;
-  }
-
   // If we have a receiver expression, perform appropriate promotions
   // and determine receiver type.
   if (Receiver) {
@@ -872,6 +857,9 @@ ExprResult Sema::BuildInstanceMessage(Expr *Receiver,
     DefaultFunctionArrayLvalueConversion(Receiver);
     ReceiverType = Receiver->getType();
   }
+
+  // The location of the receiver.
+  SourceLocation Loc = SuperLoc.isValid()? SuperLoc : Receiver->getLocStart();
 
   if (!Method) {
     // Handle messages to id.

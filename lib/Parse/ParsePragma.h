@@ -25,8 +25,7 @@ class PragmaAlignHandler : public PragmaHandler {
 public:
   explicit PragmaAlignHandler(Sema &A) : PragmaHandler("align"), Actions(A) {}
 
-  virtual void HandlePragma(Preprocessor &PP, PragmaIntroducerKind Introducer,
-                            Token &FirstToken);
+  virtual void HandlePragma(Preprocessor &PP, Token &FirstToken);
 };
 
 class PragmaGCCVisibilityHandler : public PragmaHandler {
@@ -35,8 +34,7 @@ public:
   explicit PragmaGCCVisibilityHandler(Sema &A) : PragmaHandler("visibility"),
                                                  Actions(A) {}
 
-  virtual void HandlePragma(Preprocessor &PP, PragmaIntroducerKind Introducer,
-                            Token &FirstToken);
+  virtual void HandlePragma(Preprocessor &PP, Token &FirstToken);
 };
 
 class PragmaOptionsHandler : public PragmaHandler {
@@ -45,8 +43,7 @@ public:
   explicit PragmaOptionsHandler(Sema &A) : PragmaHandler("options"),
                                            Actions(A) {}
 
-  virtual void HandlePragma(Preprocessor &PP, PragmaIntroducerKind Introducer,
-                            Token &FirstToken);
+  virtual void HandlePragma(Preprocessor &PP, Token &FirstToken);
 };
 
 class PragmaPackHandler : public PragmaHandler {
@@ -55,8 +52,7 @@ public:
   explicit PragmaPackHandler(Sema &A) : PragmaHandler("pack"),
                                         Actions(A) {}
 
-  virtual void HandlePragma(Preprocessor &PP, PragmaIntroducerKind Introducer,
-                            Token &FirstToken);
+  virtual void HandlePragma(Preprocessor &PP, Token &FirstToken);
 };
 
 class PragmaUnusedHandler : public PragmaHandler {
@@ -66,8 +62,7 @@ public:
   PragmaUnusedHandler(Sema &A, Parser& p)
     : PragmaHandler("unused"), Actions(A), parser(p) {}
 
-  virtual void HandlePragma(Preprocessor &PP, PragmaIntroducerKind Introducer,
-                            Token &FirstToken);
+  virtual void HandlePragma(Preprocessor &PP, Token &FirstToken);
 };
 
 class PragmaWeakHandler : public PragmaHandler {
@@ -76,8 +71,7 @@ public:
   explicit PragmaWeakHandler(Sema &A)
     : PragmaHandler("weak"), Actions(A) {}
 
-  virtual void HandlePragma(Preprocessor &PP, PragmaIntroducerKind Introducer,
-                            Token &FirstToken);
+  virtual void HandlePragma(Preprocessor &PP, Token &FirstToken);
 };
 
 }  // end namespace clang

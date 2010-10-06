@@ -2,4 +2,3 @@
 #undef g
 #undef h
 #define h() g()
-int x;

@@ -559,14 +559,6 @@ CallExpr::CallExpr(ASTContext &C, StmtClass SC, EmptyShell Empty)
 
 Decl *CallExpr::getCalleeDecl() {
   Expr *CEE = getCallee()->IgnoreParenCasts();
-  // If we're calling a dereference, look at the pointer instead.
-  if (BinaryOperator *BO = dyn_cast<BinaryOperator>(CEE)) {
-    if (BO->isPtrMemOp())
-      CEE = BO->getRHS()->IgnoreParenCasts();
-  } else if (UnaryOperator *UO = dyn_cast<UnaryOperator>(CEE)) {
-    if (UO->getOpcode() == UO_Deref)
-      CEE = UO->getSubExpr()->IgnoreParenCasts();
-  }
   if (DeclRefExpr *DRE = dyn_cast<DeclRefExpr>(CEE))
     return DRE->getDecl();
   if (MemberExpr *ME = dyn_cast<MemberExpr>(CEE))
@@ -1225,13 +1217,9 @@ bool Expr::isUnusedResultAWarning(SourceLocation &Loc, SourceRange &R1,
     // however, if the result of the stmt expr is dead, we don't want to emit a
     // warning.
     const CompoundStmt *CS = cast<StmtExpr>(this)->getSubStmt();
-    if (!CS->body_empty()) {
+    if (!CS->body_empty())
       if (const Expr *E = dyn_cast<Expr>(CS->body_back()))
         return E->isUnusedResultAWarning(Loc, R1, R2, Ctx);
-      if (const LabelStmt *Label = dyn_cast<LabelStmt>(CS->body_back()))
-        if (const Expr *E = dyn_cast<Expr>(Label->getSubStmt()))
-          return E->isUnusedResultAWarning(Loc, R1, R2, Ctx);
-    }
 
     if (getType()->isVoidType())
       return false;
@@ -1323,235 +1311,6 @@ bool Expr::isOBJCGCCandidate(ASTContext &Ctx) const {
     return cast<ArraySubscriptExpr>(this)->getBase()->isOBJCGCCandidate(Ctx);
   }
 }
-
-static Expr::CanThrowResult MergeCanThrow(Expr::CanThrowResult CT1,
-                                          Expr::CanThrowResult CT2) {
-  // CanThrowResult constants are ordered so that the maximum is the correct
-  // merge result.
-  return CT1 > CT2 ? CT1 : CT2;
-}
-
-static Expr::CanThrowResult CanSubExprsThrow(ASTContext &C, const Expr *CE) {
-  Expr *E = const_cast<Expr*>(CE);
-  Expr::CanThrowResult R = Expr::CT_Cannot;
-  for (Expr::child_iterator I = E->child_begin(), IE = E->child_end();
-       I != IE && R != Expr::CT_Can; ++I) {
-    R = MergeCanThrow(R, cast<Expr>(*I)->CanThrow(C));
-  }
-  return R;
-}
-
-static Expr::CanThrowResult CanCalleeThrow(const Decl *D,
-                                           bool NullThrows = true) {
-  if (!D)
-    return NullThrows ? Expr::CT_Can : Expr::CT_Cannot;
-
-  // See if we can get a function type from the decl somehow.
-  const ValueDecl *VD = dyn_cast<ValueDecl>(D);
-  if (!VD) // If we have no clue what we're calling, assume the worst.
-    return Expr::CT_Can;
-
-  // As an extension, we assume that __attribute__((nothrow)) functions don't
-  // throw.
-  if (isa<FunctionDecl>(D) && D->hasAttr<NoThrowAttr>())
-    return Expr::CT_Cannot;
-
-  QualType T = VD->getType();
-  const FunctionProtoType *FT;
-  if ((FT = T->getAs<FunctionProtoType>())) {
-  } else if (const PointerType *PT = T->getAs<PointerType>())
-    FT = PT->getPointeeType()->getAs<FunctionProtoType>();
-  else if (const ReferenceType *RT = T->getAs<ReferenceType>())
-    FT = RT->getPointeeType()->getAs<FunctionProtoType>();
-  else if (const MemberPointerType *MT = T->getAs<MemberPointerType>())
-    FT = MT->getPointeeType()->getAs<FunctionProtoType>();
-  else if (const BlockPointerType *BT = T->getAs<BlockPointerType>())
-    FT = BT->getPointeeType()->getAs<FunctionProtoType>();
-
-  if (!FT)
-    return Expr::CT_Can;
-
-  return FT->hasEmptyExceptionSpec() ? Expr::CT_Cannot : Expr::CT_Can;
-}
-
-static Expr::CanThrowResult CanDynamicCastThrow(const CXXDynamicCastExpr *DC) {
-  if (DC->isTypeDependent())
-    return Expr::CT_Dependent;
-
-  if (!DC->getTypeAsWritten()->isReferenceType())
-    return Expr::CT_Cannot;
-
-  return DC->getCastKind() == clang::CK_Dynamic? Expr::CT_Can : Expr::CT_Cannot;
-}
-
-static Expr::CanThrowResult CanTypeidThrow(ASTContext &C,
-                                           const CXXTypeidExpr *DC) {
-  if (DC->isTypeOperand())
-    return Expr::CT_Cannot;
-
-  Expr *Op = DC->getExprOperand();
-  if (Op->isTypeDependent())
-    return Expr::CT_Dependent;
-
-  const RecordType *RT = Op->getType()->getAs<RecordType>();
-  if (!RT)
-    return Expr::CT_Cannot;
-
-  if (!cast<CXXRecordDecl>(RT->getDecl())->isPolymorphic())
-    return Expr::CT_Cannot;
-
-  if (Op->Classify(C).isPRValue())
-    return Expr::CT_Cannot;
-
-  return Expr::CT_Can;
-}
-
-Expr::CanThrowResult Expr::CanThrow(ASTContext &C) const {
-  // C++ [expr.unary.noexcept]p3:
-  //   [Can throw] if in a potentially-evaluated context the expression would
-  //   contain:
-  switch (getStmtClass()) {
-  case CXXThrowExprClass:
-    //   - a potentially evaluated throw-expression
-    return CT_Can;
-
-  case CXXDynamicCastExprClass: {
-    //   - a potentially evaluated dynamic_cast expression dynamic_cast<T>(v),
-    //     where T is a reference type, that requires a run-time check
-    CanThrowResult CT = CanDynamicCastThrow(cast<CXXDynamicCastExpr>(this));
-    if (CT == CT_Can)
-      return CT;
-    return MergeCanThrow(CT, CanSubExprsThrow(C, this));
-  }
-
-  case CXXTypeidExprClass:
-    //   - a potentially evaluated typeid expression applied to a glvalue
-    //     expression whose type is a polymorphic class type
-    return CanTypeidThrow(C, cast<CXXTypeidExpr>(this));
-
-    //   - a potentially evaluated call to a function, member function, function
-    //     pointer, or member function pointer that does not have a non-throwing
-    //     exception-specification
-  case CallExprClass:
-  case CXXOperatorCallExprClass:
-  case CXXMemberCallExprClass: {
-    CanThrowResult CT = CanCalleeThrow(cast<CallExpr>(this)->getCalleeDecl());
-    if (CT == CT_Can)
-      return CT;
-    return MergeCanThrow(CT, CanSubExprsThrow(C, this));
-  }
-
-  case CXXConstructExprClass:
-  case CXXTemporaryObjectExprClass: {
-    CanThrowResult CT = CanCalleeThrow(
-        cast<CXXConstructExpr>(this)->getConstructor());
-    if (CT == CT_Can)
-      return CT;
-    return MergeCanThrow(CT, CanSubExprsThrow(C, this));
-  }
-
-  case CXXNewExprClass: {
-    CanThrowResult CT = MergeCanThrow(
-        CanCalleeThrow(cast<CXXNewExpr>(this)->getOperatorNew()),
-        CanCalleeThrow(cast<CXXNewExpr>(this)->getConstructor(),
-                       /*NullThrows*/false));
-    if (CT == CT_Can)
-      return CT;
-    return MergeCanThrow(CT, CanSubExprsThrow(C, this));
-  }
-
-  case CXXDeleteExprClass: {
-    CanThrowResult CT = CanCalleeThrow(
-        cast<CXXDeleteExpr>(this)->getOperatorDelete());
-    if (CT == CT_Can)
-      return CT;
-    const Expr *Arg = cast<CXXDeleteExpr>(this)->getArgument();
-    // Unwrap exactly one implicit cast, which converts all pointers to void*.
-    if (const ImplicitCastExpr *Cast = dyn_cast<ImplicitCastExpr>(Arg))
-      Arg = Cast->getSubExpr();
-    if (const PointerType *PT = Arg->getType()->getAs<PointerType>()) {
-      if (const RecordType *RT = PT->getPointeeType()->getAs<RecordType>()) {
-        CanThrowResult CT2 = CanCalleeThrow(
-            cast<CXXRecordDecl>(RT->getDecl())->getDestructor());
-        if (CT2 == CT_Can)
-          return CT2;
-        CT = MergeCanThrow(CT, CT2);
-      }
-    }
-    return MergeCanThrow(CT, CanSubExprsThrow(C, this));
-  }
-
-  case CXXBindTemporaryExprClass: {
-    // The bound temporary has to be destroyed again, which might throw.
-    CanThrowResult CT = CanCalleeThrow(
-      cast<CXXBindTemporaryExpr>(this)->getTemporary()->getDestructor());
-    if (CT == CT_Can)
-      return CT;
-    return MergeCanThrow(CT, CanSubExprsThrow(C, this));
-  }
-
-    // ObjC message sends are like function calls, but never have exception
-    // specs.
-  case ObjCMessageExprClass:
-  case ObjCPropertyRefExprClass:
-  case ObjCImplicitSetterGetterRefExprClass:
-    return CT_Can;
-
-    // Many other things have subexpressions, so we have to test those.
-    // Some are simple:
-  case ParenExprClass:
-  case MemberExprClass:
-  case CXXReinterpretCastExprClass:
-  case CXXConstCastExprClass:
-  case ConditionalOperatorClass:
-  case CompoundLiteralExprClass:
-  case ExtVectorElementExprClass:
-  case InitListExprClass:
-  case DesignatedInitExprClass:
-  case ParenListExprClass:
-  case VAArgExprClass:
-  case CXXDefaultArgExprClass:
-  case CXXExprWithTemporariesClass:
-  case ObjCIvarRefExprClass:
-  case ObjCIsaExprClass:
-  case ShuffleVectorExprClass:
-    return CanSubExprsThrow(C, this);
-
-    // Some might be dependent for other reasons.
-  case UnaryOperatorClass:
-  case ArraySubscriptExprClass:
-  case ImplicitCastExprClass:
-  case CStyleCastExprClass:
-  case CXXStaticCastExprClass:
-  case CXXFunctionalCastExprClass:
-  case BinaryOperatorClass:
-  case CompoundAssignOperatorClass: {
-    CanThrowResult CT = isTypeDependent() ? CT_Dependent : CT_Cannot;
-    return MergeCanThrow(CT, CanSubExprsThrow(C, this));
-  }
-
-    // FIXME: We should handle StmtExpr, but that opens a MASSIVE can of worms.
-  case StmtExprClass:
-    return CT_Can;
-
-  case ChooseExprClass:
-    if (isTypeDependent() || isValueDependent())
-      return CT_Dependent;
-    return cast<ChooseExpr>(this)->getChosenSubExpr(C)->CanThrow(C);
-
-    // Some expressions are always dependent.
-  case DependentScopeDeclRefExprClass:
-  case CXXUnresolvedConstructExprClass:
-  case CXXDependentScopeMemberExprClass:
-    return CT_Dependent;
-
-  default:
-    // All other expressions don't have subexpressions, or else they are
-    // unevaluated.
-    return CT_Cannot;
-  }
-}
-
 Expr* Expr::IgnoreParens() {
   Expr* E = this;
   while (ParenExpr* P = dyn_cast<ParenExpr>(E))
@@ -1652,41 +1411,46 @@ static const Expr *skipTemporaryBindingsAndNoOpCasts(const Expr *E) {
   return E;
 }
 
-/// isTemporaryObject - Determines if this expression produces a
-/// temporary of the given class type.
-bool Expr::isTemporaryObject(ASTContext &C, const CXXRecordDecl *TempTy) const {
-  if (!C.hasSameUnqualifiedType(getType(), C.getTypeDeclType(TempTy)))
-    return false;
-
+const Expr *Expr::getTemporaryObject() const {
   const Expr *E = skipTemporaryBindingsAndNoOpCasts(this);
 
-  // Temporaries are by definition pr-values of class type.
-  if (!E->Classify(C).isPRValue()) {
-    // In this context, property reference is a message call and is pr-value.
-    if (!isa<ObjCPropertyRefExpr>(E) && 
-        !isa<ObjCImplicitSetterGetterRefExpr>(E))
-      return false;
+  // A cast can produce a temporary object. The object's construction
+  // is represented as a CXXConstructExpr.
+  if (const CastExpr *Cast = dyn_cast<CastExpr>(E)) {
+    // Only user-defined and constructor conversions can produce
+    // temporary objects.
+    if (Cast->getCastKind() != CK_ConstructorConversion &&
+        Cast->getCastKind() != CK_UserDefinedConversion)
+      return 0;
+
+    // Strip off temporary bindings and no-op casts.
+    const Expr *Sub = skipTemporaryBindingsAndNoOpCasts(Cast->getSubExpr());
+
+    // If this is a constructor conversion, see if we have an object
+    // construction.
+    if (Cast->getCastKind() == CK_ConstructorConversion)
+      return dyn_cast<CXXConstructExpr>(Sub);
+
+    // If this is a user-defined conversion, see if we have a call to
+    // a function that itself returns a temporary object.
+    if (Cast->getCastKind() == CK_UserDefinedConversion)
+      if (const CallExpr *CE = dyn_cast<CallExpr>(Sub))
+        if (CE->getCallReturnType()->isRecordType())
+          return CE;
+
+    return 0;
   }
 
-  // Black-list a few cases which yield pr-values of class type that don't
-  // refer to temporaries of that type:
+  // A call returning a class type returns a temporary.
+  if (const CallExpr *CE = dyn_cast<CallExpr>(E)) {
+    if (CE->getCallReturnType()->isRecordType())
+      return CE;
 
-  // - implicit derived-to-base conversions
-  if (isa<ImplicitCastExpr>(E)) {
-    switch (cast<ImplicitCastExpr>(E)->getCastKind()) {
-    case CK_DerivedToBase:
-    case CK_UncheckedDerivedToBase:
-      return false;
-    default:
-      break;
-    }
+    return 0;
   }
 
-  // - member expressions (all)
-  if (isa<MemberExpr>(E))
-    return false;
-
-  return true;
+  // Explicit temporary object constructors create temporaries.
+  return dyn_cast<CXXTemporaryObjectExpr>(E);
 }
 
 /// hasAnyTypeDependentArguments - Determines if any of the expressions
@@ -1768,9 +1532,6 @@ bool Expr::isConstantInitializer(ASTContext &Ctx, bool IsForRef) const {
     return true;
   case ParenExprClass:
     return cast<ParenExpr>(this)->getSubExpr()
-      ->isConstantInitializer(Ctx, IsForRef);
-  case ChooseExprClass:
-    return cast<ChooseExpr>(this)->getChosenSubExpr(Ctx)
       ->isConstantInitializer(Ctx, IsForRef);
   case UnaryOperatorClass: {
     const UnaryOperator* Exp = cast<UnaryOperator>(this);
@@ -1862,13 +1623,6 @@ bool Expr::isNullPointerConstant(ASTContext &Ctx,
   if (getType()->isNullPtrType())
     return true;
 
-  if (const RecordType *UT = getType()->getAsUnionType())
-    if (UT && UT->getDecl()->hasAttr<TransparentUnionAttr>())
-      if (const CompoundLiteralExpr *CLE = dyn_cast<CompoundLiteralExpr>(this)){
-        const Expr *InitExpr = CLE->getInitializer();
-        if (const InitListExpr *ILE = dyn_cast<InitListExpr>(InitExpr))
-          return ILE->getInit(0)->isNullPointerConstant(Ctx, NPC);
-      }
   // This expression must be an integer type.
   if (!getType()->isIntegerType() || 
       (Ctx.getLangOptions().CPlusPlus && getType()->isEnumeralType()))

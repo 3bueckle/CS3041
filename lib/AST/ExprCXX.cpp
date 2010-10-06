@@ -39,22 +39,6 @@ Stmt::child_iterator CXXTypeidExpr::child_end() {
                          : reinterpret_cast<Stmt **>(&Operand) + 1;
 }
 
-QualType CXXUuidofExpr::getTypeOperand() const {
-  assert(isTypeOperand() && "Cannot call getTypeOperand for __uuidof(expr)");
-  return Operand.get<TypeSourceInfo *>()->getType().getNonReferenceType()
-                                                        .getUnqualifiedType();
-}
-
-// CXXUuidofExpr - has child iterators if the operand is an expression
-Stmt::child_iterator CXXUuidofExpr::child_begin() {
-  return isTypeOperand() ? child_iterator() 
-                         : reinterpret_cast<Stmt **>(&Operand);
-}
-Stmt::child_iterator CXXUuidofExpr::child_end() {
-  return isTypeOperand() ? child_iterator() 
-                         : reinterpret_cast<Stmt **>(&Operand) + 1;
-}
-
 // CXXBoolLiteralExpr
 Stmt::child_iterator CXXBoolLiteralExpr::child_begin() {
   return child_iterator();
@@ -91,13 +75,6 @@ Stmt::child_iterator CXXDefaultArgExpr::child_end() {
 }
 
 // CXXScalarValueInitExpr
-SourceRange CXXScalarValueInitExpr::getSourceRange() const {
-  SourceLocation Start = RParenLoc;
-  if (TypeInfo)
-    Start = TypeInfo->getTypeLoc().getBeginLoc();
-  return SourceRange(Start, RParenLoc);
-}
-
 Stmt::child_iterator CXXScalarValueInitExpr::child_begin() {
   return child_iterator();
 }
@@ -112,14 +89,12 @@ CXXNewExpr::CXXNewExpr(ASTContext &C, bool globalNew, FunctionDecl *operatorNew,
                        CXXConstructorDecl *constructor, bool initializer,
                        Expr **constructorArgs, unsigned numConsArgs,
                        FunctionDecl *operatorDelete, QualType ty,
-                       TypeSourceInfo *AllocatedTypeInfo,
                        SourceLocation startLoc, SourceLocation endLoc)
   : Expr(CXXNewExprClass, ty, ty->isDependentType(), ty->isDependentType()),
     GlobalNew(globalNew),
     Initializer(initializer), SubExprs(0), OperatorNew(operatorNew),
     OperatorDelete(operatorDelete), Constructor(constructor),
-    AllocatedTypeInfo(AllocatedTypeInfo), TypeIdParens(TypeIdParens),
-    StartLoc(startLoc), EndLoc(endLoc) {
+    TypeIdParens(TypeIdParens), StartLoc(startLoc), EndLoc(endLoc) {
       
   AllocateArgsArray(C, arraySize != 0, numPlaceArgs, numConsArgs);
   unsigned i = 0;
@@ -149,19 +124,6 @@ Stmt::child_iterator CXXNewExpr::child_end() {
 }
 
 // CXXDeleteExpr
-QualType CXXDeleteExpr::getDestroyedType() const {
-  const Expr *Arg = getArgument();
-  while (const ImplicitCastExpr *ICE = dyn_cast<ImplicitCastExpr>(Arg)) {
-    if (ICE->getCastKind() != CK_UserDefinedConversion &&
-        ICE->getType()->isVoidPointerType())
-      Arg = ICE->getSubExpr();
-    else
-      break;
-  }
-
-  return Arg->getType()->getAs<PointerType>()->getPointeeType();
-}
-
 Stmt::child_iterator CXXDeleteExpr::child_begin() { return &Argument; }
 Stmt::child_iterator CXXDeleteExpr::child_end() { return &Argument+1; }
 
@@ -338,6 +300,205 @@ StmtIterator DependentScopeDeclRefExpr::child_begin() {
 
 StmtIterator DependentScopeDeclRefExpr::child_end() {
   return child_iterator();
+}
+
+bool UnaryTypeTraitExpr::EvaluateTrait(ASTContext& C) const {
+  switch(UTT) {
+  default: assert(false && "Unknown type trait or not implemented");
+  case UTT_IsPOD: return QueriedType->isPODType();
+  case UTT_IsLiteral: return QueriedType->isLiteralType();
+  case UTT_IsClass: // Fallthrough
+  case UTT_IsUnion:
+    if (const RecordType *Record = QueriedType->getAs<RecordType>()) {
+      bool Union = Record->getDecl()->isUnion();
+      return UTT == UTT_IsUnion ? Union : !Union;
+    }
+    return false;
+  case UTT_IsEnum: return QueriedType->isEnumeralType();
+  case UTT_IsPolymorphic:
+    if (const RecordType *Record = QueriedType->getAs<RecordType>()) {
+      // Type traits are only parsed in C++, so we've got CXXRecords.
+      return cast<CXXRecordDecl>(Record->getDecl())->isPolymorphic();
+    }
+    return false;
+  case UTT_IsAbstract:
+    if (const RecordType *RT = QueriedType->getAs<RecordType>())
+      return cast<CXXRecordDecl>(RT->getDecl())->isAbstract();
+    return false;
+  case UTT_IsEmpty:
+    if (const RecordType *Record = QueriedType->getAs<RecordType>()) {
+      return !Record->getDecl()->isUnion()
+          && cast<CXXRecordDecl>(Record->getDecl())->isEmpty();
+    }
+    return false;
+  case UTT_HasTrivialConstructor:
+    // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html:
+    //   If __is_pod (type) is true then the trait is true, else if type is
+    //   a cv class or union type (or array thereof) with a trivial default
+    //   constructor ([class.ctor]) then the trait is true, else it is false.
+    if (QueriedType->isPODType())
+      return true;
+    if (const RecordType *RT =
+          C.getBaseElementType(QueriedType)->getAs<RecordType>())
+      return cast<CXXRecordDecl>(RT->getDecl())->hasTrivialConstructor();
+    return false;
+  case UTT_HasTrivialCopy:
+    // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html:
+    //   If __is_pod (type) is true or type is a reference type then
+    //   the trait is true, else if type is a cv class or union type
+    //   with a trivial copy constructor ([class.copy]) then the trait
+    //   is true, else it is false.
+    if (QueriedType->isPODType() || QueriedType->isReferenceType())
+      return true;
+    if (const RecordType *RT = QueriedType->getAs<RecordType>())
+      return cast<CXXRecordDecl>(RT->getDecl())->hasTrivialCopyConstructor();
+    return false;
+  case UTT_HasTrivialAssign:
+    // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html:
+    //   If type is const qualified or is a reference type then the
+    //   trait is false. Otherwise if __is_pod (type) is true then the
+    //   trait is true, else if type is a cv class or union type with
+    //   a trivial copy assignment ([class.copy]) then the trait is
+    //   true, else it is false.
+    // Note: the const and reference restrictions are interesting,
+    // given that const and reference members don't prevent a class
+    // from having a trivial copy assignment operator (but do cause
+    // errors if the copy assignment operator is actually used, q.v.
+    // [class.copy]p12).
+
+    if (C.getBaseElementType(QueriedType).isConstQualified())
+      return false;
+    if (QueriedType->isPODType())
+      return true;
+    if (const RecordType *RT = QueriedType->getAs<RecordType>())
+      return cast<CXXRecordDecl>(RT->getDecl())->hasTrivialCopyAssignment();
+    return false;
+  case UTT_HasTrivialDestructor:
+    // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html:
+    //   If __is_pod (type) is true or type is a reference type
+    //   then the trait is true, else if type is a cv class or union
+    //   type (or array thereof) with a trivial destructor
+    //   ([class.dtor]) then the trait is true, else it is
+    //   false.
+    if (QueriedType->isPODType() || QueriedType->isReferenceType())
+      return true;
+    if (const RecordType *RT =
+          C.getBaseElementType(QueriedType)->getAs<RecordType>())
+      return cast<CXXRecordDecl>(RT->getDecl())->hasTrivialDestructor();
+    return false;
+  // TODO: Propagate nothrowness for implicitly declared special members.
+  case UTT_HasNothrowAssign:
+    // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html:
+    //   If type is const qualified or is a reference type then the
+    //   trait is false. Otherwise if __has_trivial_assign (type)
+    //   is true then the trait is true, else if type is a cv class
+    //   or union type with copy assignment operators that are known
+    //   not to throw an exception then the trait is true, else it is
+    //   false.
+    if (C.getBaseElementType(QueriedType).isConstQualified())
+      return false;
+    if (QueriedType->isReferenceType())
+      return false;
+    if (QueriedType->isPODType())
+      return true;
+    if (const RecordType *RT = QueriedType->getAs<RecordType>()) {
+      CXXRecordDecl* RD = cast<CXXRecordDecl>(RT->getDecl());
+      if (RD->hasTrivialCopyAssignment())
+        return true;
+
+      bool FoundAssign = false;
+      bool AllNoThrow = true;
+      DeclarationName Name = C.DeclarationNames.getCXXOperatorName(OO_Equal);
+      DeclContext::lookup_const_iterator Op, OpEnd;
+      for (llvm::tie(Op, OpEnd) = RD->lookup(Name);
+           Op != OpEnd; ++Op) {
+        CXXMethodDecl *Operator = cast<CXXMethodDecl>(*Op);
+        if (Operator->isCopyAssignmentOperator()) {
+          FoundAssign = true;
+          const FunctionProtoType *CPT
+              = Operator->getType()->getAs<FunctionProtoType>();
+          if (!CPT->hasEmptyExceptionSpec()) {
+            AllNoThrow = false;
+            break;
+          }
+        }
+      }
+
+      return FoundAssign && AllNoThrow;
+    }
+    return false;
+  case UTT_HasNothrowCopy:
+    // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html:
+    //   If __has_trivial_copy (type) is true then the trait is true, else
+    //   if type is a cv class or union type with copy constructors that are
+    //   known not to throw an exception then the trait is true, else it is
+    //   false.
+    if (QueriedType->isPODType() || QueriedType->isReferenceType())
+      return true;
+    if (const RecordType *RT = QueriedType->getAs<RecordType>()) {
+      CXXRecordDecl *RD = cast<CXXRecordDecl>(RT->getDecl());
+      if (RD->hasTrivialCopyConstructor())
+        return true;
+
+      bool FoundConstructor = false;
+      bool AllNoThrow = true;
+      unsigned FoundTQs;
+      DeclarationName ConstructorName
+          = C.DeclarationNames.getCXXConstructorName(
+                                          C.getCanonicalType(QueriedType));
+      DeclContext::lookup_const_iterator Con, ConEnd;
+      for (llvm::tie(Con, ConEnd) = RD->lookup(ConstructorName);
+           Con != ConEnd; ++Con) {
+        CXXConstructorDecl *Constructor = cast<CXXConstructorDecl>(*Con);
+        if (Constructor->isCopyConstructor(FoundTQs)) {
+          FoundConstructor = true;
+          const FunctionProtoType *CPT
+              = Constructor->getType()->getAs<FunctionProtoType>();
+          if (!CPT->hasEmptyExceptionSpec()) {
+            AllNoThrow = false;
+            break;
+          }
+        }
+      }
+
+      return FoundConstructor && AllNoThrow;
+    }
+    return false;
+  case UTT_HasNothrowConstructor:
+    // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html:
+    //   If __has_trivial_constructor (type) is true then the trait is
+    //   true, else if type is a cv class or union type (or array
+    //   thereof) with a default constructor that is known not to
+    //   throw an exception then the trait is true, else it is false.
+    if (QueriedType->isPODType())
+      return true;
+    if (const RecordType *RT =
+          C.getBaseElementType(QueriedType)->getAs<RecordType>()) {
+      CXXRecordDecl *RD = cast<CXXRecordDecl>(RT->getDecl());
+      if (RD->hasTrivialConstructor())
+        return true;
+
+      if (CXXConstructorDecl *Constructor = RD->getDefaultConstructor()) {
+        const FunctionProtoType *CPT
+            = Constructor->getType()->getAs<FunctionProtoType>();
+        // TODO: check whether evaluating default arguments can throw.
+        // For now, we'll be conservative and assume that they can throw.
+        if (CPT->hasEmptyExceptionSpec() && CPT->getNumArgs() == 0)
+          return true;
+      }
+    }
+    return false;
+  case UTT_HasVirtualDestructor:
+    // http://gcc.gnu.org/onlinedocs/gcc/Type-Traits.html:
+    //   If type is a class type with a virtual destructor ([class.dtor])
+    //   then the trait is true, else it is false.
+    if (const RecordType *Record = QueriedType->getAs<RecordType>()) {
+      CXXRecordDecl *RD = cast<CXXRecordDecl>(Record->getDecl());
+      if (CXXDestructorDecl *Destructor = RD->getDestructor())
+        return Destructor->isVirtual();
+    }
+    return false;
+  }
 }
 
 SourceRange CXXConstructExpr::getSourceRange() const { 
@@ -528,20 +689,15 @@ CXXBindTemporaryExpr *CXXBindTemporaryExpr::Create(ASTContext &C,
 
 CXXTemporaryObjectExpr::CXXTemporaryObjectExpr(ASTContext &C,
                                                CXXConstructorDecl *Cons,
-                                               TypeSourceInfo *Type,
+                                               QualType writtenTy,
+                                               SourceLocation tyBeginLoc,
                                                Expr **Args,
                                                unsigned NumArgs,
                                                SourceLocation rParenLoc,
                                                bool ZeroInitialization)
-  : CXXConstructExpr(C, CXXTemporaryObjectExprClass, 
-                     Type->getType().getNonReferenceType(), 
-                     Type->getTypeLoc().getBeginLoc(),
+  : CXXConstructExpr(C, CXXTemporaryObjectExprClass, writtenTy, tyBeginLoc,
                      Cons, false, Args, NumArgs, ZeroInitialization),
-    RParenLoc(rParenLoc), Type(Type) {
-}
-
-SourceRange CXXTemporaryObjectExpr::getSourceRange() const {
-  return SourceRange(Type->getTypeLoc().getBeginLoc(), RParenLoc);
+  TyBeginLoc(tyBeginLoc), RParenLoc(rParenLoc) {
 }
 
 CXXConstructExpr *CXXConstructExpr::Create(ASTContext &C, QualType T,
@@ -633,15 +789,17 @@ Stmt::child_iterator CXXExprWithTemporaries::child_end() {
   return &SubExpr + 1;
 }
 
-CXXUnresolvedConstructExpr::CXXUnresolvedConstructExpr(TypeSourceInfo *Type,
+CXXUnresolvedConstructExpr::CXXUnresolvedConstructExpr(
+                                                 SourceLocation TyBeginLoc,
+                                                 QualType T,
                                                  SourceLocation LParenLoc,
                                                  Expr **Args,
                                                  unsigned NumArgs,
                                                  SourceLocation RParenLoc)
-  : Expr(CXXUnresolvedConstructExprClass, 
-         Type->getType().getNonReferenceType(),
-         Type->getType()->isDependentType(), true),
-    Type(Type),
+  : Expr(CXXUnresolvedConstructExprClass, T.getNonReferenceType(),
+         T->isDependentType(), true),
+    TyBeginLoc(TyBeginLoc),
+    Type(T),
     LParenLoc(LParenLoc),
     RParenLoc(RParenLoc),
     NumArgs(NumArgs) {
@@ -651,14 +809,15 @@ CXXUnresolvedConstructExpr::CXXUnresolvedConstructExpr(TypeSourceInfo *Type,
 
 CXXUnresolvedConstructExpr *
 CXXUnresolvedConstructExpr::Create(ASTContext &C,
-                                   TypeSourceInfo *Type,
+                                   SourceLocation TyBegin,
+                                   QualType T,
                                    SourceLocation LParenLoc,
                                    Expr **Args,
                                    unsigned NumArgs,
                                    SourceLocation RParenLoc) {
   void *Mem = C.Allocate(sizeof(CXXUnresolvedConstructExpr) +
                          sizeof(Expr *) * NumArgs);
-  return new (Mem) CXXUnresolvedConstructExpr(Type, LParenLoc,
+  return new (Mem) CXXUnresolvedConstructExpr(TyBegin, T, LParenLoc,
                                               Args, NumArgs, RParenLoc);
 }
 
@@ -668,10 +827,6 @@ CXXUnresolvedConstructExpr::CreateEmpty(ASTContext &C, unsigned NumArgs) {
   void *Mem = C.Allocate(sizeof(CXXUnresolvedConstructExpr) +
                          sizeof(Expr *) * NumArgs);
   return new (Mem) CXXUnresolvedConstructExpr(Empty, NumArgs);
-}
-
-SourceRange CXXUnresolvedConstructExpr::getSourceRange() const {
-  return SourceRange(Type->getTypeLoc().getBeginLoc(), RParenLoc);
 }
 
 Stmt::child_iterator CXXUnresolvedConstructExpr::child_begin() {
@@ -854,11 +1009,4 @@ Stmt::child_iterator UnresolvedMemberExpr::child_end() {
   if (isImplicitAccess())
     return child_iterator(&Base);
   return child_iterator(&Base + 1);
-}
-
-Stmt::child_iterator CXXNoexceptExpr::child_begin() {
-  return child_iterator(&Operand);
-}
-Stmt::child_iterator CXXNoexceptExpr::child_end() {
-  return child_iterator(&Operand + 1);
 }

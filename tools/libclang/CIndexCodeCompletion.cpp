@@ -622,8 +622,6 @@ void clang_codeCompleteAt_Impl(void *UserData) {
   if (!AST)
     return;
 
-  ASTUnit::ConcurrencyCheck Check(*AST);
-
   // Perform the remapping of source files.
   llvm::SmallVector<ASTUnit::RemappedFile, 4> RemappedFiles;
   for (unsigned I = 0; I != num_unsaved_files; ++I) {
@@ -811,7 +809,7 @@ namespace {
         return false;
       
       result = llvm::StringRef(XText).compare(YText);
-      return result < 0;
+      return result;
     }
   };
 }

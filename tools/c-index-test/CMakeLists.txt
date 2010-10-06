@@ -1,6 +1,18 @@
 set(LLVM_NO_RTTI 1)
 
-set(LLVM_USED_LIBS libclang)
+set( LLVM_USED_LIBS
+  libclang
+  clangIndex
+  clangFrontend
+  clangDriver
+  clangSerialization
+  clangParse
+  clangSema
+  clangAnalysis
+  clangAST
+  clangLex
+  clangBasic
+  )
 
 set( LLVM_LINK_COMPONENTS
   bitreader

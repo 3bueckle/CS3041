@@ -105,10 +105,3 @@ namespace test2 {
     delete [] b;
   }
 }
-
-namespace test3 {
-  void f(int a[10][20]) {
-    // CHECK: call void @_ZdaPv(i8*
-    delete a;
-  }
-}

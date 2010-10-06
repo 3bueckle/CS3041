@@ -62,64 +62,45 @@ using namespace clang;
 namespace {
 class IdempotentOperationChecker
   : public CheckerVisitor<IdempotentOperationChecker> {
-public:
-  static void *getTag();
-  void PreVisitBinaryOperator(CheckerContext &C, const BinaryOperator *B);
-  void PostVisitBinaryOperator(CheckerContext &C, const BinaryOperator *B);
-  void VisitEndAnalysis(ExplodedGraph &G, BugReporter &B, GRExprEngine &Eng);
-
-private:
-  // Our assumption about a particular operation.
-  enum Assumption { Possible = 0, Impossible, Equal, LHSis1, RHSis1, LHSis0,
-      RHSis0 };
-
-  void UpdateAssumption(Assumption &A, const Assumption &New);
-
-  // False positive reduction methods
-  static bool isSelfAssign(const Expr *LHS, const Expr *RHS);
-  static bool isUnused(const Expr *E, AnalysisContext *AC);
-  static bool isTruncationExtensionAssignment(const Expr *LHS,
-                                              const Expr *RHS);
-  bool PathWasCompletelyAnalyzed(const CFG *C,
-                                 const CFGBlock *CB,
-                                 const GRCoreEngine &CE);
-  static bool CanVary(const Expr *Ex,
-                      AnalysisContext *AC);
-  static bool isConstantOrPseudoConstant(const DeclRefExpr *DR,
-                                         AnalysisContext *AC);
-  static bool containsNonLocalVarDecl(const Stmt *S);
-  const ExplodedNodeSet getLastRelevantNodes(const CFGBlock *Begin,
-                                             const ExplodedNode *N);
-
-  // Hash table and related data structures
-  struct BinaryOperatorData {
-    BinaryOperatorData() : assumption(Possible), analysisContext(0) {}
-
-    Assumption assumption;
-    AnalysisContext *analysisContext;
-    ExplodedNodeSet explodedNodes; // Set of ExplodedNodes that refer to a
-                                   // BinaryOperator
-  };
-  typedef llvm::DenseMap<const BinaryOperator *, BinaryOperatorData>
-      AssumptionMap;
-  AssumptionMap hash;
-
-  // A class that performs reachability queries for CFGBlocks. Several internal
-  // checks in this checker require reachability information. The requests all
-  // tend to have a common destination, so we lazily do a predecessor search
-  // from the destination node and cache the results to prevent work
-  // duplication.
-  class CFGReachabilityAnalysis {
-    typedef llvm::SmallSet<unsigned, 32> ReachableSet;
-    typedef llvm::DenseMap<unsigned, ReachableSet> ReachableMap;
-    ReachableSet analyzed;
-    ReachableMap reachable;
   public:
-    inline bool isReachable(const CFGBlock *Src, const CFGBlock *Dst);
+    static void *getTag();
+    void PreVisitBinaryOperator(CheckerContext &C, const BinaryOperator *B);
+    void PostVisitBinaryOperator(CheckerContext &C, const BinaryOperator *B);
+    void VisitEndAnalysis(ExplodedGraph &G, BugReporter &B, GRExprEngine &Eng);
+
   private:
-    void MapReachability(const CFGBlock *Dst);
-  };
-  CFGReachabilityAnalysis CRA;
+    // Our assumption about a particular operation.
+    enum Assumption { Possible = 0, Impossible, Equal, LHSis1, RHSis1, LHSis0,
+        RHSis0 };
+
+    void UpdateAssumption(Assumption &A, const Assumption &New);
+
+    // False positive reduction methods
+    static bool isSelfAssign(const Expr *LHS, const Expr *RHS);
+    static bool isUnused(const Expr *E, AnalysisContext *AC);
+    //static bool isTruncationExtensionAssignment(const Expr *LHS,
+    //                                            const Expr *RHS);
+    static bool PathWasCompletelyAnalyzed(const CFG *C,
+                                          const CFGBlock *CB,
+                                          const GRCoreEngine &CE);
+    static bool CanVary(const Expr *Ex,
+                        AnalysisContext *AC);
+    static bool isConstantOrPseudoConstant(const DeclRefExpr *DR,
+                                           AnalysisContext *AC);
+    static bool containsNonLocalVarDecl(const Stmt *S);
+
+    // Hash table and related data structures
+    struct BinaryOperatorData {
+      BinaryOperatorData() : assumption(Possible), analysisContext(0) {}
+
+      Assumption assumption;
+      AnalysisContext *analysisContext;
+      ExplodedNodeSet explodedNodes; // Set of ExplodedNodes that refer to a
+                                     // BinaryOperator
+    };
+    typedef llvm::DenseMap<const BinaryOperator *, BinaryOperatorData>
+        AssumptionMap;
+    AssumptionMap hash;
 };
 }
 
@@ -200,7 +181,7 @@ void IdempotentOperationChecker::PreVisitBinaryOperator(
       A = Impossible;
       return;
     }
-    LHSVal = state->getSVal(cast<Loc>(LHSVal), LHS->getType());
+    LHSVal = state->getSVal(cast<Loc>(LHSVal));
   }
 
 
@@ -215,10 +196,9 @@ void IdempotentOperationChecker::PreVisitBinaryOperator(
   case BO_Assign:
     // x Assign x can be used to silence unused variable warnings intentionally.
     // If this is a self assignment and the variable is referenced elsewhere,
-    // and the assignment is not a truncation or extension, then it is a false
-    // positive.
+    // then it is a false positive.
     if (isSelfAssign(LHS, RHS)) {
-      if (!isUnused(LHS, AC) && !isTruncationExtensionAssignment(LHS, RHS)) {
+      if (!isUnused(LHS, AC)) {
         UpdateAssumption(A, Equal);
         return;
       }
@@ -355,8 +335,6 @@ void IdempotentOperationChecker::PostVisitBinaryOperator(
                                                       const BinaryOperator *B) {
   // Add the ExplodedNode we just visited
   BinaryOperatorData &Data = hash[B];
-  assert(isa<BinaryOperator>(cast<StmtPoint>(C.getPredecessor()
-                                             ->getLocation()).getStmt()));
   Data.explodedNodes.Add(C.getPredecessor());
 }
 
@@ -522,6 +500,7 @@ bool IdempotentOperationChecker::isUnused(const Expr *E,
   return true;
 }
 
+#if 0
 // Check for self casts truncating/extending a variable
 bool IdempotentOperationChecker::isTruncationExtensionAssignment(
                                                               const Expr *LHS,
@@ -544,6 +523,7 @@ bool IdempotentOperationChecker::isTruncationExtensionAssignment(
 
   return dyn_cast<DeclRefExpr>(RHS->IgnoreParens()) == NULL;
 }
+#endif
 
 // Returns false if a path to this block was not completely analyzed, or true
 // otherwise.
@@ -551,22 +531,49 @@ bool IdempotentOperationChecker::PathWasCompletelyAnalyzed(
                                                        const CFG *C,
                                                        const CFGBlock *CB,
                                                        const GRCoreEngine &CE) {
-  // Test for reachability from any aborted blocks to this block
+  std::deque<const CFGBlock *> WorkList;
+  llvm::SmallSet<unsigned, 8> Aborted;
+  llvm::SmallSet<unsigned, 128> Visited;
+
+  // Create a set of all aborted blocks
   typedef GRCoreEngine::BlocksAborted::const_iterator AbortedIterator;
   for (AbortedIterator I = CE.blocks_aborted_begin(),
       E = CE.blocks_aborted_end(); I != E; ++I) {
     const BlockEdge &BE =  I->first;
 
     // The destination block on the BlockEdge is the first block that was not
-    // analyzed. If we can reach this block from the aborted block, then this
-    // block was not completely analyzed.
-    if (CRA.isReachable(BE.getDst(), CB))
-      return false;
+    // analyzed.
+    Aborted.insert(BE.getDst()->getBlockID());
   }
 
-  // Verify that this block is reachable from the entry block
-  if (!CRA.isReachable(&C->getEntry(), CB))
-    return false;
+  // Save the entry block ID for early exiting
+  unsigned EntryBlockID = C->getEntry().getBlockID();
+
+  // Create initial node
+  WorkList.push_back(CB);
+
+  while (!WorkList.empty()) {
+    const CFGBlock *Head = WorkList.front();
+    WorkList.pop_front();
+    Visited.insert(Head->getBlockID());
+
+    // If we found the entry block, then there exists a path from the target
+    // node to the entry point of this function -> the path was completely
+    // analyzed.
+    if (Head->getBlockID() == EntryBlockID)
+      return true;
+
+    // If any of the aborted blocks are on the path to the beginning, then all
+    // paths to this block were not analyzed.
+    if (Aborted.count(Head->getBlockID()))
+      return false;
+
+    // Add the predecessors to the worklist unless we have already visited them
+    for (CFGBlock::const_pred_iterator I = Head->pred_begin();
+        I != Head->pred_end(); ++I)
+      if (!Visited.count((*I)->getBlockID()))
+        WorkList.push_back(*I);
+  }
 
   // If we get to this point, there is no connection to the entry block or an
   // aborted block. This path is unreachable and we can report the error.
@@ -693,95 +700,4 @@ bool IdempotentOperationChecker::containsNonLocalVarDecl(const Stmt *S) {
         return true;
 
   return false;
-}
-
-// Returns the successor nodes of N whose CFGBlocks cannot reach N's CFGBlock.
-// This effectively gives us a set of points in the ExplodedGraph where
-// subsequent execution could not affect the idempotent operation on this path.
-// This is useful for displaying paths after the point of the error, providing
-// an example of how this idempotent operation cannot change.
-const ExplodedNodeSet IdempotentOperationChecker::getLastRelevantNodes(
-    const CFGBlock *Begin, const ExplodedNode *N) {
-  std::deque<const ExplodedNode *> WorkList;
-  llvm::SmallPtrSet<const ExplodedNode *, 32> Visited;
-  ExplodedNodeSet Result;
-
-  WorkList.push_back(N);
-
-  while (!WorkList.empty()) {
-    const ExplodedNode *Head = WorkList.front();
-    WorkList.pop_front();
-    Visited.insert(Head);
-
-    const ProgramPoint &PP = Head->getLocation();
-    if (const BlockEntrance *BE = dyn_cast<BlockEntrance>(&PP)) {
-      // Get the CFGBlock and test the reachability
-      const CFGBlock *CB = BE->getBlock();
-
-      // If we cannot reach the beginning CFGBlock from this block, then we are
-      // finished
-      if (!CRA.isReachable(CB, Begin)) {
-        Result.Add(const_cast<ExplodedNode *>(Head));
-        continue;
-      }
-    }
-
-    // Add unvisited children to the worklist
-    for (ExplodedNode::const_succ_iterator I = Head->succ_begin(),
-        E = Head->succ_end(); I != E; ++I)
-      if (!Visited.count(*I))
-        WorkList.push_back(*I);
-  }
-
-  // Return the ExplodedNodes that were found
-  return Result;
-}
-
-bool IdempotentOperationChecker::CFGReachabilityAnalysis::isReachable(
-                                                          const CFGBlock *Src,
-                                                          const CFGBlock *Dst) {
-  const unsigned DstBlockID = Dst->getBlockID();
-
-  // If we haven't analyzed the destination node, run the analysis now
-  if (!analyzed.count(DstBlockID)) {
-    MapReachability(Dst);
-    analyzed.insert(DstBlockID);
-  }
-
-  // Return the cached result
-  return reachable[DstBlockID].count(Src->getBlockID());
-}
-
-// Maps reachability to a common node by walking the predecessors of the
-// destination node.
-void IdempotentOperationChecker::CFGReachabilityAnalysis::MapReachability(
-                                                          const CFGBlock *Dst) {
-  std::deque<const CFGBlock *> WorkList;
-  // Maintain a visited list to ensure we don't get stuck on cycles
-  llvm::SmallSet<unsigned, 32> Visited;
-  ReachableSet &DstReachability = reachable[Dst->getBlockID()];
-
-  // Start searching from the destination node, since we commonly will perform
-  // multiple queries relating to a destination node.
-  WorkList.push_back(Dst);
-
-  bool firstRun = true;
-  while (!WorkList.empty()) {
-    const CFGBlock *Head = WorkList.front();
-    WorkList.pop_front();
-    Visited.insert(Head->getBlockID());
-
-    // Update reachability information for this node -> Dst
-    if (!firstRun)
-      // Don't insert Dst -> Dst unless it was a predecessor of itself
-      DstReachability.insert(Head->getBlockID());
-    else
-      firstRun = false;
-
-    // Add the predecessors to the worklist unless we have already visited them
-    for (CFGBlock::const_pred_iterator I = Head->pred_begin();
-        I != Head->pred_end(); ++I)
-      if (!Visited.count((*I)->getBlockID()))
-        WorkList.push_back(*I);
-  }
 }

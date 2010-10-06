@@ -75,8 +75,7 @@ void ABIArgInfo::dump() const {
     break;
   case Indirect:
     OS << "Indirect Align=" << getIndirectAlign()
-       << " Byal=" << getIndirectByVal()
-       << " Realign=" << getIndirectRealign();
+       << " Byal=" << getIndirectByVal();
     break;
   case Expand:
     OS << "Expand";
@@ -337,8 +336,6 @@ ABIArgInfo DefaultABIInfo::classifyArgumentType(QualType Ty) const {
 
 /// X86_32ABIInfo - The X86-32 ABI information.
 class X86_32ABIInfo : public ABIInfo {
-  static const unsigned MinABIStackAlignInBytes = 4;
-
   bool IsDarwinVectorABI;
   bool IsSmallStructInRegABI;
 
@@ -351,9 +348,6 @@ class X86_32ABIInfo : public ABIInfo {
   /// getIndirectResult - Give a source type \arg Ty, return a suitable result
   /// such that the argument will be passed in memory.
   ABIArgInfo getIndirectResult(QualType Ty, bool ByVal = true) const;
-
-  /// \brief Return the alignment to use for the given type on the stack.
-  unsigned getTypeStackAlignInBytes(QualType Ty, unsigned Align) const;
 
 public:
 
@@ -553,70 +547,17 @@ ABIArgInfo X86_32ABIInfo::classifyReturnType(QualType RetTy) const {
           ABIArgInfo::getExtend() : ABIArgInfo::getDirect());
 }
 
-static bool isRecordWithSSEVectorType(ASTContext &Context, QualType Ty) {
-  const RecordType *RT = Ty->getAs<RecordType>();
-  if (!RT)
-    return 0;
-  const RecordDecl *RD = RT->getDecl();
-
-  // If this is a C++ record, check the bases first.
-  if (const CXXRecordDecl *CXXRD = dyn_cast<CXXRecordDecl>(RD))
-    for (CXXRecordDecl::base_class_const_iterator i = CXXRD->bases_begin(),
-           e = CXXRD->bases_end(); i != e; ++i)
-      if (!isRecordWithSSEVectorType(Context, i->getType()))
-        return false;
-
-  for (RecordDecl::field_iterator i = RD->field_begin(), e = RD->field_end();
-       i != e; ++i) {
-    QualType FT = i->getType();
-
-    if (FT->getAs<VectorType>() && Context.getTypeSize(Ty) == 128)
-      return true;
-
-    if (isRecordWithSSEVectorType(Context, FT))
-      return true;
-  }
-
-  return false;
-}
-
-unsigned X86_32ABIInfo::getTypeStackAlignInBytes(QualType Ty,
-                                                 unsigned Align) const {
-  // Otherwise, if the alignment is less than or equal to the minimum ABI
-  // alignment, just use the default; the backend will handle this.
-  if (Align <= MinABIStackAlignInBytes)
-    return 0; // Use default alignment.
-
-  // On non-Darwin, the stack type alignment is always 4.
-  if (!IsDarwinVectorABI) {
-    // Set explicit alignment, since we may need to realign the top.
-    return MinABIStackAlignInBytes;
-  }
-
-  // Otherwise, if the type contains an SSE vector type, the alignment is 16.
-  if (isRecordWithSSEVectorType(getContext(), Ty))
-    return 16;
-
-  return MinABIStackAlignInBytes;
-}
-
 ABIArgInfo X86_32ABIInfo::getIndirectResult(QualType Ty, bool ByVal) const {
   if (!ByVal)
     return ABIArgInfo::getIndirect(0, false);
 
-  // Compute the byval alignment.
-  unsigned TypeAlign = getContext().getTypeAlign(Ty) / 8;
-  unsigned StackAlign = getTypeStackAlignInBytes(Ty, TypeAlign);
-  if (StackAlign == 0)
-    return ABIArgInfo::getIndirect(0);
-
-  // If the stack alignment is less than the type alignment, realign the
-  // argument.
-  if (StackAlign < TypeAlign)
-    return ABIArgInfo::getIndirect(StackAlign, /*ByVal=*/true,
-                                   /*Realign=*/true);
-
-  return ABIArgInfo::getIndirect(StackAlign);
+  // Compute the byval alignment. We trust the back-end to honor the
+  // minimum ABI alignment for byval, to make cleaner IR.
+  const unsigned MinABIAlign = 4;
+  unsigned Align = getContext().getTypeAlign(Ty) / 8;
+  if (Align > MinABIAlign)
+    return ABIArgInfo::getIndirect(Align);
+  return ABIArgInfo::getIndirect(0);
 }
 
 ABIArgInfo X86_32ABIInfo::classifyArgumentType(QualType Ty) const {
@@ -2272,17 +2213,6 @@ ABIArgInfo ARMABIInfo::classifyArgumentType(QualType Ty) const {
   if (isRecordWithNonTrivialDestructorOrCopyConstructor(Ty))
     return ABIArgInfo::getIndirect(0, /*ByVal=*/false);
 
-  // NEON vectors are implemented as (theoretically) opaque structures wrapping
-  // the underlying vector type. We trust the backend to pass the underlying
-  // vectors appropriately, so we can unwrap the structs which generally will
-  // lead to much cleaner IR.
-  if (const Type *SeltTy = isSingleElementStruct(Ty, getContext())) {
-    if (SeltTy->isVectorType())
-      return ABIArgInfo::getDirect(CGT.ConvertType(QualType(SeltTy, 0)));
-  }
-
-  // Otherwise, pass by coercing to a structure of the appropriate size.
-  //
   // FIXME: This is kind of nasty... but there isn't much choice because the ARM
   // backend doesn't support byval.
   // FIXME: This doesn't handle alignment > 64 bits.
@@ -2390,10 +2320,6 @@ static bool isIntegerLikeType(QualType Ty, ASTContext &Context,
 ABIArgInfo ARMABIInfo::classifyReturnType(QualType RetTy) const {
   if (RetTy->isVoidType())
     return ABIArgInfo::getIgnore();
-
-  // Large vector types should be returned via memory.
-  if (RetTy->isVectorType() && getContext().getTypeSize(RetTy) > 128)
-    return ABIArgInfo::getIndirect(0);
 
   if (!isAggregateTypeForABI(RetTy)) {
     // Treat an enum type as its underlying type.

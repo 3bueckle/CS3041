@@ -11,11 +11,9 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/Frontend/CodeGenOptions.h"
 #include "CodeGenFunction.h"
 #include "CGCXXABI.h"
 #include "CGObjCRuntime.h"
-#include "CGDebugInfo.h"
 #include "llvm/Intrinsics.h"
 using namespace clang;
 using namespace CodeGen;
@@ -89,15 +87,6 @@ RValue CodeGenFunction::EmitCXXMemberCallExpr(const CXXMemberCallExpr *CE,
   const MemberExpr *ME = cast<MemberExpr>(CE->getCallee()->IgnoreParens());
   const CXXMethodDecl *MD = cast<CXXMethodDecl>(ME->getMemberDecl());
 
-  CGDebugInfo *DI = getDebugInfo();
-  if (DI && CGM.getCodeGenOpts().LimitDebugInfo) {
-    QualType PQTy = ME->getBase()->IgnoreParenImpCasts()->getType();
-    if (const PointerType * PTy = dyn_cast<PointerType>(PQTy)) {
-      DI->getOrCreateRecordType(PTy->getPointeeType(), 
-                                MD->getParent()->getLocation());
-    }
-  }
-
   if (MD->isStatic()) {
     // The method is static, emit it as we would a regular call.
     llvm::Value *Callee = CGM.GetAddrOfFunction(MD);
@@ -111,21 +100,13 @@ RValue CodeGenFunction::EmitCXXMemberCallExpr(const CXXMemberCallExpr *CE,
     This = EmitScalarExpr(ME->getBase());
   else {
     LValue BaseLV = EmitLValue(ME->getBase());
-    if (BaseLV.isPropertyRef() || BaseLV.isKVCRef()) {
-      QualType QT = ME->getBase()->getType();
-      RValue RV = 
-        BaseLV.isPropertyRef() ? EmitLoadOfPropertyRefLValue(BaseLV, QT)
-          : EmitLoadOfKVCRefLValue(BaseLV, QT);
-      This = RV.isScalar() ? RV.getScalarVal() : RV.getAggregateAddr();
-    }
-    else
-      This = BaseLV.getAddress();
+    This = BaseLV.getAddress();
   }
 
   if (MD->isTrivial()) {
     if (isa<CXXDestructorDecl>(MD)) return RValue::get(0);
 
-    assert(MD->isCopyAssignmentOperator() && "unknown trivial member function");
+    assert(MD->isCopyAssignment() && "unknown trivial member function");
     // We don't like to generate the trivial copy assignment operator when
     // it isn't necessary; just produce the proper effect here.
     llvm::Value *RHS = EmitLValue(*CE->arg_begin()).getAddress();
@@ -222,7 +203,7 @@ CodeGenFunction::EmitCXXOperatorMemberCallExpr(const CXXOperatorCallExpr *E,
                                                ReturnValueSlot ReturnValue) {
   assert(MD->isInstance() &&
          "Trying to emit a member call expr on a static method!");
-  if (MD->isCopyAssignmentOperator()) {
+  if (MD->isCopyAssignment()) {
     const CXXRecordDecl *ClassDecl = cast<CXXRecordDecl>(MD->getDeclContext());
     if (ClassDecl->hasTrivialCopyAssignment()) {
       assert(!ClassDecl->hasUserDeclaredCopyAssignment() &&
@@ -230,12 +211,16 @@ CodeGenFunction::EmitCXXOperatorMemberCallExpr(const CXXOperatorCallExpr *E,
       LValue LV = EmitLValue(E->getArg(0));
       llvm::Value *This;
       if (LV.isPropertyRef() || LV.isKVCRef()) {
-        AggValueSlot Slot = CreateAggTemp(E->getArg(1)->getType());
-        EmitAggExpr(E->getArg(1), Slot);
+        llvm::Value *AggLoc  = CreateMemTemp(E->getArg(1)->getType());
+        EmitAggExpr(E->getArg(1), AggLoc, false /*VolatileDest*/);
         if (LV.isPropertyRef())
-          EmitObjCPropertySet(LV.getPropertyRefExpr(), Slot.asRValue());
+          EmitObjCPropertySet(LV.getPropertyRefExpr(),
+                              RValue::getAggregate(AggLoc, 
+                                                   false /*VolatileDest*/));
         else
-          EmitObjCPropertySet(LV.getKVCRefExpr(), Slot.asRValue());
+          EmitObjCPropertySet(LV.getKVCRefExpr(),
+                              RValue::getAggregate(AggLoc, 
+                                                   false /*VolatileDest*/));
         return RValue::getAggregate(0, false);
       }
       else
@@ -276,29 +261,28 @@ CodeGenFunction::EmitCXXOperatorMemberCallExpr(const CXXOperatorCallExpr *E,
 }
 
 void
-CodeGenFunction::EmitCXXConstructExpr(const CXXConstructExpr *E,
-                                      AggValueSlot Dest) {
-  assert(!Dest.isIgnored() && "Must have a destination!");
+CodeGenFunction::EmitCXXConstructExpr(llvm::Value *Dest,
+                                      const CXXConstructExpr *E) {
+  assert(Dest && "Must have a destination!");
   const CXXConstructorDecl *CD = E->getConstructor();
   
   // If we require zero initialization before (or instead of) calling the
   // constructor, as can be the case with a non-user-provided default
   // constructor, emit the zero initialization now.
   if (E->requiresZeroInitialization())
-    EmitNullInitialization(Dest.getAddr(), E->getType());
+    EmitNullInitialization(Dest, E->getType());
+
   
   // If this is a call to a trivial default constructor, do nothing.
   if (CD->isTrivial() && CD->isDefaultConstructor())
     return;
   
-  // Elide the constructor if we're constructing from a temporary.
-  // The temporary check is required because Sema sets this on NRVO
-  // returns.
+  // Code gen optimization to eliminate copy constructor and return
+  // its first argument instead, if in fact that argument is a temporary 
+  // object.
   if (getContext().getLangOptions().ElideConstructors && E->isElidable()) {
-    assert(getContext().hasSameUnqualifiedType(E->getType(),
-                                               E->getArg(0)->getType()));
-    if (E->getArg(0)->isTemporaryObject(getContext(), CD->getParent())) {
-      EmitAggExpr(E->getArg(0), Dest);
+    if (const Expr *Arg = E->getArg(0)->getTemporaryObject()) {
+      EmitAggExpr(Arg, Dest, false);
       return;
     }
   }
@@ -310,7 +294,7 @@ CodeGenFunction::EmitCXXConstructExpr(const CXXConstructExpr *E,
     const llvm::Type *BasePtr = ConvertType(BaseElementTy);
     BasePtr = llvm::PointerType::getUnqual(BasePtr);
     llvm::Value *BaseAddrPtr =
-      Builder.CreateBitCast(Dest.getAddr(), BasePtr);
+      Builder.CreateBitCast(Dest, BasePtr);
     
     EmitCXXAggrConstructorCall(CD, Array, BaseAddrPtr, 
                                E->arg_begin(), E->arg_end());
@@ -323,7 +307,7 @@ CodeGenFunction::EmitCXXConstructExpr(const CXXConstructExpr *E,
       E->getConstructionKind() == CXXConstructExpr::CK_VirtualBase;
     
     // Call the constructor.
-    EmitCXXConstructorCall(CD, Type, ForVirtualBase, Dest.getAddr(),
+    EmitCXXConstructorCall(CD, Type, ForVirtualBase, Dest,
                            E->arg_begin(), E->arg_end());
   }
 }
@@ -547,11 +531,8 @@ static void StoreAnyExprIntoOneUnit(CodeGenFunction &CGF, const CXXNewExpr *E,
   else if (AllocType->isAnyComplexType())
     CGF.EmitComplexExprIntoAddr(Init, NewPtr, 
                                 AllocType.isVolatileQualified());
-  else {
-    AggValueSlot Slot
-      = AggValueSlot::forAddr(NewPtr, AllocType.isVolatileQualified(), true);
-    CGF.EmitAggExpr(Init, Slot);
-  }
+  else
+    CGF.EmitAggExpr(Init, NewPtr, AllocType.isVolatileQualified());
 }
 
 void
@@ -688,259 +669,6 @@ static void EmitNewInitializer(CodeGenFunction &CGF, const CXXNewExpr *E,
   StoreAnyExprIntoOneUnit(CGF, E, NewPtr);
 }
 
-/// A utility class for saving an rvalue.
-class SavedRValue {
-public:
-  enum Kind { ScalarLiteral, ScalarAddress,
-              AggregateLiteral, AggregateAddress,
-              Complex };
-
-private:
-  llvm::Value *Value;
-  Kind K;
-
-  SavedRValue(llvm::Value *V, Kind K) : Value(V), K(K) {}
-
-public:
-  SavedRValue() {}
-
-  static SavedRValue forScalarLiteral(llvm::Value *V) {
-    return SavedRValue(V, ScalarLiteral);
-  }
-
-  static SavedRValue forScalarAddress(llvm::Value *Addr) {
-    return SavedRValue(Addr, ScalarAddress);
-  }
-
-  static SavedRValue forAggregateLiteral(llvm::Value *V) {
-    return SavedRValue(V, AggregateLiteral);
-  }
-
-  static SavedRValue forAggregateAddress(llvm::Value *Addr) {
-    return SavedRValue(Addr, AggregateAddress);
-  }
-
-  static SavedRValue forComplexAddress(llvm::Value *Addr) {
-    return SavedRValue(Addr, Complex);
-  }
-
-  Kind getKind() const { return K; }
-  llvm::Value *getValue() const { return Value; }
-};
-
-/// Given an r-value, perform the code necessary to make sure that a
-/// future RestoreRValue will be able to load the value without
-/// domination concerns.
-static SavedRValue SaveRValue(CodeGenFunction &CGF, RValue RV) {
-  if (RV.isScalar()) {
-    llvm::Value *V = RV.getScalarVal();
-
-    // These automatically dominate and don't need to be saved.
-    if (isa<llvm::Constant>(V) || isa<llvm::AllocaInst>(V))
-      return SavedRValue::forScalarLiteral(V);
-
-    // Everything else needs an alloca.
-    llvm::Value *Addr = CGF.CreateTempAlloca(V->getType(), "saved-rvalue");
-    CGF.Builder.CreateStore(V, Addr);
-    return SavedRValue::forScalarAddress(Addr);
-  }
-
-  if (RV.isComplex()) {
-    CodeGenFunction::ComplexPairTy V = RV.getComplexVal();
-    const llvm::Type *ComplexTy =
-      llvm::StructType::get(CGF.getLLVMContext(),
-                            V.first->getType(), V.second->getType(),
-                            (void*) 0);
-    llvm::Value *Addr = CGF.CreateTempAlloca(ComplexTy, "saved-complex");
-    CGF.StoreComplexToAddr(V, Addr, /*volatile*/ false);
-    return SavedRValue::forComplexAddress(Addr);
-  }
-
-  assert(RV.isAggregate());
-  llvm::Value *V = RV.getAggregateAddr(); // TODO: volatile?
-  if (isa<llvm::Constant>(V) || isa<llvm::AllocaInst>(V))
-    return SavedRValue::forAggregateLiteral(V);
-
-  llvm::Value *Addr = CGF.CreateTempAlloca(V->getType(), "saved-rvalue");
-  CGF.Builder.CreateStore(V, Addr);
-  return SavedRValue::forAggregateAddress(Addr);
-}
-
-/// Given a saved r-value produced by SaveRValue, perform the code
-/// necessary to restore it to usability at the current insertion
-/// point.
-static RValue RestoreRValue(CodeGenFunction &CGF, SavedRValue RV) {
-  switch (RV.getKind()) {
-  case SavedRValue::ScalarLiteral:
-    return RValue::get(RV.getValue());
-  case SavedRValue::ScalarAddress:
-    return RValue::get(CGF.Builder.CreateLoad(RV.getValue()));
-  case SavedRValue::AggregateLiteral:
-    return RValue::getAggregate(RV.getValue());
-  case SavedRValue::AggregateAddress:
-    return RValue::getAggregate(CGF.Builder.CreateLoad(RV.getValue()));
-  case SavedRValue::Complex:
-    return RValue::getComplex(CGF.LoadComplexFromAddr(RV.getValue(), false));
-  }
-
-  llvm_unreachable("bad saved r-value kind");
-  return RValue();
-}
-
-namespace {
-  /// A cleanup to call the given 'operator delete' function upon
-  /// abnormal exit from a new expression.
-  class CallDeleteDuringNew : public EHScopeStack::Cleanup {
-    size_t NumPlacementArgs;
-    const FunctionDecl *OperatorDelete;
-    llvm::Value *Ptr;
-    llvm::Value *AllocSize;
-
-    RValue *getPlacementArgs() { return reinterpret_cast<RValue*>(this+1); }
-
-  public:
-    static size_t getExtraSize(size_t NumPlacementArgs) {
-      return NumPlacementArgs * sizeof(RValue);
-    }
-
-    CallDeleteDuringNew(size_t NumPlacementArgs,
-                        const FunctionDecl *OperatorDelete,
-                        llvm::Value *Ptr,
-                        llvm::Value *AllocSize) 
-      : NumPlacementArgs(NumPlacementArgs), OperatorDelete(OperatorDelete),
-        Ptr(Ptr), AllocSize(AllocSize) {}
-
-    void setPlacementArg(unsigned I, RValue Arg) {
-      assert(I < NumPlacementArgs && "index out of range");
-      getPlacementArgs()[I] = Arg;
-    }
-
-    void Emit(CodeGenFunction &CGF, bool IsForEH) {
-      const FunctionProtoType *FPT
-        = OperatorDelete->getType()->getAs<FunctionProtoType>();
-      assert(FPT->getNumArgs() == NumPlacementArgs + 1 ||
-             (FPT->getNumArgs() == 2 && NumPlacementArgs == 0));
-
-      CallArgList DeleteArgs;
-
-      // The first argument is always a void*.
-      FunctionProtoType::arg_type_iterator AI = FPT->arg_type_begin();
-      DeleteArgs.push_back(std::make_pair(RValue::get(Ptr), *AI++));
-
-      // A member 'operator delete' can take an extra 'size_t' argument.
-      if (FPT->getNumArgs() == NumPlacementArgs + 2)
-        DeleteArgs.push_back(std::make_pair(RValue::get(AllocSize), *AI++));
-
-      // Pass the rest of the arguments, which must match exactly.
-      for (unsigned I = 0; I != NumPlacementArgs; ++I)
-        DeleteArgs.push_back(std::make_pair(getPlacementArgs()[I], *AI++));
-
-      // Call 'operator delete'.
-      CGF.EmitCall(CGF.CGM.getTypes().getFunctionInfo(DeleteArgs, FPT),
-                   CGF.CGM.GetAddrOfFunction(OperatorDelete),
-                   ReturnValueSlot(), DeleteArgs, OperatorDelete);
-    }
-  };
-
-  /// A cleanup to call the given 'operator delete' function upon
-  /// abnormal exit from a new expression when the new expression is
-  /// conditional.
-  class CallDeleteDuringConditionalNew : public EHScopeStack::Cleanup {
-    size_t NumPlacementArgs;
-    const FunctionDecl *OperatorDelete;
-    SavedRValue Ptr;
-    SavedRValue AllocSize;
-
-    SavedRValue *getPlacementArgs() {
-      return reinterpret_cast<SavedRValue*>(this+1);
-    }
-
-  public:
-    static size_t getExtraSize(size_t NumPlacementArgs) {
-      return NumPlacementArgs * sizeof(SavedRValue);
-    }
-
-    CallDeleteDuringConditionalNew(size_t NumPlacementArgs,
-                                   const FunctionDecl *OperatorDelete,
-                                   SavedRValue Ptr,
-                                   SavedRValue AllocSize) 
-      : NumPlacementArgs(NumPlacementArgs), OperatorDelete(OperatorDelete),
-        Ptr(Ptr), AllocSize(AllocSize) {}
-
-    void setPlacementArg(unsigned I, SavedRValue Arg) {
-      assert(I < NumPlacementArgs && "index out of range");
-      getPlacementArgs()[I] = Arg;
-    }
-
-    void Emit(CodeGenFunction &CGF, bool IsForEH) {
-      const FunctionProtoType *FPT
-        = OperatorDelete->getType()->getAs<FunctionProtoType>();
-      assert(FPT->getNumArgs() == NumPlacementArgs + 1 ||
-             (FPT->getNumArgs() == 2 && NumPlacementArgs == 0));
-
-      CallArgList DeleteArgs;
-
-      // The first argument is always a void*.
-      FunctionProtoType::arg_type_iterator AI = FPT->arg_type_begin();
-      DeleteArgs.push_back(std::make_pair(RestoreRValue(CGF, Ptr), *AI++));
-
-      // A member 'operator delete' can take an extra 'size_t' argument.
-      if (FPT->getNumArgs() == NumPlacementArgs + 2) {
-        RValue RV = RestoreRValue(CGF, AllocSize);
-        DeleteArgs.push_back(std::make_pair(RV, *AI++));
-      }
-
-      // Pass the rest of the arguments, which must match exactly.
-      for (unsigned I = 0; I != NumPlacementArgs; ++I) {
-        RValue RV = RestoreRValue(CGF, getPlacementArgs()[I]);
-        DeleteArgs.push_back(std::make_pair(RV, *AI++));
-      }
-
-      // Call 'operator delete'.
-      CGF.EmitCall(CGF.CGM.getTypes().getFunctionInfo(DeleteArgs, FPT),
-                   CGF.CGM.GetAddrOfFunction(OperatorDelete),
-                   ReturnValueSlot(), DeleteArgs, OperatorDelete);
-    }
-  };
-}
-
-/// Enter a cleanup to call 'operator delete' if the initializer in a
-/// new-expression throws.
-static void EnterNewDeleteCleanup(CodeGenFunction &CGF,
-                                  const CXXNewExpr *E,
-                                  llvm::Value *NewPtr,
-                                  llvm::Value *AllocSize,
-                                  const CallArgList &NewArgs) {
-  // If we're not inside a conditional branch, then the cleanup will
-  // dominate and we can do the easier (and more efficient) thing.
-  if (!CGF.isInConditionalBranch()) {
-    CallDeleteDuringNew *Cleanup = CGF.EHStack
-      .pushCleanupWithExtra<CallDeleteDuringNew>(EHCleanup,
-                                                 E->getNumPlacementArgs(),
-                                                 E->getOperatorDelete(),
-                                                 NewPtr, AllocSize);
-    for (unsigned I = 0, N = E->getNumPlacementArgs(); I != N; ++I)
-      Cleanup->setPlacementArg(I, NewArgs[I+1].first);
-
-    return;
-  }
-
-  // Otherwise, we need to save all this stuff.
-  SavedRValue SavedNewPtr = SaveRValue(CGF, RValue::get(NewPtr));
-  SavedRValue SavedAllocSize = SaveRValue(CGF, RValue::get(AllocSize));
-
-  CallDeleteDuringConditionalNew *Cleanup = CGF.EHStack
-    .pushCleanupWithExtra<CallDeleteDuringConditionalNew>(InactiveEHCleanup,
-                                                 E->getNumPlacementArgs(),
-                                                 E->getOperatorDelete(),
-                                                 SavedNewPtr,
-                                                 SavedAllocSize);
-  for (unsigned I = 0, N = E->getNumPlacementArgs(); I != N; ++I)
-    Cleanup->setPlacementArg(I, SaveRValue(CGF, NewArgs[I+1].first));
-
-  CGF.ActivateCleanupBlock(CGF.EHStack.stable_begin());
-}
-
 llvm::Value *CodeGenFunction::EmitCXXNewExpr(const CXXNewExpr *E) {
   QualType AllocType = E->getAllocatedType();
   if (AllocType->isArrayType())
@@ -1033,18 +761,9 @@ llvm::Value *CodeGenFunction::EmitCXXNewExpr(const CXXNewExpr *E) {
                                                    AllocType);
   }
 
-  // If there's an operator delete, enter a cleanup to call it if an
-  // exception is thrown.
-  EHScopeStack::stable_iterator CallOperatorDelete;
-  if (E->getOperatorDelete()) {
-    EnterNewDeleteCleanup(*this, E, NewPtr, AllocSize, NewArgs);
-    CallOperatorDelete = EHStack.stable_begin();
-  }
-
   const llvm::Type *ElementPtrTy
     = ConvertTypeForMem(AllocType)->getPointerTo(AS);
   NewPtr = Builder.CreateBitCast(NewPtr, ElementPtrTy);
-
   if (E->isArray()) {
     EmitNewInitializer(*this, E, NewPtr, NumElements, AllocSizeWithoutCookie);
 
@@ -1057,11 +776,6 @@ llvm::Value *CodeGenFunction::EmitCXXNewExpr(const CXXNewExpr *E) {
   } else {
     EmitNewInitializer(*this, E, NewPtr, NumElements, AllocSizeWithoutCookie);
   }
-
-  // Deactivate the 'operator delete' cleanup if we finished
-  // initialization.
-  if (CallOperatorDelete.isValid())
-    DeactivateCleanupBlock(CallOperatorDelete);
   
   if (NullCheckResult) {
     Builder.CreateBr(NewEnd);

@@ -79,13 +79,6 @@ break;
     }
   }
 
-  void PreVisitGenericCall(CheckerContext &C, const CallExpr *CE) {
-    static_cast<ImplClass*>(this)->PreVisitStmt(C, CE);
-  }
-  void PostVisitGenericCall(CheckerContext &C, const CallExpr *CE) {
-    static_cast<ImplClass*>(this)->PostVisitStmt(C, CE);
-  }
-
   void PreVisitStmt(CheckerContext &C, const Stmt *S) {
     *C.respondsToCallback = false;
   }

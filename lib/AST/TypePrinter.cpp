@@ -66,19 +66,7 @@ void TypePrinter::Print(QualType T, std::string &S) {
   
   // Print qualifiers as appropriate.
   Qualifiers Quals = T.getLocalQualifiers();
-  
-  // CanPrefixQualifiers - We prefer to print type qualifiers before the type,
-  // so that we get "const int" instead of "int const", but we can't do this if
-  // the type is complex.  For example if the type is "int*", we *must* print
-  // "int * const", printing "const int *" is different.  Only do this when the
-  // type expands to a simple string.
-  bool CanPrefixQualifiers =
-    isa<BuiltinType>(T) || isa<TypedefType>(T) || isa<TagType>(T) || 
-    isa<ComplexType>(T) || isa<TemplateSpecializationType>(T) ||
-    isa<ObjCObjectType>(T) || isa<ObjCInterfaceType>(T) ||
-    T->isObjCIdType() || T->isObjCQualifiedIdType();
-  
-  if (!CanPrefixQualifiers && !Quals.empty()) {
+  if (!Quals.empty()) {
     std::string TQS;
     Quals.getAsStringInternal(TQS, Policy);
     
@@ -95,18 +83,6 @@ void TypePrinter::Print(QualType T, std::string &S) {
     Print##CLASS(cast<CLASS##Type>(T.getTypePtr()), S);      \
     break;
 #include "clang/AST/TypeNodes.def"
-  }
-  
-  // If we're adding the qualifiers as a prefix, do it now.
-  if (CanPrefixQualifiers && !Quals.empty()) {
-    std::string TQS;
-    Quals.getAsStringInternal(TQS, Policy);
-    
-    if (!S.empty()) {
-      TQS += ' ';
-      TQS += S;
-    }
-    std::swap(S, TQS);
   }
 }
 
@@ -680,19 +656,14 @@ void TypePrinter::PrintObjCObjectPointer(const ObjCObjectPointerType *T,
                                          std::string &S) { 
   std::string ObjCQIString;
   
-  T->getPointeeType().getLocalQualifiers().getAsStringInternal(ObjCQIString, 
-                                                               Policy);
-  if (!ObjCQIString.empty())
-    ObjCQIString += ' ';
-    
   if (T->isObjCIdType() || T->isObjCQualifiedIdType())
-    ObjCQIString += "id";
+    ObjCQIString = "id";
   else if (T->isObjCClassType() || T->isObjCQualifiedClassType())
-    ObjCQIString += "Class";
+    ObjCQIString = "Class";
   else if (T->isObjCSelType())
-    ObjCQIString += "SEL";
+    ObjCQIString = "SEL";
   else
-    ObjCQIString += T->getInterfaceDecl()->getNameAsString();
+    ObjCQIString = T->getInterfaceDecl()->getNameAsString();
   
   if (!T->qual_empty()) {
     ObjCQIString += '<';
@@ -705,6 +676,9 @@ void TypePrinter::PrintObjCObjectPointer(const ObjCObjectPointerType *T,
     }
     ObjCQIString += '>';
   }
+  
+  T->getPointeeType().getLocalQualifiers().getAsStringInternal(ObjCQIString, 
+                                                               Policy);
   
   if (!T->isObjCIdType() && !T->isObjCQualifiedIdType())
     ObjCQIString += " *"; // Don't forget the implicit pointer.

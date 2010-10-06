@@ -534,16 +534,14 @@ public:
   /// this routine to provide different behavior.
   QualType RebuildDependentTemplateSpecializationType(
                                     ElaboratedTypeKeyword Keyword,
-                                    NestedNameSpecifier *Qualifier,
-                                    SourceRange QualifierRange,
+                                    NestedNameSpecifier *NNS,
                                     const IdentifierInfo *Name,
                                     SourceLocation NameLoc,
                                     const TemplateArgumentListInfo &Args) {
     // Rebuild the template name.
     // TODO: avoid TemplateName abstraction
     TemplateName InstName =
-      getDerived().RebuildTemplateName(Qualifier, QualifierRange, *Name, 
-                                       QualType());
+      getDerived().RebuildTemplateName(NNS, *Name, QualType());
     
     if (InstName.isNull())
       return QualType();
@@ -551,7 +549,7 @@ public:
     // If it's still dependent, make a dependent specialization.
     if (InstName.getAsDependentTemplateName())
       return SemaRef.Context.getDependentTemplateSpecializationType(
-                                          Keyword, Qualifier, Name, Args);
+                                          Keyword, NNS, Name, Args);
 
     // Otherwise, make an elaborated type wrapping a non-dependent
     // specialization.
@@ -691,7 +689,6 @@ public:
   /// template name. Subclasses may override this routine to provide different
   /// behavior.
   TemplateName RebuildTemplateName(NestedNameSpecifier *Qualifier,
-                                   SourceRange QualifierRange,
                                    const IdentifierInfo &II,
                                    QualType ObjectType);
 
@@ -758,9 +755,8 @@ public:
   StmtResult RebuildLabelStmt(SourceLocation IdentLoc,
                                     IdentifierInfo *Id,
                                     SourceLocation ColonLoc,
-                                    Stmt *SubStmt, bool HasUnusedAttr) {
-    return SemaRef.ActOnLabelStmt(IdentLoc, Id, ColonLoc, SubStmt,
-                                  HasUnusedAttr);
+                                    Stmt *SubStmt) {
+    return SemaRef.ActOnLabelStmt(IdentLoc, Id, ColonLoc, SubStmt);
   }
 
   /// \brief Build a new "if" statement.
@@ -981,11 +977,13 @@ public:
   ///
   /// By default, performs semantic analysis to build the new decaration.
   /// Subclasses may override this routine to provide different behavior.
-  VarDecl *RebuildExceptionDecl(VarDecl *ExceptionDecl, 
+  VarDecl *RebuildExceptionDecl(VarDecl *ExceptionDecl, QualType T,
                                 TypeSourceInfo *Declarator,
                                 IdentifierInfo *Name,
-                                SourceLocation Loc) {
-    return getSema().BuildExceptionDeclaration(0, Declarator, Name, Loc);
+                                SourceLocation Loc,
+                                SourceRange TypeRange) {
+    return getSema().BuildExceptionDeclaration(0, T, Declarator, Name, Loc,
+                                               TypeRange);
   }
 
   /// \brief Build a new C++ catch statement.
@@ -1128,9 +1126,10 @@ public:
   /// Subclasses may override this routine to provide different behavior.
   ExprResult RebuildCallExpr(Expr *Callee, SourceLocation LParenLoc,
                                    MultiExprArg Args,
+                                   SourceLocation *CommaLocs,
                                    SourceLocation RParenLoc) {
     return getSema().ActOnCallExpr(/*Scope=*/0, Callee, LParenLoc,
-                                   move(Args), RParenLoc);
+                                   move(Args), CommaLocs, RParenLoc);
   }
 
   /// \brief Build a new member access expression.
@@ -1493,12 +1492,16 @@ public:
   ///
   /// By default, performs semantic analysis to build the new expression.
   /// Subclasses may override this routine to provide different behavior.
-  ExprResult RebuildCXXFunctionalCastExpr(TypeSourceInfo *TInfo,
-                                          SourceLocation LParenLoc,
-                                          Expr *Sub,
-                                          SourceLocation RParenLoc) {
-    return getSema().BuildCXXTypeConstructExpr(TInfo, LParenLoc,
+  ExprResult RebuildCXXFunctionalCastExpr(SourceRange TypeRange,
+                                                TypeSourceInfo *TInfo,
+                                                SourceLocation LParenLoc,
+                                                Expr *Sub,
+                                                SourceLocation RParenLoc) {
+    return getSema().ActOnCXXTypeConstructExpr(TypeRange,
+                                             ParsedType::make(TInfo->getType()),
+                                               LParenLoc,
                                                MultiExprArg(&Sub, 1),
+                                               /*CommaLocs=*/0,
                                                RParenLoc);
   }
 
@@ -1514,7 +1517,6 @@ public:
                                     RParenLoc);
   }
 
-
   /// \brief Build a new C++ typeid(expr) expression.
   ///
   /// By default, performs semantic analysis to build the new expression.
@@ -1527,38 +1529,14 @@ public:
                                     RParenLoc);
   }
 
-  /// \brief Build a new C++ __uuidof(type) expression.
-  ///
-  /// By default, performs semantic analysis to build the new expression.
-  /// Subclasses may override this routine to provide different behavior.
-  ExprResult RebuildCXXUuidofExpr(QualType TypeInfoType,
-                                        SourceLocation TypeidLoc,
-                                        TypeSourceInfo *Operand,
-                                        SourceLocation RParenLoc) {
-    return getSema().BuildCXXUuidof(TypeInfoType, TypeidLoc, Operand, 
-                                    RParenLoc);
-  }
-
-  /// \brief Build a new C++ __uuidof(expr) expression.
-  ///
-  /// By default, performs semantic analysis to build the new expression.
-  /// Subclasses may override this routine to provide different behavior.
-  ExprResult RebuildCXXUuidofExpr(QualType TypeInfoType,
-                                        SourceLocation TypeidLoc,
-                                        Expr *Operand,
-                                        SourceLocation RParenLoc) {
-    return getSema().BuildCXXUuidof(TypeInfoType, TypeidLoc, Operand,
-                                    RParenLoc);
-  }
-
   /// \brief Build a new C++ "this" expression.
   ///
   /// By default, builds a new "this" expression without performing any
   /// semantic analysis. Subclasses may override this routine to provide
   /// different behavior.
   ExprResult RebuildCXXThisExpr(SourceLocation ThisLoc,
-                                QualType ThisType,
-                                bool isImplicit) {
+                                      QualType ThisType,
+                                      bool isImplicit) {
     return getSema().Owned(
                       new (getSema().Context) CXXThisExpr(ThisLoc, ThisType,
                                                           isImplicit));
@@ -1587,12 +1565,14 @@ public:
   ///
   /// By default, performs semantic analysis to build the new expression.
   /// Subclasses may override this routine to provide different behavior.
-  ExprResult RebuildCXXScalarValueInitExpr(TypeSourceInfo *TSInfo,
-                                           SourceLocation LParenLoc,
-                                           SourceLocation RParenLoc) {
-    return getSema().BuildCXXTypeConstructExpr(TSInfo, LParenLoc,
+  ExprResult RebuildCXXScalarValueInitExpr(SourceLocation TypeStartLoc,
+                                               SourceLocation LParenLoc,
+                                               QualType T,
+                                               SourceLocation RParenLoc) {
+    return getSema().ActOnCXXTypeConstructExpr(SourceRange(TypeStartLoc),
+                                               ParsedType::make(T), LParenLoc,
                                                MultiExprArg(getSema(), 0, 0),
-                                               RParenLoc);
+                                               0, RParenLoc);
   }
 
   /// \brief Build a new C++ "new" expression.
@@ -1600,24 +1580,26 @@ public:
   /// By default, performs semantic analysis to build the new expression.
   /// Subclasses may override this routine to provide different behavior.
   ExprResult RebuildCXXNewExpr(SourceLocation StartLoc,
-                               bool UseGlobal,
-                               SourceLocation PlacementLParen,
-                               MultiExprArg PlacementArgs,
-                               SourceLocation PlacementRParen,
-                               SourceRange TypeIdParens,
-                               QualType AllocatedType,
-                               TypeSourceInfo *AllocatedTypeInfo,
-                               Expr *ArraySize,
-                               SourceLocation ConstructorLParen,
-                               MultiExprArg ConstructorArgs,
-                               SourceLocation ConstructorRParen) {
+                                     bool UseGlobal,
+                                     SourceLocation PlacementLParen,
+                                     MultiExprArg PlacementArgs,
+                                     SourceLocation PlacementRParen,
+                                     SourceRange TypeIdParens,
+                                     QualType AllocType,
+                                     SourceLocation TypeLoc,
+                                     SourceRange TypeRange,
+                                     Expr *ArraySize,
+                                     SourceLocation ConstructorLParen,
+                                     MultiExprArg ConstructorArgs,
+                                     SourceLocation ConstructorRParen) {
     return getSema().BuildCXXNew(StartLoc, UseGlobal,
                                  PlacementLParen,
                                  move(PlacementArgs),
                                  PlacementRParen,
                                  TypeIdParens,
-                                 AllocatedType,
-                                 AllocatedTypeInfo,
+                                 AllocType,
+                                 TypeLoc,
+                                 TypeRange,
                                  ArraySize,
                                  ConstructorLParen,
                                  move(ConstructorArgs),
@@ -1641,10 +1623,12 @@ public:
   /// By default, performs semantic analysis to build the new expression.
   /// Subclasses may override this routine to provide different behavior.
   ExprResult RebuildUnaryTypeTrait(UnaryTypeTrait Trait,
-                                   SourceLocation StartLoc,
-                                   TypeSourceInfo *T,
-                                   SourceLocation RParenLoc) {
-    return getSema().BuildUnaryTypeTrait(Trait, StartLoc, T, RParenLoc);
+                                         SourceLocation StartLoc,
+                                         SourceLocation LParenLoc,
+                                         QualType T,
+                                         SourceLocation RParenLoc) {
+    return getSema().ActOnUnaryTypeTrait(Trait, StartLoc, LParenLoc,
+                                         ParsedType::make(T), RParenLoc);
   }
 
   /// \brief Build a new (previously unresolved) declaration reference
@@ -1703,13 +1687,17 @@ public:
   ///
   /// By default, performs semantic analysis to build the new expression.
   /// Subclasses may override this routine to provide different behavior.
-  ExprResult RebuildCXXTemporaryObjectExpr(TypeSourceInfo *TSInfo,
-                                           SourceLocation LParenLoc,
-                                           MultiExprArg Args,
-                                           SourceLocation RParenLoc) {
-    return getSema().BuildCXXTypeConstructExpr(TSInfo,
+  ExprResult RebuildCXXTemporaryObjectExpr(SourceLocation TypeBeginLoc,
+                                                 QualType T,
+                                                 SourceLocation LParenLoc,
+                                                 MultiExprArg Args,
+                                                 SourceLocation *Commas,
+                                                 SourceLocation RParenLoc) {
+    return getSema().ActOnCXXTypeConstructExpr(SourceRange(TypeBeginLoc),
+                                               ParsedType::make(T),
                                                LParenLoc,
                                                move(Args),
+                                               Commas,
                                                RParenLoc);
   }
 
@@ -1717,13 +1705,18 @@ public:
   ///
   /// By default, performs semantic analysis to build the new expression.
   /// Subclasses may override this routine to provide different behavior.
-  ExprResult RebuildCXXUnresolvedConstructExpr(TypeSourceInfo *TSInfo,
-                                               SourceLocation LParenLoc,
-                                               MultiExprArg Args,
-                                               SourceLocation RParenLoc) {
-    return getSema().BuildCXXTypeConstructExpr(TSInfo,
+  ExprResult RebuildCXXUnresolvedConstructExpr(SourceLocation TypeBeginLoc,
+                                                     QualType T,
+                                                     SourceLocation LParenLoc,
+                                                     MultiExprArg Args,
+                                                     SourceLocation *Commas,
+                                                     SourceLocation RParenLoc) {
+    return getSema().ActOnCXXTypeConstructExpr(SourceRange(TypeBeginLoc,
+                                                           /*FIXME*/LParenLoc),
+                                               ParsedType::make(T),
                                                LParenLoc,
                                                move(Args),
+                                               Commas,
                                                RParenLoc);
   }
 
@@ -1772,14 +1765,6 @@ public:
                                             OperatorLoc, IsArrow,
                                             SS, FirstQualifierInScope,
                                             R, TemplateArgs);
-  }
-
-  /// \brief Build a new noexcept expression.
-  ///
-  /// By default, performs semantic analysis to build the new expression.
-  /// Subclasses may override this routine to provide different behavior.
-  ExprResult RebuildCXXNoexceptExpr(SourceRange Range, Expr *Arg) {
-    return SemaRef.BuildCXXNoexceptExpr(Range.getBegin(), Arg, Range.getEnd());
   }
 
   /// \brief Build a new Objective-C @encode expression.
@@ -2192,13 +2177,9 @@ TreeTransform<Derived>::TransformTemplateName(TemplateName Name,
         ObjectType.isNull())
       return Name;
 
-    if (DTN->isIdentifier()) {
-      // FIXME: Bad range
-      SourceRange QualifierRange(getDerived().getBaseLocation());
-      return getDerived().RebuildTemplateName(NNS, QualifierRange,
-                                              *DTN->getIdentifier(), 
+    if (DTN->isIdentifier())
+      return getDerived().RebuildTemplateName(NNS, *DTN->getIdentifier(), 
                                               ObjectType);
-    }
     
     return getDerived().RebuildTemplateName(NNS, DTN->getOperator(), 
                                             ObjectType);
@@ -2928,33 +2909,20 @@ TreeTransform<Derived>::TransformFunctionProtoType(TypeLocBuilder &TLB,
   // the parameters, because users tend to expect this (even if they shouldn't
   // rely on it!).
   //
-  // When the function has a trailing return type, we instantiate the
-  // parameters before the return type,  since the return type can then refer
-  // to the parameters themselves (via decltype, sizeof, etc.).
-  //
+  // FIXME: When we implement late-specified return types, we'll need to
+  // instantiate the return tpe *after* the parameter types in that case,
+  // since the return type can then refer to the parameters themselves (via
+  // decltype, sizeof, etc.).
   llvm::SmallVector<QualType, 4> ParamTypes;
   llvm::SmallVector<ParmVarDecl*, 4> ParamDecls;
   FunctionProtoType *T = TL.getTypePtr();
+  QualType ResultType = getDerived().TransformType(TLB, TL.getResultLoc());
+  if (ResultType.isNull())
+    return QualType();
 
-  QualType ResultType;
-
-  if (TL.getTrailingReturn()) {
-    if (getDerived().TransformFunctionTypeParams(TL, ParamTypes, ParamDecls))
-      return QualType();
-
-    ResultType = getDerived().TransformType(TLB, TL.getResultLoc());
-    if (ResultType.isNull())
-      return QualType();
-  }
-  else {
-    ResultType = getDerived().TransformType(TLB, TL.getResultLoc());
-    if (ResultType.isNull())
-      return QualType();
-
-    if (getDerived().TransformFunctionTypeParams(TL, ParamTypes, ParamDecls))
-      return QualType();
-  }
-
+  if (getDerived().TransformFunctionTypeParams(TL, ParamTypes, ParamDecls))
+    return QualType();  
+  
   QualType Result = TL.getType();
   if (getDerived().AlwaysRebuild() ||
       ResultType != T->getResultType() ||
@@ -2972,7 +2940,6 @@ TreeTransform<Derived>::TransformFunctionProtoType(TypeLocBuilder &TLB,
   FunctionProtoTypeLoc NewTL = TLB.push<FunctionProtoTypeLoc>(Result);
   NewTL.setLParenLoc(TL.getLParenLoc());
   NewTL.setRParenLoc(TL.getRParenLoc());
-  NewTL.setTrailingReturn(TL.getTrailingReturn());
   for (unsigned i = 0, e = NewTL.getNumArgs(); i != e; ++i)
     NewTL.setArg(i, ParamDecls[i]);
 
@@ -2997,7 +2964,6 @@ QualType TreeTransform<Derived>::TransformFunctionNoProtoType(
   FunctionNoProtoTypeLoc NewTL = TLB.push<FunctionNoProtoTypeLoc>(Result);
   NewTL.setLParenLoc(TL.getLParenLoc());
   NewTL.setRParenLoc(TL.getRParenLoc());
-  NewTL.setTrailingReturn(false);
 
   return Result;
 }
@@ -3401,13 +3367,12 @@ QualType TreeTransform<Derived>::
     NewTemplateArgs.addArgument(Loc);
   }
 
-  QualType Result
-    = getDerived().RebuildDependentTemplateSpecializationType(T->getKeyword(),
-                                                              NNS,
-                                                        TL.getQualifierRange(),
-                                                            T->getIdentifier(),
-                                                              TL.getNameLoc(),
-                                                              NewTemplateArgs);
+  QualType Result = getDerived().RebuildDependentTemplateSpecializationType(
+                                                     T->getKeyword(),
+                                                     NNS,
+                                                     T->getIdentifier(),
+                                                     TL.getNameLoc(),
+                                                     NewTemplateArgs);
   if (Result.isNull())
     return QualType();
 
@@ -3578,7 +3543,7 @@ TreeTransform<Derived>::TransformLabelStmt(LabelStmt *S) {
   // FIXME: Pass the real colon location in.
   SourceLocation ColonLoc = SemaRef.PP.getLocForEndOfToken(S->getIdentLoc());
   return getDerived().RebuildLabelStmt(S->getIdentLoc(), S->getID(), ColonLoc,
-                                       SubStmt.get(), S->HasUnusedAttribute());
+                                       SubStmt.get());
 }
 
 template<typename Derived>
@@ -4149,14 +4114,20 @@ TreeTransform<Derived>::TransformCXXCatchStmt(CXXCatchStmt *S) {
   VarDecl *Var = 0;
   if (S->getExceptionDecl()) {
     VarDecl *ExceptionDecl = S->getExceptionDecl();
-    TypeSourceInfo *T = getDerived().TransformType(
-                                            ExceptionDecl->getTypeSourceInfo());
-    if (!T)
+    TemporaryBase Rebase(*this, ExceptionDecl->getLocation(),
+                         ExceptionDecl->getDeclName());
+
+    QualType T = getDerived().TransformType(ExceptionDecl->getType());
+    if (T.isNull())
       return StmtError();
 
-    Var = getDerived().RebuildExceptionDecl(ExceptionDecl, T,
+    Var = getDerived().RebuildExceptionDecl(ExceptionDecl,
+                                            T,
+                                            ExceptionDecl->getTypeSourceInfo(),
                                             ExceptionDecl->getIdentifier(),
-                                            ExceptionDecl->getLocation());
+                                            ExceptionDecl->getLocation(),
+                                            /*FIXME: Inaccurate*/
+                                    SourceRange(ExceptionDecl->getLocation()));
     if (!Var || Var->isInvalidDecl())
       return StmtError();
   }
@@ -4467,10 +4438,15 @@ TreeTransform<Derived>::TransformCallExpr(CallExpr *E) {
   // Transform arguments.
   bool ArgChanged = false;
   ASTOwningVector<Expr*> Args(SemaRef);
+  llvm::SmallVector<SourceLocation, 4> FakeCommaLocs;
   for (unsigned I = 0, N = E->getNumArgs(); I != N; ++I) {
     ExprResult Arg = getDerived().TransformExpr(E->getArg(I));
     if (Arg.isInvalid())
       return ExprError();
+
+    // FIXME: Wrong source location information for the ','.
+    FakeCommaLocs.push_back(
+       SemaRef.PP.getLocForEndOfToken(E->getArg(I)->getSourceRange().getEnd()));
 
     ArgChanged = ArgChanged || Arg.get() != E->getArg(I);
     Args.push_back(Arg.get());
@@ -4486,6 +4462,7 @@ TreeTransform<Derived>::TransformCallExpr(CallExpr *E) {
     = ((Expr *)Callee.get())->getSourceRange().getBegin();
   return getDerived().RebuildCallExpr(Callee.get(), FakeLParenLoc,
                                       move_arg(Args),
+                                      FakeCommaLocs.data(),
                                       E->getRParenLoc());
 }
 
@@ -4634,22 +4611,32 @@ TreeTransform<Derived>::TransformImplicitCastExpr(ImplicitCastExpr *E) {
 template<typename Derived>
 ExprResult
 TreeTransform<Derived>::TransformCStyleCastExpr(CStyleCastExpr *E) {
-  TypeSourceInfo *Type = getDerived().TransformType(E->getTypeInfoAsWritten());
-  if (!Type)
-    return ExprError();
-  
+  TypeSourceInfo *OldT;
+  TypeSourceInfo *NewT;
+  {
+    // FIXME: Source location isn't quite accurate.
+    SourceLocation TypeStartLoc
+      = SemaRef.PP.getLocForEndOfToken(E->getLParenLoc());
+    TemporaryBase Rebase(*this, TypeStartLoc, DeclarationName());
+
+    OldT = E->getTypeInfoAsWritten();
+    NewT = getDerived().TransformType(OldT);
+    if (!NewT)
+      return ExprError();
+  }
+
   ExprResult SubExpr
     = getDerived().TransformExpr(E->getSubExprAsWritten());
   if (SubExpr.isInvalid())
     return ExprError();
 
   if (!getDerived().AlwaysRebuild() &&
-      Type == E->getTypeInfoAsWritten() &&
+      OldT == NewT &&
       SubExpr.get() == E->getSubExpr())
     return SemaRef.Owned(E->Retain());
 
   return getDerived().RebuildCStyleCastExpr(E->getLParenLoc(),
-                                            Type,
+                                            NewT,
                                             E->getRParenLoc(),
                                             SubExpr.get());
 }
@@ -4959,6 +4946,7 @@ TreeTransform<Derived>::TransformCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
 
     // Transform the call arguments.
     ASTOwningVector<Expr*> Args(SemaRef);
+    llvm::SmallVector<SourceLocation, 4> FakeCommaLocs;
     for (unsigned I = 1, N = E->getNumArgs(); I != N; ++I) {
       if (getDerived().DropCallArgument(E->getArg(I)))
         break;
@@ -4967,11 +4955,17 @@ TreeTransform<Derived>::TransformCXXOperatorCallExpr(CXXOperatorCallExpr *E) {
       if (Arg.isInvalid())
         return ExprError();
 
+      // FIXME: Poor source location information.
+      SourceLocation FakeCommaLoc
+        = SemaRef.PP.getLocForEndOfToken(
+                                 static_cast<Expr *>(Arg.get())->getLocEnd());
+      FakeCommaLocs.push_back(FakeCommaLoc);
       Args.push_back(Arg.release());
     }
 
     return getDerived().RebuildCallExpr(Object.get(), FakeLParenLoc,
                                         move_arg(Args),
+                                        FakeCommaLocs.data(),
                                         E->getLocEnd());
   }
 
@@ -5030,17 +5024,27 @@ TreeTransform<Derived>::TransformCXXMemberCallExpr(CXXMemberCallExpr *E) {
 template<typename Derived>
 ExprResult
 TreeTransform<Derived>::TransformCXXNamedCastExpr(CXXNamedCastExpr *E) {
-  TypeSourceInfo *Type = getDerived().TransformType(E->getTypeInfoAsWritten());
-  if (!Type)
-    return ExprError();
-  
+  TypeSourceInfo *OldT;
+  TypeSourceInfo *NewT;
+  {
+    // FIXME: Source location isn't quite accurate.
+    SourceLocation TypeStartLoc
+      = SemaRef.PP.getLocForEndOfToken(E->getOperatorLoc());
+    TemporaryBase Rebase(*this, TypeStartLoc, DeclarationName());
+
+    OldT = E->getTypeInfoAsWritten();
+    NewT = getDerived().TransformType(OldT);
+    if (!NewT)
+      return ExprError();
+  }
+
   ExprResult SubExpr
     = getDerived().TransformExpr(E->getSubExprAsWritten());
   if (SubExpr.isInvalid())
     return ExprError();
 
   if (!getDerived().AlwaysRebuild() &&
-      Type == E->getTypeInfoAsWritten() &&
+      OldT == NewT &&
       SubExpr.get() == E->getSubExpr())
     return SemaRef.Owned(E->Retain());
 
@@ -5054,7 +5058,7 @@ TreeTransform<Derived>::TransformCXXNamedCastExpr(CXXNamedCastExpr *E) {
   return getDerived().RebuildCXXNamedCastExpr(E->getOperatorLoc(),
                                               E->getStmtClass(),
                                               FakeLAngleLoc,
-                                              Type,
+                                              NewT,
                                               FakeRAngleLoc,
                                               FakeRAngleLoc,
                                               SubExpr.get(),
@@ -5090,9 +5094,16 @@ template<typename Derived>
 ExprResult
 TreeTransform<Derived>::TransformCXXFunctionalCastExpr(
                                                      CXXFunctionalCastExpr *E) {
-  TypeSourceInfo *Type = getDerived().TransformType(E->getTypeInfoAsWritten());
-  if (!Type)
-    return ExprError();
+  TypeSourceInfo *OldT;
+  TypeSourceInfo *NewT;
+  {
+    TemporaryBase Rebase(*this, E->getTypeBeginLoc(), DeclarationName());
+
+    OldT = E->getTypeInfoAsWritten();
+    NewT = getDerived().TransformType(OldT);
+    if (!NewT)
+      return ExprError();
+  }
 
   ExprResult SubExpr
     = getDerived().TransformExpr(E->getSubExprAsWritten());
@@ -5100,11 +5111,14 @@ TreeTransform<Derived>::TransformCXXFunctionalCastExpr(
     return ExprError();
 
   if (!getDerived().AlwaysRebuild() &&
-      Type == E->getTypeInfoAsWritten() &&
+      OldT == NewT &&
       SubExpr.get() == E->getSubExpr())
     return SemaRef.Owned(E->Retain());
 
-  return getDerived().RebuildCXXFunctionalCastExpr(Type,
+  // FIXME: The end of the type's source range is wrong
+  return getDerived().RebuildCXXFunctionalCastExpr(
+                                  /*FIXME:*/SourceRange(E->getTypeBeginLoc()),
+                                                   NewT,
                                       /*FIXME:*/E->getSubExpr()->getLocStart(),
                                                    SubExpr.get(),
                                                    E->getRParenLoc());
@@ -5151,44 +5165,6 @@ TreeTransform<Derived>::TransformCXXTypeidExpr(CXXTypeidExpr *E) {
 
 template<typename Derived>
 ExprResult
-TreeTransform<Derived>::TransformCXXUuidofExpr(CXXUuidofExpr *E) {
-  if (E->isTypeOperand()) {
-    TypeSourceInfo *TInfo
-      = getDerived().TransformType(E->getTypeOperandSourceInfo());
-    if (!TInfo)
-      return ExprError();
-
-    if (!getDerived().AlwaysRebuild() &&
-        TInfo == E->getTypeOperandSourceInfo())
-      return SemaRef.Owned(E->Retain());
-
-    return getDerived().RebuildCXXTypeidExpr(E->getType(),
-                                             E->getLocStart(),
-                                             TInfo,
-                                             E->getLocEnd());
-  }
-
-  // We don't know whether the expression is potentially evaluated until
-  // after we perform semantic analysis, so the expression is potentially
-  // potentially evaluated.
-  EnterExpressionEvaluationContext Unevaluated(SemaRef, Sema::Unevaluated);
-
-  ExprResult SubExpr = getDerived().TransformExpr(E->getExprOperand());
-  if (SubExpr.isInvalid())
-    return ExprError();
-
-  if (!getDerived().AlwaysRebuild() &&
-      SubExpr.get() == E->getExprOperand())
-    return SemaRef.Owned(E->Retain());
-
-  return getDerived().RebuildCXXUuidofExpr(E->getType(),
-                                           E->getLocStart(),
-                                           SubExpr.get(),
-                                           E->getLocEnd());
-}
-
-template<typename Derived>
-ExprResult
 TreeTransform<Derived>::TransformCXXBoolLiteralExpr(CXXBoolLiteralExpr *E) {
   return SemaRef.Owned(E->Retain());
 }
@@ -5203,11 +5179,14 @@ TreeTransform<Derived>::TransformCXXNullPtrLiteralExpr(
 template<typename Derived>
 ExprResult
 TreeTransform<Derived>::TransformCXXThisExpr(CXXThisExpr *E) {
-  DeclContext *DC = getSema().getFunctionLevelDeclContext();
-  CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(DC);
-  QualType T = MD->getThisType(getSema().Context);
+  TemporaryBase Rebase(*this, E->getLocStart(), DeclarationName());
 
-  if (!getDerived().AlwaysRebuild() && T == E->getType())
+  QualType T = getDerived().TransformType(E->getType());
+  if (T.isNull())
+    return ExprError();
+
+  if (!getDerived().AlwaysRebuild() &&
+      T == E->getType())
     return SemaRef.Owned(E->Retain());
 
   return getDerived().RebuildCXXThisExpr(E->getLocStart(), T, E->isImplicit());
@@ -5245,18 +5224,20 @@ TreeTransform<Derived>::TransformCXXDefaultArgExpr(CXXDefaultArgExpr *E) {
 
 template<typename Derived>
 ExprResult
-TreeTransform<Derived>::TransformCXXScalarValueInitExpr(
-                                                    CXXScalarValueInitExpr *E) {
-  TypeSourceInfo *T = getDerived().TransformType(E->getTypeSourceInfo());
-  if (!T)
+TreeTransform<Derived>::TransformCXXScalarValueInitExpr(CXXScalarValueInitExpr *E) {
+  TemporaryBase Rebase(*this, E->getTypeBeginLoc(), DeclarationName());
+
+  QualType T = getDerived().TransformType(E->getType());
+  if (T.isNull())
     return ExprError();
-  
+
   if (!getDerived().AlwaysRebuild() &&
-      T == E->getTypeSourceInfo())
+      T == E->getType())
     return SemaRef.Owned(E->Retain());
 
-  return getDerived().RebuildCXXScalarValueInitExpr(T, 
-                                          /*FIXME:*/T->getTypeLoc().getEndLoc(),
+  return getDerived().RebuildCXXScalarValueInitExpr(E->getTypeBeginLoc(),
+                                                 /*FIXME:*/E->getTypeBeginLoc(),
+                                                    T,
                                                     E->getRParenLoc());
 }
 
@@ -5264,9 +5245,9 @@ template<typename Derived>
 ExprResult
 TreeTransform<Derived>::TransformCXXNewExpr(CXXNewExpr *E) {
   // Transform the type that we're allocating
-  TypeSourceInfo *AllocTypeInfo
-    = getDerived().TransformType(E->getAllocatedTypeSourceInfo());
-  if (!AllocTypeInfo)
+  TemporaryBase Rebase(*this, E->getLocStart(), DeclarationName());
+  QualType AllocType = getDerived().TransformType(E->getAllocatedType());
+  if (AllocType.isNull())
     return ExprError();
 
   // Transform the size of the array we're allocating (if any).
@@ -5278,11 +5259,6 @@ TreeTransform<Derived>::TransformCXXNewExpr(CXXNewExpr *E) {
   bool ArgumentChanged = false;
   ASTOwningVector<Expr*> PlacementArgs(SemaRef);
   for (unsigned I = 0, N = E->getNumPlacementArgs(); I != N; ++I) {
-    if (getDerived().DropCallArgument(E->getPlacementArg(I))) {
-      ArgumentChanged = true;
-      break;
-    }
-
     ExprResult Arg = getDerived().TransformExpr(E->getPlacementArg(I));
     if (Arg.isInvalid())
       return ExprError();
@@ -5294,10 +5270,8 @@ TreeTransform<Derived>::TransformCXXNewExpr(CXXNewExpr *E) {
   // transform the constructor arguments (if any).
   ASTOwningVector<Expr*> ConstructorArgs(SemaRef);
   for (unsigned I = 0, N = E->getNumConstructorArgs(); I != N; ++I) {
-    if (getDerived().DropCallArgument(E->getConstructorArg(I))) {
-      ArgumentChanged = true;
+    if (getDerived().DropCallArgument(E->getConstructorArg(I)))
       break;
-    }
     
     ExprResult Arg = getDerived().TransformExpr(E->getConstructorArg(I));
     if (Arg.isInvalid())
@@ -5336,7 +5310,7 @@ TreeTransform<Derived>::TransformCXXNewExpr(CXXNewExpr *E) {
   }
   
   if (!getDerived().AlwaysRebuild() &&
-      AllocTypeInfo == E->getAllocatedTypeSourceInfo() &&
+      AllocType == E->getAllocatedType() &&
       ArraySize.get() == E->getArraySize() &&
       Constructor == E->getConstructor() &&
       OperatorNew == E->getOperatorNew() &&
@@ -5353,7 +5327,6 @@ TreeTransform<Derived>::TransformCXXNewExpr(CXXNewExpr *E) {
     return SemaRef.Owned(E->Retain());
   }
 
-  QualType AllocType = AllocTypeInfo->getType();
   if (!ArraySize.get()) {
     // If no array size was specified, but the new expression was
     // instantiated with an array type (e.g., "new T" where T is
@@ -5379,7 +5352,6 @@ TreeTransform<Derived>::TransformCXXNewExpr(CXXNewExpr *E) {
       }
     }
   }
-  
   return getDerived().RebuildCXXNewExpr(E->getLocStart(),
                                         E->isGlobalNew(),
                                         /*FIXME:*/E->getLocStart(),
@@ -5387,7 +5359,8 @@ TreeTransform<Derived>::TransformCXXNewExpr(CXXNewExpr *E) {
                                         /*FIXME:*/E->getLocStart(),
                                         E->getTypeIdParens(),
                                         AllocType,
-                                        AllocTypeInfo,
+                                        /*FIXME:*/E->getLocStart(),
+                                        /*FIXME:*/SourceRange(),
                                         ArraySize.get(),
                                         /*FIXME:*/E->getLocStart(),
                                         move_arg(ConstructorArgs),
@@ -5418,17 +5391,6 @@ TreeTransform<Derived>::TransformCXXDeleteExpr(CXXDeleteExpr *E) {
     // FIXME: instantiation-specific.
     if (OperatorDelete)
       SemaRef.MarkDeclarationReferenced(E->getLocStart(), OperatorDelete);
-    
-    if (!E->getArgument()->isTypeDependent()) {
-      QualType Destroyed = SemaRef.Context.getBaseElementType(
-                                                         E->getDestroyedType());
-      if (const RecordType *DestroyedRec = Destroyed->getAs<RecordType>()) {
-        CXXRecordDecl *Record = cast<CXXRecordDecl>(DestroyedRec->getDecl());
-        SemaRef.MarkDeclarationReferenced(E->getLocStart(), 
-                                          SemaRef.LookupDestructor(Record));
-      }
-    }
-    
     return SemaRef.Owned(E->Retain());
   }
 
@@ -5602,16 +5564,23 @@ TreeTransform<Derived>::TransformUnresolvedLookupExpr(
 template<typename Derived>
 ExprResult
 TreeTransform<Derived>::TransformUnaryTypeTraitExpr(UnaryTypeTraitExpr *E) {
-  TypeSourceInfo *T = getDerived().TransformType(E->getQueriedTypeSourceInfo());
-  if (!T)
+  TemporaryBase Rebase(*this, /*FIXME*/E->getLocStart(), DeclarationName());
+
+  QualType T = getDerived().TransformType(E->getQueriedType());
+  if (T.isNull())
     return ExprError();
 
   if (!getDerived().AlwaysRebuild() &&
-      T == E->getQueriedTypeSourceInfo())
+      T == E->getQueriedType())
     return SemaRef.Owned(E->Retain());
+
+  // FIXME: Bad location information
+  SourceLocation FakeLParenLoc
+    = SemaRef.PP.getLocForEndOfToken(E->getLocStart());
 
   return getDerived().RebuildUnaryTypeTrait(E->getTrait(),
                                             E->getLocStart(),
+                                            /*FIXME:*/FakeLParenLoc,
                                             T,
                                             E->getLocEnd());
 }
@@ -5741,9 +5710,10 @@ TreeTransform<Derived>::TransformCXXExprWithTemporaries(
 template<typename Derived>
 ExprResult
 TreeTransform<Derived>::TransformCXXTemporaryObjectExpr(
-                                                    CXXTemporaryObjectExpr *E) {
-  TypeSourceInfo *T = getDerived().TransformType(E->getTypeSourceInfo());
-  if (!T)
+                                                      CXXTemporaryObjectExpr *E) {
+  TemporaryBase Rebase(*this, E->getTypeBeginLoc(), DeclarationName());
+  QualType T = getDerived().TransformType(E->getType());
+  if (T.isNull())
     return ExprError();
 
   CXXConstructorDecl *Constructor
@@ -5773,17 +5743,26 @@ TreeTransform<Derived>::TransformCXXTemporaryObjectExpr(
   }
 
   if (!getDerived().AlwaysRebuild() &&
-      T == E->getTypeSourceInfo() &&
+      T == E->getType() &&
       Constructor == E->getConstructor() &&
       !ArgumentChanged) {
     // FIXME: Instantiation-specific
-    SemaRef.MarkDeclarationReferenced(E->getLocStart(), Constructor);
+    SemaRef.MarkDeclarationReferenced(E->getTypeBeginLoc(), Constructor);
     return SemaRef.MaybeBindToTemporary(E->Retain());
   }
-  
-  return getDerived().RebuildCXXTemporaryObjectExpr(T,
-                                          /*FIXME:*/T->getTypeLoc().getEndLoc(),
+
+  // FIXME: Bogus location information
+  SourceLocation CommaLoc;
+  if (Args.size() > 1) {
+    Expr *First = (Expr *)Args[0];
+    CommaLoc
+      = SemaRef.PP.getLocForEndOfToken(First->getSourceRange().getEnd());
+  }
+  return getDerived().RebuildCXXTemporaryObjectExpr(E->getTypeBeginLoc(),
+                                                    T,
+                                                /*FIXME:*/E->getTypeBeginLoc(),
                                                     move_arg(Args),
+                                                    &CommaLoc,
                                                     E->getLocEnd());
 }
 
@@ -5791,12 +5770,14 @@ template<typename Derived>
 ExprResult
 TreeTransform<Derived>::TransformCXXUnresolvedConstructExpr(
                                                   CXXUnresolvedConstructExpr *E) {
-  TypeSourceInfo *T = getDerived().TransformType(E->getTypeSourceInfo());
-  if (!T)
+  TemporaryBase Rebase(*this, E->getTypeBeginLoc(), DeclarationName());
+  QualType T = getDerived().TransformType(E->getTypeAsWritten());
+  if (T.isNull())
     return ExprError();
 
   bool ArgumentChanged = false;
   ASTOwningVector<Expr*> Args(SemaRef);
+  llvm::SmallVector<SourceLocation, 8> FakeCommaLocs;
   for (CXXUnresolvedConstructExpr::arg_iterator Arg = E->arg_begin(),
                                              ArgEnd = E->arg_end();
        Arg != ArgEnd; ++Arg) {
@@ -5805,18 +5786,22 @@ TreeTransform<Derived>::TransformCXXUnresolvedConstructExpr(
       return ExprError();
 
     ArgumentChanged = ArgumentChanged || TransArg.get() != *Arg;
+    FakeCommaLocs.push_back(
+                        SemaRef.PP.getLocForEndOfToken((*Arg)->getLocEnd()));
     Args.push_back(TransArg.get());
   }
 
   if (!getDerived().AlwaysRebuild() &&
-      T == E->getTypeSourceInfo() &&
+      T == E->getTypeAsWritten() &&
       !ArgumentChanged)
     return SemaRef.Owned(E->Retain());
 
   // FIXME: we're faking the locations of the commas
-  return getDerived().RebuildCXXUnresolvedConstructExpr(T,
+  return getDerived().RebuildCXXUnresolvedConstructExpr(E->getTypeBeginLoc(),
+                                                        T,
                                                         E->getLParenLoc(),
                                                         move_arg(Args),
+                                                        FakeCommaLocs.data(),
                                                         E->getRParenLoc());
 }
 
@@ -6015,19 +6000,6 @@ TreeTransform<Derived>::TransformUnresolvedMemberExpr(UnresolvedMemberExpr *Old)
                                                   R,
                                               (Old->hasExplicitTemplateArgs()
                                                   ? &TransArgs : 0));
-}
-
-template<typename Derived>
-ExprResult
-TreeTransform<Derived>::TransformCXXNoexceptExpr(CXXNoexceptExpr *E) {
-  ExprResult SubExpr = getDerived().TransformExpr(E->getOperand());
-  if (SubExpr.isInvalid())
-    return ExprError();
-
-  if (!getDerived().AlwaysRebuild() && SubExpr.get() == E->getOperand())
-    return SemaRef.Owned(E->Retain());
-
-  return getDerived().RebuildCXXNoexceptExpr(E->getSourceRange(),SubExpr.get());
 }
 
 template<typename Derived>
@@ -6580,11 +6552,10 @@ TreeTransform<Derived>::RebuildTemplateName(NestedNameSpecifier *Qualifier,
 template<typename Derived>
 TemplateName
 TreeTransform<Derived>::RebuildTemplateName(NestedNameSpecifier *Qualifier,
-                                            SourceRange QualifierRange,
                                             const IdentifierInfo &II,
                                             QualType ObjectType) {
   CXXScopeSpec SS;
-  SS.setRange(QualifierRange);
+  SS.setRange(SourceRange(getDerived().getBaseLocation()));
   SS.setScopeRep(Qualifier);
   UnqualifiedId Name;
   Name.setIdentifier(&II, /*FIXME:*/getDerived().getBaseLocation());

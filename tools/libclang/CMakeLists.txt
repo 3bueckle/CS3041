@@ -6,8 +6,9 @@ set(LLVM_USED_LIBS
   clangFrontend
   clangDriver
   clangSerialization
-  clangIndex
+  clangParse
   clangSema
+  clangAnalysis
   clangAST
   clangLex
   clangBasic)

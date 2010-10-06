@@ -373,7 +373,6 @@ static void RegisterInternalChecks(GRExprEngine &Eng) {
   RegisterUndefCapturedBlockVarChecker(Eng);
   RegisterUndefResultChecker(Eng);
   RegisterStackAddrLeakChecker(Eng);
-  RegisterObjCAtSyncChecker(Eng);
 
   // This is not a checker yet.
   RegisterNoReturnFunctionChecker(Eng);
@@ -634,7 +633,7 @@ void GRExprEngine::ProcessEndWorklist(bool hasWorkRemaining) {
 }
 
 void GRExprEngine::ProcessStmt(const CFGElement CE,GRStmtNodeBuilder& builder) {
-  CurrentStmt = CE.getAs<CFGStmt>();
+  CurrentStmt = CE.getStmt();
   PrettyStackTraceLoc CrashInfo(getContext().getSourceManager(),
                                 CurrentStmt->getLocStart(),
                                 "Error evaluating statement");
@@ -721,7 +720,7 @@ void GRExprEngine::ProcessStmt(const CFGElement CE,GRStmtNodeBuilder& builder) {
     Builder->SetCleanedState(*I == EntryNode ? CleanedState : GetState(*I));
 
     // Visit the statement.
-    if (CE.getAs<CFGStmt>().asLValue())
+    if (CE.asLValue())
       VisitLValue(cast<Expr>(CurrentStmt), *I, Dst);
     else
       Visit(CurrentStmt, *I, Dst);
@@ -774,14 +773,12 @@ void GRExprEngine::Visit(const Stmt* S, ExplodedNode* Pred,
     case Stmt::CXXThrowExprClass:
     case Stmt::CXXTryStmtClass:
     case Stmt::CXXTypeidExprClass:
-    case Stmt::CXXUuidofExprClass:
     case Stmt::CXXUnresolvedConstructExprClass:
     case Stmt::CXXScalarValueInitExprClass:
     case Stmt::DependentScopeDeclRefExprClass:
     case Stmt::UnaryTypeTraitExprClass:
     case Stmt::UnresolvedLookupExprClass:
     case Stmt::UnresolvedMemberExprClass:
-    case Stmt::CXXNoexceptExprClass:
     {
       SaveAndRestore<bool> OldSink(Builder->BuildSinks);
       Builder->BuildSinks = true;
@@ -811,10 +808,6 @@ void GRExprEngine::Visit(const Stmt* S, ExplodedNode* Pred,
       break;
     }
 
-    case Stmt::ObjCAtSynchronizedStmtClass:
-      VisitObjCAtSynchronizedStmt(cast<ObjCAtSynchronizedStmt>(S), Pred, Dst);
-      break;
-
     // Cases not handled yet; but will handle some day.
     case Stmt::DesignatedInitExprClass:
     case Stmt::ExtVectorElementExprClass:
@@ -822,6 +815,7 @@ void GRExprEngine::Visit(const Stmt* S, ExplodedNode* Pred,
     case Stmt::ImplicitValueInitExprClass:
     case Stmt::ObjCAtCatchStmtClass:
     case Stmt::ObjCAtFinallyStmtClass:
+    case Stmt::ObjCAtSynchronizedStmtClass:
     case Stmt::ObjCAtTryStmtClass:
     case Stmt::ObjCEncodeExprClass:
     case Stmt::ObjCImplicitSetterGetterRefExprClass:
@@ -1213,7 +1207,7 @@ bool GRExprEngine::ProcessBlockEntrance(const CFGBlock* B,
                                         const ExplodedNode *Pred,
                                         GRBlockCounter BC) {
   return BC.getNumVisited(Pred->getLocationContext()->getCurrentStackFrame(), 
-                          B->getBlockID()) < AMgr.getMaxVisit();
+                          B->getBlockID()) < AMgr.getMaxLoop();
 }
 
 //===----------------------------------------------------------------------===//
@@ -1566,24 +1560,9 @@ void GRExprEngine::ProcessSwitch(GRSwitchNodeBuilder& builder) {
     } while (true);
   }
 
-  if (!defaultIsFeasible)
-    return;
-
-  // If we have switch(enum value), the default branch is not
-  // feasible if all of the enum constants not covered by 'case:' statements
-  // are not feasible values for the switch condition.
-  //
-  // Note that this isn't as accurate as it could be.  Even if there isn't
-  // a case for a particular enum value as long as that enum value isn't
-  // feasible then it shouldn't be considered for making 'default:' reachable.
-  const SwitchStmt *SS = builder.getSwitch();
-  const Expr *CondExpr = SS->getCond()->IgnoreParenImpCasts();
-  if (CondExpr->getType()->getAs<EnumType>()) {
-    if (SS->isAllEnumCasesCovered())
-      return;
-  }
-
-  builder.generateDefaultCaseNode(DefaultSt);
+  // If we reach here, than we know that the default branch is
+  // possible.
+  if (defaultIsFeasible) builder.generateDefaultCaseNode(DefaultSt);
 }
 
 void GRExprEngine::ProcessCallEnter(GRCallEnterNodeBuilder &B) {
@@ -1881,7 +1860,7 @@ void GRExprEngine::EvalBind(ExplodedNodeSet& Dst, const Stmt* StoreE,
     // is non-NULL.  Checkers typically care about 
     
     GRStmtNodeBuilderRef BuilderRef(Dst, *Builder, *this, *I, newState, StoreE,
-                                    true);
+                                    newState != state);
 
     getTF().EvalBind(BuilderRef, location, Val);
   }
@@ -1975,18 +1954,16 @@ void GRExprEngine::EvalLoadCommon(ExplodedNodeSet& Dst, const Expr *Ex,
   // Proceed with the load.
   for (ExplodedNodeSet::iterator NI=Tmp.begin(), NE=Tmp.end(); NI!=NE; ++NI) {
     state = GetState(*NI);
-
     if (location.isUnknown()) {
       // This is important.  We must nuke the old binding.
       MakeNode(Dst, Ex, *NI, state->BindExpr(Ex, UnknownVal()),
                ProgramPoint::PostLoadKind, tag);
     }
     else {
-      if (LoadTy.isNull())
-        LoadTy = Ex->getType();
-      SVal V = state->getSVal(cast<Loc>(location), LoadTy);
-      MakeNode(Dst, Ex, *NI, state->bindExprAndLocation(Ex, location, V),
-               ProgramPoint::PostLoadKind, tag);
+      SVal V = state->getSVal(cast<Loc>(location), LoadTy.isNull() ?
+                                                     Ex->getType() : LoadTy);
+      MakeNode(Dst, Ex, *NI, state->BindExpr(Ex, V), ProgramPoint::PostLoadKind,
+               tag);
     }
   }
 }
@@ -2078,9 +2055,41 @@ void GRExprEngine::VisitCall(const CallExpr* CE, ExplodedNode* Pred,
   if (const PointerType *FnTypePtr = FnType->getAs<PointerType>())
     Proto = FnTypePtr->getPointeeType()->getAs<FunctionProtoType>();
 
-  // Evaluate the arguments.
+  // Create a worklist to process the arguments.
+  llvm::SmallVector<CallExprWLItem, 20> WorkList;
+  WorkList.reserve(AE - AI);
+  WorkList.push_back(CallExprWLItem(AI, Pred));
+
   ExplodedNodeSet ArgsEvaluated;
-  EvalArguments(CE->arg_begin(), CE->arg_end(), Proto, Pred, ArgsEvaluated);
+
+  while (!WorkList.empty()) {
+    CallExprWLItem Item = WorkList.back();
+    WorkList.pop_back();
+
+    if (Item.I == AE) {
+      ArgsEvaluated.insert(Item.N);
+      continue;
+    }
+
+    // Evaluate the argument.
+    ExplodedNodeSet Tmp;
+    const unsigned ParamIdx = Item.I - AI;
+
+    bool VisitAsLvalue = false;
+    if (Proto && ParamIdx < Proto->getNumArgs())
+      VisitAsLvalue = Proto->getArgType(ParamIdx)->isReferenceType();
+
+    if (VisitAsLvalue)
+      VisitLValue(*Item.I, Item.N, Tmp);
+    else
+      Visit(*Item.I, Item.N, Tmp);
+
+    // Enqueue evaluating the next argument on the worklist.
+    ++(Item.I);
+
+    for (ExplodedNodeSet::iterator NI=Tmp.begin(), NE=Tmp.end(); NI!=NE; ++NI)
+      WorkList.push_back(CallExprWLItem(Item.I, *NI));
+  }
 
   // Now process the call itself.
   ExplodedNodeSet DstTmp;
@@ -2098,6 +2107,7 @@ void GRExprEngine::VisitCall(const CallExpr* CE, ExplodedNode* Pred,
   // Finally, evaluate the function call.  We try each of the checkers
   // to see if the can evaluate the function call.
   ExplodedNodeSet DstTmp3;
+
 
   for (ExplodedNodeSet::iterator DI = DstTmp.begin(), DE = DstTmp.end();
        DI != DE; ++DI) {
@@ -2213,23 +2223,6 @@ void GRExprEngine::EvalEagerlyAssume(ExplodedNodeSet &Dst, ExplodedNodeSet &Src,
     else
       Dst.Add(Pred);
   }
-}
-
-//===----------------------------------------------------------------------===//
-// Transfer function: Objective-C @synchronized.
-//===----------------------------------------------------------------------===//
-
-void GRExprEngine::VisitObjCAtSynchronizedStmt(const ObjCAtSynchronizedStmt *S,
-                                               ExplodedNode *Pred,
-                                               ExplodedNodeSet &Dst) {
-
-  // The mutex expression is a CFGElement, so we don't need to explicitly
-  // visit it since it will already be processed.
-
-  // Pre-visit the ObjCAtSynchronizedStmt.
-  ExplodedNodeSet Tmp;
-  Tmp.Add(Pred);
-  CheckerVisit(S, Dst, Tmp, PreVisitStmtCallback);
 }
 
 //===----------------------------------------------------------------------===//
@@ -3345,6 +3338,7 @@ void GRExprEngine::VisitBinaryOperator(const BinaryOperator* B,
          I2 != E2; ++I2) {
 
       const GRState *state = GetState(*I2);
+      const GRState *OldSt = state;
       SVal RightV = state->getSVal(RHS);
 
       BinaryOperator::Opcode Op = B->getOpcode();
@@ -3374,7 +3368,13 @@ void GRExprEngine::VisitBinaryOperator(const BinaryOperator* B,
         SVal Result = EvalBinOp(state, Op, LeftV, RightV, B->getType());
 
         if (Result.isUnknown()) {
-          MakeNode(Tmp3, B, *I2, state);
+          if (OldSt != state) {
+            // Generate a new node if we have already created a new state.
+            MakeNode(Tmp3, B, *I2, state);
+          }
+          else
+            Tmp3.Add(*I2);
+
           continue;
         }
 
@@ -3693,7 +3693,7 @@ void GRExprEngine::ViewGraph(bool trim) {
            I2!=E2; ++I2) {
         const BugReportEquivClass& EQ = *I2;
         const BugReport &R = **EQ.begin();
-        ExplodedNode *N = const_cast<ExplodedNode*>(R.getErrorNode());
+        ExplodedNode *N = const_cast<ExplodedNode*>(R.getEndNode());
         if (N) Src.push_back(N);
       }
     }

@@ -313,9 +313,8 @@ Decl *Parser::ParseUsingDirective(unsigned Context,
   // Eat ';'.
   DeclEnd = Tok.getLocation();
   ExpectAndConsume(tok::semi,
-                   GNUAttr ? diag::err_expected_semi_after_attribute_list
-                           : diag::err_expected_semi_after_namespace_name, 
-                   "", tok::semi);
+                   GNUAttr ? diag::err_expected_semi_after_attribute_list :
+                   diag::err_expected_semi_after_namespace_name, "", tok::semi);
 
   return Actions.ActOnUsingDirective(getCurScope(), UsingLoc, NamespcLoc, SS,
                                       IdentLoc, NamespcName, Attr);
@@ -423,7 +422,7 @@ Decl *Parser::ParseStaticAssertDeclaration(SourceLocation &DeclEnd){
   MatchRHSPunctuation(tok::r_paren, LParenLoc);
 
   DeclEnd = Tok.getLocation();
-  ExpectAndConsumeSemi(diag::err_expected_semi_after_static_assert);
+  ExpectAndConsume(tok::semi, diag::err_expected_semi_after_static_assert);
 
   return Actions.ActOnStaticAssertDeclaration(StaticAssertLoc,
                                               AssertExpr.take(),
@@ -1443,9 +1442,7 @@ void Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
     //   '=' 'delete'
     if (Tok.is(tok::equal)) {
       ConsumeToken();
-      if (Tok.is(tok::kw_delete)) {
-        if (!getLang().CPlusPlus0x)
-          Diag(Tok, diag::warn_deleted_function_accepted_as_extension);
+      if (getLang().CPlusPlus0x && Tok.is(tok::kw_delete)) {
         ConsumeToken();
         Deleted = true;
       } else {
@@ -1738,13 +1735,7 @@ void Parser::ParseConstructorInitializer(Decl *ConstructorDecl) {
       ConsumeToken();
     else if (Tok.is(tok::l_brace))
       break;
-    // If the next token looks like a base or member initializer, assume that
-    // we're just missing a comma.
-    else if (Tok.is(tok::identifier) || Tok.is(tok::coloncolon)) {
-      SourceLocation Loc = PP.getLocForEndOfToken(PrevTokLocation);
-      Diag(Loc, diag::err_ctor_init_missing_comma)
-        << FixItHint::CreateInsertion(Loc, ", ");
-    } else {
+    else {
       // Skip over garbage, until we get to '{'.  Don't eat the '{'.
       Diag(Tok.getLocation(), diag::err_expected_lbrace_or_comma);
       SkipUntil(tok::l_brace, true, true);
@@ -1813,7 +1804,8 @@ Parser::MemInitResult Parser::ParseMemInitializer(Decl *ConstructorDecl) {
   return Actions.ActOnMemInitializer(ConstructorDecl, getCurScope(), SS, II,
                                      TemplateTypeTy, IdLoc,
                                      LParenLoc, ArgExprs.take(),
-                                     ArgExprs.size(), RParenLoc);
+                                     ArgExprs.size(), CommaLocs.data(),
+                                     RParenLoc);
 }
 
 /// ParseExceptionSpecification - Parse a C++ exception-specification
@@ -1869,25 +1861,6 @@ bool Parser::ParseExceptionSpecification(SourceLocation &EndLoc,
 
   EndLoc = MatchRHSPunctuation(tok::r_paren, LParenLoc);
   return false;
-}
-
-/// ParseTrailingReturnType - Parse a trailing return type on a new-style
-/// function declaration.
-TypeResult Parser::ParseTrailingReturnType() {
-  assert(Tok.is(tok::arrow) && "expected arrow");
-
-  ConsumeToken();
-
-  // FIXME: Need to suppress declarations when parsing this typename.
-  // Otherwise in this function definition:
-  //
-  //   auto f() -> struct X {}
-  //
-  // struct X is parsed as class definition because of the trailing
-  // brace.
-
-  SourceRange Range;
-  return ParseTypeName(&Range);
 }
 
 /// \brief We have just started parsing the definition of a new class,

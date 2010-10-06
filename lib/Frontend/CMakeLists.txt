@@ -1,14 +1,5 @@
 set(LLVM_NO_RTTI 1)
 
-set( LLVM_USED_LIBS
-  clangDriver
-  clangParse
-  clangSema
-  clangAST
-  clangLex
-  clangBasic
-  )
-
 add_clang_library(clangFrontend
   ASTConsumers.cpp
   ASTMerge.cpp
@@ -47,7 +38,6 @@ ENDIF(MSVC)
 add_dependencies(clangFrontend 
   ClangAttrClasses
   ClangAttrList
-  ClangCC1Options
   ClangDiagnosticFrontend 
   ClangDiagnosticLex
   ClangDiagnosticSema

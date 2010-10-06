@@ -320,8 +320,7 @@ AttributeList* Parser::ParseBorlandTypeAttributes(AttributeList *CurrAttr) {
 /// [C++0x] static_assert-declaration
 ///         others... [FIXME]
 ///
-Parser::DeclGroupPtrTy Parser::ParseDeclaration(StmtVector &Stmts,
-                                                unsigned Context,
+Parser::DeclGroupPtrTy Parser::ParseDeclaration(unsigned Context,
                                                 SourceLocation &DeclEnd,
                                                 CXX0XAttributeList Attr) {
   ParenBraceBracketBalancer BalancerRAIIObj(*this);
@@ -345,8 +344,7 @@ Parser::DeclGroupPtrTy Parser::ParseDeclaration(StmtVector &Stmts,
       SingleDecl = ParseNamespace(Context, DeclEnd, InlineLoc);
       break;
     }
-    return ParseSimpleDeclaration(Stmts, Context, DeclEnd, Attr.AttrList, 
-                                  true);
+    return ParseSimpleDeclaration(Context, DeclEnd, Attr.AttrList, true);
   case tok::kw_namespace:
     if (Attr.HasAttr)
       Diag(Attr.Range.getBegin(), diag::err_attributes_not_allowed)
@@ -363,8 +361,7 @@ Parser::DeclGroupPtrTy Parser::ParseDeclaration(StmtVector &Stmts,
     SingleDecl = ParseStaticAssertDeclaration(DeclEnd);
     break;
   default:
-    return ParseSimpleDeclaration(Stmts, Context, DeclEnd, Attr.AttrList, 
-                                  true);
+    return ParseSimpleDeclaration(Context, DeclEnd, Attr.AttrList, true);
   }
   
   // This routine returns a DeclGroup, if the thing we parsed only contains a
@@ -379,8 +376,7 @@ Parser::DeclGroupPtrTy Parser::ParseDeclaration(StmtVector &Stmts,
 ///
 /// If RequireSemi is false, this does not check for a ';' at the end of the
 /// declaration.  If it is true, it checks for and eats it.
-Parser::DeclGroupPtrTy Parser::ParseSimpleDeclaration(StmtVector &Stmts, 
-                                                      unsigned Context,
+Parser::DeclGroupPtrTy Parser::ParseSimpleDeclaration(unsigned Context,
                                                       SourceLocation &DeclEnd,
                                                       AttributeList *Attr,
                                                       bool RequireSemi) {
@@ -390,9 +386,6 @@ Parser::DeclGroupPtrTy Parser::ParseSimpleDeclaration(StmtVector &Stmts,
     DS.AddAttributes(Attr);
   ParseDeclarationSpecifiers(DS, ParsedTemplateInfo(), AS_none,
                             getDeclSpecContextFromDeclaratorContext(Context));
-  StmtResult R = Actions.ActOnVlaStmt(DS);
-  if (R.isUsable())
-    Stmts.push_back(R.release());
 
   // C99 6.7.2.3p6: Handle "struct-or-union identifier;", "enum { X };"
   // declaration-specifiers init-declarator-list[opt] ';'
@@ -596,12 +589,8 @@ Decl *Parser::ParseDeclarationAfterDeclarator(Declarator &D,
   // Parse declarator '=' initializer.
   if (Tok.is(tok::equal)) {
     ConsumeToken();
-    if (Tok.is(tok::kw_delete)) {
+    if (getLang().CPlusPlus0x && Tok.is(tok::kw_delete)) {
       SourceLocation DelLoc = ConsumeToken();
-      
-      if (!getLang().CPlusPlus0x)
-        Diag(DelLoc, diag::warn_deleted_function_accepted_as_extension);
-
       Actions.SetDeclDeleted(ThisDecl, DelLoc);
     } else {
       if (getLang().CPlusPlus && D.getCXXScopeSpec().isSet()) {
@@ -661,7 +650,7 @@ Decl *Parser::ParseDeclarationAfterDeclarator(Declarator &D,
 
       Actions.AddCXXDirectInitializerToDecl(ThisDecl, LParenLoc,
                                             move_arg(Exprs),
-                                            RParenLoc);
+                                            CommaLocs.data(), RParenLoc);
     }
   } else {
     bool TypeContainsUndeducedAuto =
@@ -916,9 +905,8 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
           = DSContext == DSC_top_level || 
             (DSContext == DSC_class && DS.isFriendSpecified());
 
-        Actions.CodeCompleteDeclSpec(getCurScope(), DS,
-                                     AllowNonIdentifiers, 
-                                     AllowNestedNameSpecifiers);
+        Actions.CodeCompleteDeclarator(getCurScope(), AllowNonIdentifiers, 
+                                       AllowNestedNameSpecifiers);
         ConsumeCodeCompletionToken();
         return;
       } 
@@ -2139,14 +2127,6 @@ void Parser::ParseEnumBody(SourceLocation StartLoc, Decl *EnumDecl) {
     EnumConstantDecls.push_back(EnumConstDecl);
     LastEnumConstDecl = EnumConstDecl;
 
-    if (Tok.is(tok::identifier)) {
-      // We're missing a comma between enumerators.
-      SourceLocation Loc = PP.getLocForEndOfToken(PrevTokLocation);
-      Diag(Loc, diag::err_enumerator_list_missing_comma)      
-        << FixItHint::CreateInsertion(Loc, ", ");
-      continue;
-    }
-    
     if (Tok.isNot(tok::comma))
       break;
     SourceLocation CommaLoc = ConsumeToken();
@@ -2316,10 +2296,7 @@ bool Parser::isTypeSpecifierQualifier() {
 
 /// isDeclarationSpecifier() - Return true if the current token is part of a
 /// declaration specifier.
-///
-/// \param DisambiguatingWithExpression True to indicate that the purpose of
-/// this check is to disambiguate between an expression and a declaration.
-bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
+bool Parser::isDeclarationSpecifier() {
   switch (Tok.getKind()) {
   default: return false;
 
@@ -2337,16 +2314,6 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
       return true;
     if (Tok.is(tok::identifier))
       return false;
-      
-    // If we're in Objective-C and we have an Objective-C class type followed
-    // by an identifier and then either ':' or ']', in a place where an 
-    // expression is permitted, then this is probably a class message send
-    // missing the initial '['. In this case, we won't consider this to be
-    // the start of a declaration.
-    if (DisambiguatingWithExpression && 
-        isStartOfObjCClassMessageMissingOpenBracket())
-      return false;
-      
     return isDeclarationSpecifier();
 
   case tok::coloncolon:   // ::foo::bar
@@ -3024,8 +2991,6 @@ void Parser::ParseFunctionDeclarator(SourceLocation LParenLoc, Declarator &D,
   // lparen is already consumed!
   assert(D.isPastIdentifier() && "Should not call before identifier!");
 
-  ParsedType TrailingReturnType;
-
   // This parameter list may be empty.
   if (Tok.is(tok::r_paren)) {
     if (RequiresArg) {
@@ -3057,11 +3022,6 @@ void Parser::ParseFunctionDeclarator(SourceLocation LParenLoc, Declarator &D,
         assert(Exceptions.size() == ExceptionRanges.size() &&
                "Produced different number of exception types and ranges.");
       }
-
-      // Parse trailing-return-type.
-      if (getLang().CPlusPlus0x && Tok.is(tok::arrow)) {
-        TrailingReturnType = ParseTrailingReturnType().get();
-      }
     }
 
     // Remember that we parsed a function type, and remember the attributes.
@@ -3076,8 +3036,7 @@ void Parser::ParseFunctionDeclarator(SourceLocation LParenLoc, Declarator &D,
                                                Exceptions.data(),
                                                ExceptionRanges.data(),
                                                Exceptions.size(),
-                                               LParenLoc, RParenLoc, D,
-                                               TrailingReturnType),
+                                               LParenLoc, RParenLoc, D),
                   EndLoc);
     return;
   }
@@ -3225,11 +3184,6 @@ void Parser::ParseFunctionDeclarator(SourceLocation LParenLoc, Declarator &D,
           // Consume the '='.
           ConsumeToken();
 
-          // The argument isn't actually potentially evaluated unless it is 
-          // used.
-          EnterExpressionEvaluationContext Eval(Actions,
-                                              Sema::PotentiallyEvaluatedIfUsed);
-
           ExprResult DefArgResult(ParseAssignmentExpression());
           if (DefArgResult.isInvalid()) {
             Actions.ActOnParamDefaultArgumentError(Param);
@@ -3268,6 +3222,9 @@ void Parser::ParseFunctionDeclarator(SourceLocation LParenLoc, Declarator &D,
     ConsumeToken();
   }
 
+  // Leave prototype scope.
+  PrototypeScope.Exit();
+
   // If we have the closing ')', eat it.
   SourceLocation RParenLoc = MatchRHSPunctuation(tok::r_paren, LParenLoc);
   SourceLocation EndLoc = RParenLoc;
@@ -3294,18 +3251,7 @@ void Parser::ParseFunctionDeclarator(SourceLocation LParenLoc, Declarator &D,
       assert(Exceptions.size() == ExceptionRanges.size() &&
              "Produced different number of exception types and ranges.");
     }
-
-    // Parse trailing-return-type.
-    if (getLang().CPlusPlus0x && Tok.is(tok::arrow)) {
-      TrailingReturnType = ParseTrailingReturnType().get();
-    }
   }
-
-  // FIXME: We should leave the prototype scope before parsing the exception
-  // specification, and then reenter it when parsing the trailing return type.
-
-  // Leave prototype scope.
-  PrototypeScope.Exit();
 
   // Remember that we parsed a function type, and remember the attributes.
   D.AddTypeInfo(DeclaratorChunk::getFunction(/*proto*/true, IsVariadic,
@@ -3317,8 +3263,7 @@ void Parser::ParseFunctionDeclarator(SourceLocation LParenLoc, Declarator &D,
                                              Exceptions.data(),
                                              ExceptionRanges.data(),
                                              Exceptions.size(),
-                                             LParenLoc, RParenLoc, D,
-                                             TrailingReturnType),
+                                             LParenLoc, RParenLoc, D),
                 EndLoc);
 }
 

@@ -3,8 +3,8 @@
 @protocol NSWindowDelegate @end
 
 @interface NSWindow
-- (void)setDelegate:(id <NSWindowDelegate>)anObject; // expected-note {{previous definition is here}}
-- (id <NSWindowDelegate>) delegate; // expected-note {{previous definition is here}}
+- (void)setDelegate:(id <NSWindowDelegate>)anObject;
+- (id <NSWindowDelegate>) delegate;
 @end
 
 @protocol IBStringsTableWindowDelegate <NSWindowDelegate>
@@ -14,9 +14,9 @@
 @end
 
 @implementation IBStringsTableWindow
-- (void)setDelegate:(id <IBStringsTableWindowDelegate>)delegate { // expected-warning {{conflicting parameter types in implementation of 'setDelegate:'}}
+- (void)setDelegate:(id <IBStringsTableWindowDelegate>)delegate {
 }
-- (id <IBStringsTableWindowDelegate>)delegate { // expected-warning {{conflicting return type in implementation of 'delegate':}}
+- (id <IBStringsTableWindowDelegate>)delegate {
         return 0;
 }
 @end

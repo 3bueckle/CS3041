@@ -602,10 +602,10 @@ namespace {
       
     /// \brief Rebuild the exception declaration and register the declaration
     /// as an instantiated local.
-    VarDecl *RebuildExceptionDecl(VarDecl *ExceptionDecl, 
+    VarDecl *RebuildExceptionDecl(VarDecl *ExceptionDecl, QualType T,
                                   TypeSourceInfo *Declarator,
                                   IdentifierInfo *Name,
-                                  SourceLocation Loc);
+                                  SourceLocation Loc, SourceRange TypeRange);
 
     /// \brief Rebuild the Objective-C exception declaration and register the 
     /// declaration as an instantiated local.
@@ -719,11 +719,13 @@ TemplateInstantiator::TransformFirstQualifierInScope(NamedDecl *D,
 
 VarDecl *
 TemplateInstantiator::RebuildExceptionDecl(VarDecl *ExceptionDecl,
+                                           QualType T,
                                            TypeSourceInfo *Declarator,
                                            IdentifierInfo *Name,
-                                           SourceLocation Loc) {
-  VarDecl *Var = inherited::RebuildExceptionDecl(ExceptionDecl, Declarator,
-                                                 Name, Loc);
+                                           SourceLocation Loc,
+                                           SourceRange TypeRange) {
+  VarDecl *Var = inherited::RebuildExceptionDecl(ExceptionDecl, T, Declarator,
+                                                 Name, Loc, TypeRange);
   if (Var)
     getSema().CurrentInstantiationScope->InstantiatedLocal(ExceptionDecl, Var);
   return Var;
@@ -1091,6 +1093,13 @@ Sema::SubstBaseSpecifiers(CXXRecordDecl *Instantiation,
          Base = Pattern->bases_begin(), BaseEnd = Pattern->bases_end();
        Base != BaseEnd; ++Base) {
     if (!Base->getType()->isDependentType()) {
+      const CXXRecordDecl *BaseDecl =
+        cast<CXXRecordDecl>(Base->getType()->getAs<RecordType>()->getDecl());
+      
+      // Make sure to set the attributes from the base.
+      SetClassDeclAttributesFromBase(Instantiation, BaseDecl, 
+                                     Base->isVirtual());
+      
       InstantiatedBases.push_back(new (Context) CXXBaseSpecifier(*Base));
       continue;
     }
@@ -1440,7 +1449,7 @@ Sema::InstantiateClassMembers(SourceLocation PointOfInstantiation,
         if (CheckSpecializationInstantiationRedecl(PointOfInstantiation, TSK, 
                                                    Function, 
                                         MSInfo->getTemplateSpecializationKind(),
-                                              MSInfo->getPointOfInstantiation(),
+                                              MSInfo->getPointOfInstantiation(), 
                                                    SuppressNew) ||
             SuppressNew)
           continue;
@@ -1476,7 +1485,7 @@ Sema::InstantiateClassMembers(SourceLocation PointOfInstantiation,
         if (CheckSpecializationInstantiationRedecl(PointOfInstantiation, TSK, 
                                                    Var, 
                                         MSInfo->getTemplateSpecializationKind(),
-                                              MSInfo->getPointOfInstantiation(),
+                                              MSInfo->getPointOfInstantiation(), 
                                                    SuppressNew) ||
             SuppressNew)
           continue;
@@ -1511,11 +1520,11 @@ Sema::InstantiateClassMembers(SourceLocation PointOfInstantiation,
       if (MSInfo->getTemplateSpecializationKind()
                                                 == TSK_ExplicitSpecialization)
         continue;
-
+      
       if (CheckSpecializationInstantiationRedecl(PointOfInstantiation, TSK, 
                                                  Record, 
                                         MSInfo->getTemplateSpecializationKind(),
-                                              MSInfo->getPointOfInstantiation(),
+                                              MSInfo->getPointOfInstantiation(), 
                                                  SuppressNew) ||
           SuppressNew)
         continue;
@@ -1542,13 +1551,6 @@ Sema::InstantiateClassMembers(SourceLocation PointOfInstantiation,
         InstantiateClass(PointOfInstantiation, Record, Pattern,
                          TemplateArgs,
                          TSK);
-      } else {
-        if (TSK == TSK_ExplicitInstantiationDefinition &&
-            Record->getTemplateSpecializationKind() ==
-                TSK_ExplicitInstantiationDeclaration) {
-          Record->setTemplateSpecializationKind(TSK);
-          MarkVTableUsed(PointOfInstantiation, Record, true);
-        }
       }
       
       Pattern = cast_or_null<CXXRecordDecl>(Record->getDefinition());

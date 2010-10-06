@@ -285,25 +285,6 @@ public:
     (void) Obj;
   }
 
-  // Feel free to add more variants of the following:
-
-  /// Push a cleanup with non-constant storage requirements on the
-  /// stack.  The cleanup type must provide an additional static method:
-  ///   static size_t getExtraSize(size_t);
-  /// The argument to this method will be the value N, which will also
-  /// be passed as the first argument to the constructor.
-  ///
-  /// The data stored in the extra storage must obey the same
-  /// restrictions as normal cleanup member data.
-  ///
-  /// The pointer returned from this method is valid until the cleanup
-  /// stack is modified.
-  template <class T, class A0, class A1, class A2>
-  T *pushCleanupWithExtra(CleanupKind Kind, size_t N, A0 a0, A1 a1, A2 a2) {
-    void *Buffer = pushCleanup(Kind, sizeof(T) + T::getExtraSize(N));
-    return new (Buffer) T(N, a0, a1, a2);
-  }
-
   /// Pops a cleanup scope off the stack.  This should only be called
   /// by CodeGenFunction::PopCleanupBlock.
   void popCleanup();
@@ -414,7 +395,7 @@ public:
   void popNullFixups();
 
   /// Clears the branch-fixups list.  This should only be called by
-  /// ResolveAllBranchFixups.
+  /// CodeGenFunction::ResolveAllBranchFixups.
   void clearFixups() { BranchFixups.clear(); }
 
   /// Gets the next EH destination index.
@@ -511,13 +492,6 @@ public:
   /// \brief A mapping from NRVO variables to the flags used to indicate
   /// when the NRVO has been applied to this variable.
   llvm::DenseMap<const VarDecl *, llvm::Value *> NRVOFlags;
-  
-  /// \brief A mapping from 'Save' expression in a conditional expression
-  /// to the IR for this expression. Used to implement IR gen. for Gnu
-  /// extension's missing LHS expression in a conditional operator expression.
-  llvm::DenseMap<const Expr *, llvm::Value *> ConditionalSaveExprs;
-  llvm::DenseMap<const Expr *, ComplexPairTy> ConditionalSaveComplexExprs;
-  llvm::DenseMap<const Expr *, LValue> ConditionalSaveLValueExprs;
 
   EHScopeStack EHStack;
 
@@ -568,14 +542,7 @@ public:
   /// process all branch fixups.
   void PopCleanupBlock(bool FallThroughIsBranchThrough = false);
 
-  /// DeactivateCleanupBlock - Deactivates the given cleanup block.
-  /// The block cannot be reactivated.  Pops it if it's the top of the
-  /// stack.
-  void DeactivateCleanupBlock(EHScopeStack::stable_iterator Cleanup);
-
-  /// ActivateCleanupBlock - Activates an initially-inactive cleanup.
-  /// Cannot be used to resurrect a deactivated cleanup.
-  void ActivateCleanupBlock(EHScopeStack::stable_iterator Cleanup);
+  void ActivateCleanup(EHScopeStack::stable_iterator Cleanup);
 
   /// \brief Enters a new scope for capturing cleanups, all of which
   /// will be executed once the scope is exited.
@@ -595,7 +562,6 @@ public:
     {
       CleanupStackDepth = CGF.EHStack.stable_begin();
       OldDidCallStackSave = CGF.DidCallStackSave;
-      CGF.DidCallStackSave = false;
     }
 
     /// \brief Exit this cleanup scope, emitting any accumulated
@@ -627,6 +593,7 @@ public:
   /// the cleanup blocks that have been added.
   void PopCleanupBlocks(EHScopeStack::stable_iterator OldCleanupStackSize);
 
+  void ResolveAllBranchFixups(llvm::SwitchInst *Switch);
   void ResolveBranchFixups(llvm::BasicBlock *Target);
 
   /// The given basic block lies in the current EH scope, but may be a
@@ -679,10 +646,6 @@ public:
     
     --ConditionalBranchLevel;
   }
-
-  /// isInConditionalBranch - Return true if we're currently emitting
-  /// one branch or the other of a conditional expression.
-  bool isInConditionalBranch() const { return ConditionalBranchLevel != 0; }
 
 private:
   CGDebugInfo *DebugInfo;
@@ -1034,12 +997,6 @@ public:
   /// appropriate alignment.
   llvm::AllocaInst *CreateMemTemp(QualType T, const llvm::Twine &Name = "tmp");
 
-  /// CreateAggTemp - Create a temporary memory object for the given
-  /// aggregate type.
-  AggValueSlot CreateAggTemp(QualType T, const llvm::Twine &Name = "tmp") {
-    return AggValueSlot::forAddr(CreateMemTemp(T, Name), false, false);
-  }
-
   /// EvaluateExprAsBool - Perform the usual unary conversions on the specified
   /// expression and compare the result against zero, returning an Int1Ty value.
   llvm::Value *EvaluateExprAsBool(const Expr *E);
@@ -1050,9 +1007,9 @@ public:
   /// the result should be returned.
   ///
   /// \param IgnoreResult - True if the resulting value isn't used.
-  RValue EmitAnyExpr(const Expr *E,
-                     AggValueSlot AggSlot = AggValueSlot::ignored(),
-                     bool IgnoreResult = false);
+  RValue EmitAnyExpr(const Expr *E, llvm::Value *AggLoc = 0,
+                     bool IsAggLocVolatile = false, bool IgnoreResult = false,
+                     bool IsInitializer = false);
 
   // EmitVAListRef - Emit a "reference" to a va_list; this is either the address
   // or the value of the expression, depending on how va_list is defined.
@@ -1060,13 +1017,14 @@ public:
 
   /// EmitAnyExprToTemp - Similary to EmitAnyExpr(), however, the result will
   /// always be accessible even if no aggregate location is provided.
-  RValue EmitAnyExprToTemp(const Expr *E);
+  RValue EmitAnyExprToTemp(const Expr *E, bool IsAggLocVolatile = false,
+                           bool IsInitializer = false);
 
   /// EmitsAnyExprToMem - Emits the code necessary to evaluate an
   /// arbitrary expression into the given memory location.
   void EmitAnyExprToMem(const Expr *E, llvm::Value *Location,
-                        bool IsLocationVolatile,
-                        bool IsInitializer);
+                        bool IsLocationVolatile = false,
+                        bool IsInitializer = false);
 
   /// EmitAggregateCopy - Emit an aggrate copy.
   ///
@@ -1269,7 +1227,7 @@ public:
   bool EmitSimpleStmt(const Stmt *S);
 
   RValue EmitCompoundStmt(const CompoundStmt &S, bool GetLast = false,
-                          AggValueSlot AVS = AggValueSlot::ignored());
+                          llvm::Value *AggLoc = 0, bool isAggVol = false);
 
   /// EmitLabel - Emit the block for the given label. It is legal to call this
   /// function even if there is no current insertion point.
@@ -1558,10 +1516,12 @@ public:
                                              QualType DstTy);
 
 
-  /// EmitAggExpr - Emit the computation of the specified expression
-  /// of aggregate type.  The result is computed into the given slot,
-  /// which may be null to indicate that the value is not needed.
-  void EmitAggExpr(const Expr *E, AggValueSlot AS, bool IgnoreResult = false);
+  /// EmitAggExpr - Emit the computation of the specified expression of
+  /// aggregate type.  The result is computed into DestPtr.  Note that if
+  /// DestPtr is null, the value of the aggregate expression is not needed.
+  void EmitAggExpr(const Expr *E, llvm::Value *DestPtr, bool VolatileDest,
+                   bool IgnoreResult = false, bool IsInitializer = false,
+                   bool RequiresGCollection = false);
 
   /// EmitAggExprToLValue - Emit the computation of the specified expression of
   /// aggregate type into a temporary LValue.
@@ -1605,6 +1565,11 @@ public:
                                      llvm::GlobalVariable *GV);
   
 
+  /// EmitStaticCXXBlockVarDeclInit - Create the initializer for a C++ runtime
+  /// initialized static block var decl.
+  void EmitStaticCXXBlockVarDeclInit(const VarDecl &D,
+                                     llvm::GlobalVariable *GV);
+
   /// EmitCXXGlobalVarDeclInit - Create the initializer for a C++
   /// variable with global storage.
   void EmitCXXGlobalVarDeclInit(const VarDecl &D, llvm::Constant *DeclPtr);
@@ -1613,8 +1578,6 @@ public:
   /// with the C++ runtime so that its destructor will be called at exit.
   void EmitCXXGlobalDtorRegistration(llvm::Constant *DtorFn,
                                      llvm::Constant *DeclPtr);
-
-  void EmitCXXStaticLocalInit(const VarDecl &D, llvm::GlobalVariable *DeclPtr);
 
   /// GenerateCXXGlobalInitFunc - Generates code for initializing global
   /// variables.
@@ -1630,11 +1593,12 @@ public:
 
   void GenerateCXXGlobalVarDeclInitFunc(llvm::Function *Fn, const VarDecl *D);
 
-  void EmitCXXConstructExpr(const CXXConstructExpr *E, AggValueSlot Dest);
+  void EmitCXXConstructExpr(llvm::Value *Dest, const CXXConstructExpr *E);
 
   RValue EmitCXXExprWithTemporaries(const CXXExprWithTemporaries *E,
-                                    AggValueSlot Slot
-                                      = AggValueSlot::ignored());
+                                    llvm::Value *AggLoc = 0,
+                                    bool IsAggLocVolatile = false,
+                                    bool IsInitializer = false);
 
   void EmitCXXThrowExpr(const CXXThrowExpr *E);
 
@@ -1714,26 +1678,12 @@ private:
            E = CallArgTypeInfo->arg_type_end(); I != E; ++I, ++Arg) {
         assert(Arg != ArgEnd && "Running over edge of argument list!");
         QualType ArgType = *I;
-#ifndef NDEBUG
-        QualType ActualArgType = Arg->getType();
-        if (ArgType->isPointerType() && ActualArgType->isPointerType()) {
-          QualType ActualBaseType = 
-            ActualArgType->getAs<PointerType>()->getPointeeType();
-          QualType ArgBaseType = 
-            ArgType->getAs<PointerType>()->getPointeeType();
-          if (ArgBaseType->isVariableArrayType()) {
-            if (const VariableArrayType *VAT =
-                getContext().getAsVariableArrayType(ActualBaseType)) {
-              if (!VAT->getSizeExpr())
-                ActualArgType = ArgType;
-            }
-          }
-        }
+
         assert(getContext().getCanonicalType(ArgType.getNonReferenceType()).
                getTypePtr() ==
-               getContext().getCanonicalType(ActualArgType).getTypePtr() &&
+               getContext().getCanonicalType(Arg->getType()).getTypePtr() &&
                "type mismatch in call argument!");
-#endif
+
         Args.push_back(std::make_pair(EmitCallArg(*Arg, ArgType),
                                       ArgType));
       }

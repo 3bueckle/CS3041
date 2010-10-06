@@ -1,4 +1,4 @@
-//===--- Tools.cpp - Tools Implementations --------------------------------===//
+//===--- Tools.cpp - Tools Implementations ------------------------------*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -82,44 +82,6 @@ static void QuoteTarget(llvm::StringRef Target,
     }
 
     Res.push_back(Target[i]);
-  }
-}
-
-static void AddLinkerInputs(const ToolChain &TC,
-                            const InputInfoList &Inputs, const ArgList &Args,
-                            ArgStringList &CmdArgs) {
-  const Driver &D = TC.getDriver();
-
-  for (InputInfoList::const_iterator
-         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
-    const InputInfo &II = *it;
-
-    if (!TC.HasNativeLLVMSupport()) {
-      // Don't try to pass LLVM inputs unless we have native support.
-      if (II.getType() == types::TY_LLVM_IR ||
-          II.getType() == types::TY_LTO_IR ||
-          II.getType() == types::TY_LLVM_BC ||
-          II.getType() == types::TY_LTO_BC)
-        D.Diag(clang::diag::err_drv_no_linker_llvm_support)
-          << TC.getTripleString();
-    }
-
-    // Add filenames immediately.
-    if (II.isFilename()) {
-      CmdArgs.push_back(II.getFilename());
-      continue;
-    }
-
-    // Otherwise, this is a linker input argument.
-    const Arg &A = II.getInputArg();
-
-    // Handle reserved library options.
-    if (A.getOption().matches(options::OPT_Z_reserved_lib_stdcxx)) {
-      TC.AddCXXStdlibLibArgs(Args, CmdArgs);
-    } else if (A.getOption().matches(options::OPT_Z_reserved_lib_cckext)) {
-      TC.AddCCKextLibArgs(Args, CmdArgs);
-    } else
-      A.renderAsInput(Args, CmdArgs);
   }
 }
 
@@ -212,15 +174,11 @@ void Clang::AddPreprocessingOptions(const Driver &D,
   // wonky, but we include looking for .gch so we can support seamless
   // replacement into a build system already set up to be generating
   // .gch files.
-  bool RenderedImplicitInclude = false;
   for (arg_iterator it = Args.filtered_begin(options::OPT_clang_i_Group),
          ie = Args.filtered_end(); it != ie; ++it) {
     const Arg *A = it;
 
     if (A->getOption().matches(options::OPT_include)) {
-      bool IsFirstImplicitInclude = !RenderedImplicitInclude;
-      RenderedImplicitInclude = true;
-
       // Use PCH if the user requested it.
       bool UsePCH = D.CCCUsePCH;
 
@@ -254,19 +212,13 @@ void Clang::AddPreprocessingOptions(const Driver &D,
       }
 
       if (FoundPCH || FoundPTH) {
-        if (IsFirstImplicitInclude) {
-          A->claim();
-          if (UsePCH)
-            CmdArgs.push_back("-include-pch");
-          else
-            CmdArgs.push_back("-include-pth");
-          CmdArgs.push_back(Args.MakeArgString(P.str()));
-          continue;
-        } else {
-          // Ignore the PCH if not first on command line and emit warning.
-          D.Diag(clang::diag::warn_drv_pch_not_first_include)
-              << P.str() << A->getAsString(Args);
-        }
+        A->claim();
+        if (UsePCH)
+          CmdArgs.push_back("-include-pch");
+        else
+          CmdArgs.push_back("-include-pth");
+        CmdArgs.push_back(Args.MakeArgString(P.str()));
+        continue;
       }
     }
 
@@ -277,11 +229,6 @@ void Clang::AddPreprocessingOptions(const Driver &D,
 
   Args.AddAllArgs(CmdArgs, options::OPT_D, options::OPT_U);
   Args.AddAllArgs(CmdArgs, options::OPT_I_Group, options::OPT_F);
-
-  // Add C++ include arguments, if needed.
-  types::ID InputType = Inputs[0].getType();
-  if (types::isCXX(InputType))
-    getToolChain().AddClangCXXStdlibIncludeArgs(Args, CmdArgs);
 
   // Add -Wp, and -Xassembler if using the preprocessor.
 
@@ -690,7 +637,6 @@ void Clang::AddX86TargetArgs(const ArgList &Args,
 
 static bool needsExceptions(const ArgList &Args,  types::ID InputType,
                             const llvm::Triple &Triple) {
-  // Handle -fno-exceptions.
   if (Arg *A = Args.getLastArg(options::OPT_fexceptions,
                                options::OPT_fno_exceptions)) {
     if (A->getOption().matches(options::OPT_fexceptions))
@@ -698,24 +644,25 @@ static bool needsExceptions(const ArgList &Args,  types::ID InputType,
     else
       return false;
   }
-
-  // Otherwise, C++ inputs use exceptions.
-  if (types::isCXX(InputType))
+  switch (InputType) {
+  case types::TY_CXX: case types::TY_CXXHeader:
+  case types::TY_PP_CXX: case types::TY_PP_CXXHeader:
+  case types::TY_ObjCXX: case types::TY_ObjCXXHeader:
+  case types::TY_PP_ObjCXX: case types::TY_PP_ObjCXXHeader:
     return true;
 
-  // As do Objective-C non-fragile ABI inputs and all Objective-C inputs on
-  // x86_64 and ARM after SnowLeopard.
-  if (types::isObjC(InputType)) {
+  case types::TY_ObjC: case types::TY_ObjCHeader:
+  case types::TY_PP_ObjC: case types::TY_PP_ObjCHeader:
     if (Args.hasArg(options::OPT_fobjc_nonfragile_abi))
       return true;
     if (Triple.getOS() != llvm::Triple::Darwin)
       return false;
     return (Triple.getDarwinMajorNumber() >= 9 &&
-            (Triple.getArch() == llvm::Triple::x86_64 ||
-             Triple.getArch() == llvm::Triple::arm));
-  }
+            Triple.getArch() == llvm::Triple::x86_64);
 
-  return false;
+  default:
+    return false;
+  }
 }
 
 void Clang::ConstructJob(Compilation &C, const JobAction &JA,
@@ -999,21 +946,19 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Explicitly error on some things we know we don't support and can't just
   // ignore.
   types::ID InputType = Inputs[0].getType();
-  if (!Args.hasArg(options::OPT_fallow_unsupported)) {
-    Arg *Unsupported;
-    if ((Unsupported = Args.getLastArg(options::OPT_MG)) ||
-        (Unsupported = Args.getLastArg(options::OPT_iframework)) ||
-        (Unsupported = Args.getLastArg(options::OPT_fshort_enums)))
-      D.Diag(clang::diag::err_drv_clang_unsupported)
-        << Unsupported->getOption().getName();
+  Arg *Unsupported;
+  if ((Unsupported = Args.getLastArg(options::OPT_MG)) ||
+      (Unsupported = Args.getLastArg(options::OPT_iframework)) ||
+      (Unsupported = Args.getLastArg(options::OPT_fshort_enums)))
+    D.Diag(clang::diag::err_drv_clang_unsupported)
+      << Unsupported->getOption().getName();
 
-    if (types::isCXX(InputType) &&
-        getToolChain().getTriple().getOS() == llvm::Triple::Darwin &&
-        getToolChain().getTriple().getArch() == llvm::Triple::x86) {
-      if ((Unsupported = Args.getLastArg(options::OPT_fapple_kext)))
-        D.Diag(clang::diag::err_drv_clang_unsupported_opt_cxx_darwin_i386)
-          << Unsupported->getOption().getName();
-    }
+  if (types::isCXX(InputType) &&
+      getToolChain().getTriple().getOS() == llvm::Triple::Darwin &&
+      getToolChain().getTriple().getArch() == llvm::Triple::x86) {
+    if ((Unsupported = Args.getLastArg(options::OPT_fapple_kext)))
+      D.Diag(clang::diag::err_drv_clang_unsupported_opt_cxx_darwin_i386)
+        << Unsupported->getOption().getName();
   }
 
   Args.AddAllArgs(CmdArgs, options::OPT_v);
@@ -1166,7 +1111,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_fcatch_undefined_behavior);
   Args.AddLastArg(CmdArgs, options::OPT_femit_all_decls);
   Args.AddLastArg(CmdArgs, options::OPT_fheinous_gnu_extensions);
-  Args.AddLastArg(CmdArgs, options::OPT_flimit_debug_info);
 
   // -flax-vector-conversions is default.
   if (!Args.hasFlag(options::OPT_flax_vector_conversions,
@@ -1194,12 +1138,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_fdiagnostics_parseable_fixits);
   Args.AddLastArg(CmdArgs, options::OPT_ftime_report);
   Args.AddLastArg(CmdArgs, options::OPT_ftrapv);
-
-  if (Arg *A = Args.getLastArg(options::OPT_ftrapv_handler_EQ)) {
-    CmdArgs.push_back("-ftrapv-handler");
-    CmdArgs.push_back(A->getValue(Args));
-  }
-
   Args.AddLastArg(CmdArgs, options::OPT_fwrapv);
   Args.AddLastArg(CmdArgs, options::OPT_fwritable_strings);
   Args.AddLastArg(CmdArgs, options::OPT_funroll_loops);
@@ -1246,8 +1184,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fno-access-control");
 
   // -fexceptions=0 is default.
-  if (!KernelOrKext &&
-      needsExceptions(Args, InputType, getToolChain().getTriple()))
+  if (needsExceptions(Args, InputType, getToolChain().getTriple()))
     CmdArgs.push_back("-fexceptions");
 
   if (getToolChain().UseSjLjExceptions())
@@ -1269,10 +1206,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fno-threadsafe-statics");
 
   // -fuse-cxa-atexit is default.
-  if (KernelOrKext ||
-    !Args.hasFlag(options::OPT_fuse_cxa_atexit, options::OPT_fno_use_cxa_atexit,
-                  getToolChain().getTriple().getOS() != llvm::Triple::MinGW32 &&
-                  getToolChain().getTriple().getOS() != llvm::Triple::MinGW64))
+  if (KernelOrKext || !Args.hasFlag(options::OPT_fuse_cxa_atexit,
+                                    options::OPT_fno_use_cxa_atexit))
     CmdArgs.push_back("-fno-use-cxa-atexit");
 
   // -fms-extensions=0 is default.
@@ -1301,52 +1236,21 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // -fobjc-nonfragile-abi=0 is default.
   if (types::isObjC(InputType)) {
-    // Compute the Objective-C ABI "version" to use. Version numbers are
-    // slightly confusing for historical reasons:
-    //   1 - Traditional "fragile" ABI
-    //   2 - Non-fragile ABI, version 1
-    //   3 - Non-fragile ABI, version 2
     unsigned Version = 1;
-    // If -fobjc-abi-version= is present, use that to set the version.
+    if (Args.hasArg(options::OPT_fobjc_nonfragile_abi) ||
+        getToolChain().IsObjCNonFragileABIDefault())
+      Version = 2;
     if (Arg *A = Args.getLastArg(options::OPT_fobjc_abi_version_EQ)) {
       if (llvm::StringRef(A->getValue(Args)) == "1")
         Version = 1;
       else if (llvm::StringRef(A->getValue(Args)) == "2")
         Version = 2;
-      else if (llvm::StringRef(A->getValue(Args)) == "3")
-        Version = 3;
       else
         D.Diag(clang::diag::err_drv_clang_unsupported) << A->getAsString(Args);
-    } else {
-      // Otherwise, determine if we are using the non-fragile ABI.
-      if (Args.hasFlag(options::OPT_fobjc_nonfragile_abi,
-                       options::OPT_fno_objc_nonfragile_abi,
-                       getToolChain().IsObjCNonFragileABIDefault())) {
-        // Determine the non-fragile ABI version to use.
-        unsigned NonFragileABIVersion = 2;
-
-        if (Arg *A = Args.getLastArg(
-              options::OPT_fobjc_nonfragile_abi_version_EQ)) {
-          if (llvm::StringRef(A->getValue(Args)) == "1")
-            NonFragileABIVersion = 1;
-          else if (llvm::StringRef(A->getValue(Args)) == "2")
-            NonFragileABIVersion = 2;
-          else
-            D.Diag(clang::diag::err_drv_clang_unsupported)
-              << A->getAsString(Args);
-        }
-
-        Version = 1 + NonFragileABIVersion;
-      } else {
-        Version = 1;
-      }
     }
-  
-    if (Version == 2 || Version == 3) {
-      if (Version == 2)
-        CmdArgs.push_back("-fobjc-nonfragile-abi");
-      else
-        CmdArgs.push_back("-fobjc-nonfragile-abi2");
+
+    if (Version == 2) {
+      CmdArgs.push_back("-fobjc-nonfragile-abi");
 
       // -fobjc-dispatch-method is only relevant with the nonfragile-abi, and
       // legacy is the default.
@@ -1359,6 +1263,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
           CmdArgs.push_back("-fobjc-dispatch-method=non-legacy");
       }
     }
+
+    // FIXME: -fobjc-nonfragile-abi2 is a transient option meant to expose
+    // features in testing.  It will eventually be removed.
+    if (Args.hasArg(options::OPT_fobjc_nonfragile_abi2))
+      CmdArgs.push_back("-fobjc-nonfragile-abi2");
   }
 
   if (!Args.hasFlag(options::OPT_fassume_sane_operator_new,
@@ -1428,8 +1337,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Color diagnostics are the default, unless the terminal doesn't support
   // them.
   if (Args.hasFlag(options::OPT_fcolor_diagnostics,
-                   options::OPT_fno_color_diagnostics,
-                   llvm::sys::Process::StandardErrHasColors()))
+                   options::OPT_fno_color_diagnostics) &&
+      llvm::sys::Process::StandardErrHasColors())
     CmdArgs.push_back("-fcolor-diagnostics");
 
   if (!Args.hasFlag(options::OPT_fshow_source_location,
@@ -1705,21 +1614,12 @@ void gcc::Common::ConstructJob(Compilation &C, const JobAction &JA,
 
     if (II.isFilename())
       CmdArgs.push_back(II.getFilename());
-    else {
-      const Arg &A = II.getInputArg();
-
-      // Reverse translate some rewritten options.
-      if (A.getOption().matches(options::OPT_Z_reserved_lib_stdcxx)) {
-        CmdArgs.push_back("-lstdc++");
-        continue;
-      }
-
+    else
       // Don't render as input, we need gcc to do the translations.
-      A.render(Args, CmdArgs);
-    }
+      II.getInputArg().render(Args, CmdArgs);
   }
 
-  const char *GCCName = getToolChain().getDriver().getCCCGenericGCCName().c_str();
+  const char *GCCName = getToolChain().getDriver().CCCGenericGCCName.c_str();
   const char *Exec =
     Args.MakeArgString(getToolChain().GetProgramPath(GCCName));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
@@ -2287,8 +2187,7 @@ void darwin::DarwinTool::AddDarwinArch(const ArgList &Args,
     CmdArgs.push_back("-force_cpusubtype_ALL");
 }
 
-void darwin::Link::AddLinkArgs(Compilation &C,
-                               const ArgList &Args,
+void darwin::Link::AddLinkArgs(const ArgList &Args,
                                ArgStringList &CmdArgs) const {
   const Driver &D = getToolChain().getDriver();
 
@@ -2305,23 +2204,7 @@ void darwin::Link::AddLinkArgs(Compilation &C,
   // Newer linkers support -demangle, pass it if supported and not disabled by
   // the user.
   if (Version[0] >= 100 && !Args.hasArg(options::OPT_Z_Xlinker__no_demangle)) {
-    // Don't pass -demangle to ld_classic.
-    //
-    // FIXME: This is a temporary workaround, ld should be handling this.
-    bool UsesLdClassic = (getToolChain().getArch() == llvm::Triple::x86 &&
-                          Args.hasArg(options::OPT_static));
-    if (getToolChain().getArch() == llvm::Triple::x86) {
-      for (arg_iterator it = Args.filtered_begin(options::OPT_Xlinker,
-                                                 options::OPT_Wl_COMMA),
-             ie = Args.filtered_end(); it != ie; ++it) {
-        const Arg *A = *it;
-        for (unsigned i = 0, e = A->getNumValues(); i != e; ++i)
-          if (llvm::StringRef(A->getValue(Args, i)) == "-kext")
-            UsesLdClassic = true;
-      }
-    }
-    if (!UsesLdClassic)
-      CmdArgs.push_back("-demangle");
+    CmdArgs.push_back("-demangle");
   }
 
   // Derived from the "link" spec.
@@ -2478,7 +2361,7 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   // I'm not sure why this particular decomposition exists in gcc, but
   // we follow suite for ease of comparison.
-  AddLinkArgs(C, Args, CmdArgs);
+  AddLinkArgs(Args, CmdArgs);
 
   Args.AddAllArgs(CmdArgs, options::OPT_d_Flag);
   Args.AddAllArgs(CmdArgs, options::OPT_s);
@@ -2575,7 +2458,14 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   getDarwinToolChain().AddLinkSearchPathArgs(Args, CmdArgs);
 
-  AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
+  for (InputInfoList::const_iterator
+         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+    if (II.isFilename())
+      CmdArgs.push_back(II.getFilename());
+    else
+      II.getInputArg().renderAsInput(Args, CmdArgs);
+  }
 
   if (LinkingOutput) {
     CmdArgs.push_back("-arch_multiple");
@@ -2594,8 +2484,10 @@ void darwin::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
+    // FIXME: g++ is more complicated here, it tries to put -lstdc++
+    // before -lm, for example.
     if (getToolChain().getDriver().CCCIsCXX)
-      getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
+      CmdArgs.push_back("-lstdc++");
 
     // link_ssp spec is empty.
 
@@ -2690,6 +2582,7 @@ void auroraux::Link::ConstructJob(Compilation &C, const JobAction &JA,
                                   const InputInfoList &Inputs,
                                   const ArgList &Args,
                                   const char *LinkingOutput) const {
+  const Driver &D = getToolChain().getDriver();
   ArgStringList CmdArgs;
 
   if ((!Args.hasArg(options::OPT_nostdlib)) &&
@@ -2744,7 +2637,21 @@ void auroraux::Link::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
   Args.AddAllArgs(CmdArgs, options::OPT_e);
 
-  AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
+  for (InputInfoList::const_iterator
+         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+
+    // Don't try to pass LLVM inputs to a generic gcc.
+    if (II.getType() == types::TY_LLVM_IR || II.getType() == types::TY_LTO_IR ||
+        II.getType() == types::TY_LLVM_BC || II.getType() == types::TY_LTO_BC)
+      D.Diag(clang::diag::err_drv_no_linker_llvm_support)
+        << getToolChain().getTripleString();
+
+    if (II.isFilename())
+      CmdArgs.push_back(II.getFilename());
+    else
+      II.getInputArg().renderAsInput(Args, CmdArgs);
+  }
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
@@ -2852,12 +2759,26 @@ void openbsd::Link::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
   Args.AddAllArgs(CmdArgs, options::OPT_e);
 
-  AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
+  for (InputInfoList::const_iterator
+         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+
+    // Don't try to pass LLVM inputs to a generic gcc.
+    if (II.getType() == types::TY_LLVM_IR || II.getType() == types::TY_LTO_IR ||
+        II.getType() == types::TY_LLVM_BC || II.getType() == types::TY_LTO_BC)
+      D.Diag(clang::diag::err_drv_no_linker_llvm_support)
+        << getToolChain().getTripleString();
+
+    if (II.isFilename())
+      CmdArgs.push_back(II.getFilename());
+    else
+      II.getInputArg().renderAsInput(Args, CmdArgs);
+  }
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
     if (D.CCCIsCXX) {
-      getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
+      CmdArgs.push_back("-lstdc++");
       CmdArgs.push_back("-lm");
     }
 
@@ -2982,12 +2903,26 @@ void freebsd::Link::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_Z_Flag);
   Args.AddAllArgs(CmdArgs, options::OPT_r);
 
-  AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
+  for (InputInfoList::const_iterator
+         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+
+    // Don't try to pass LLVM inputs to a generic gcc.
+    if (II.getType() == types::TY_LLVM_IR || II.getType() == types::TY_LTO_IR ||
+        II.getType() == types::TY_LLVM_BC || II.getType() == types::TY_LTO_BC)
+      D.Diag(clang::diag::err_drv_no_linker_llvm_support)
+        << getToolChain().getTripleString();
+
+    if (II.isFilename())
+      CmdArgs.push_back(II.getFilename());
+    else
+      II.getInputArg().renderAsInput(Args, CmdArgs);
+  }
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
     if (D.CCCIsCXX) {
-      getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
+      CmdArgs.push_back("-lstdc++");
       CmdArgs.push_back("-lm");
     }
     // FIXME: For some reason GCC passes -lgcc and -lgcc_s before adding
@@ -3117,12 +3052,26 @@ void minix::Link::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
   Args.AddAllArgs(CmdArgs, options::OPT_e);
 
-  AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
+  for (InputInfoList::const_iterator
+         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+
+    // Don't try to pass LLVM inputs to a generic gcc.
+    if (II.getType() == types::TY_LLVM_IR || II.getType() == types::TY_LTO_IR ||
+        II.getType() == types::TY_LLVM_BC || II.getType() == types::TY_LTO_BC)
+      D.Diag(clang::diag::err_drv_no_linker_llvm_support)
+        << getToolChain().getTripleString();
+
+    if (II.isFilename())
+      CmdArgs.push_back(II.getFilename());
+    else
+      II.getInputArg().renderAsInput(Args, CmdArgs);
+  }
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
     if (D.CCCIsCXX) {
-      getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
+      CmdArgs.push_back("-lstdc++");
       CmdArgs.push_back("-lm");
     }
 
@@ -3234,7 +3183,21 @@ void dragonfly::Link::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
   Args.AddAllArgs(CmdArgs, options::OPT_e);
 
-  AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
+  for (InputInfoList::const_iterator
+         it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+
+    // Don't try to pass LLVM inputs to a generic gcc.
+    if (II.getType() == types::TY_LLVM_IR || II.getType() == types::TY_LTO_IR ||
+        II.getType() == types::TY_LLVM_BC || II.getType() == types::TY_LTO_BC)
+      D.Diag(clang::diag::err_drv_no_linker_llvm_support)
+        << getToolChain().getTripleString();
+
+    if (II.isFilename())
+      CmdArgs.push_back(II.getFilename());
+    else
+      II.getInputArg().renderAsInput(Args, CmdArgs);
+  }
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
@@ -3257,7 +3220,7 @@ void dragonfly::Link::ConstructJob(Compilation &C, const JobAction &JA,
     }
 
     if (D.CCCIsCXX) {
-      getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
+      CmdArgs.push_back("-lstdc++");
       CmdArgs.push_back("-lm");
     }
 
@@ -3304,11 +3267,11 @@ void visualstudio::Link::ConstructJob(Compilation &C, const JobAction &JA,
                                       const InputInfoList &Inputs,
                                       const ArgList &Args,
                                       const char *LinkingOutput) const {
+  const Driver &D = getToolChain().getDriver();
   ArgStringList CmdArgs;
 
   if (Output.isFilename()) {
-    CmdArgs.push_back(Args.MakeArgString(std::string("-out:") +
-                                         Output.getFilename()));
+    CmdArgs.push_back(Args.MakeArgString(std::string("-out:") + Output.getFilename()));
   } else {
     assert(Output.isNothing() && "Invalid output.");
   }
@@ -3320,9 +3283,22 @@ void visualstudio::Link::ConstructJob(Compilation &C, const JobAction &JA,
 
   CmdArgs.push_back("-nologo");
 
-  AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
+  for (InputInfoList::const_iterator
+    it = Inputs.begin(), ie = Inputs.end(); it != ie; ++it) {
+    const InputInfo &II = *it;
+
+    // Don't try to pass LLVM inputs to visual studio linker.
+    if (II.getType() == types::TY_LLVM_BC)
+      D.Diag(clang::diag::err_drv_no_linker_llvm_support)
+      << getToolChain().getTripleString();
+
+    if (II.isFilename())
+      CmdArgs.push_back(II.getFilename());
+    else
+      II.getInputArg().renderAsInput(Args, CmdArgs);
+  }
 
   const char *Exec =
-    Args.MakeArgString(getToolChain().GetProgramPath("link.exe"));
+  Args.MakeArgString(getToolChain().GetProgramPath("link.exe"));
   C.addCommand(new Command(JA, *this, Exec, CmdArgs));
 }

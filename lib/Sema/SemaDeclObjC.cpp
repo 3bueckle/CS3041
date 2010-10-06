@@ -55,15 +55,9 @@ void Sema::ActOnStartOfObjCMethodDef(Scope *FnBodyScope, Decl *D) {
 
   // Introduce all of the other parameters into this scope.
   for (ObjCMethodDecl::param_iterator PI = MDecl->param_begin(),
-       E = MDecl->param_end(); PI != E; ++PI) {
-    ParmVarDecl *Param = (*PI);
-    if (!Param->isInvalidDecl() &&
-        RequireCompleteType(Param->getLocation(), Param->getType(),
-                            diag::err_typecheck_decl_incomplete_type))
-          Param->setInvalidDecl();
+       E = MDecl->param_end(); PI != E; ++PI)
     if ((*PI)->getIdentifier())
       PushOnScopeChains(*PI, FnBodyScope);
-  }
 }
 
 Decl *Sema::
@@ -751,8 +745,10 @@ void Sema::WarnUndefinedMethod(SourceLocation ImpLoc, ObjCMethodDecl *method,
 
 void Sema::WarnConflictingTypedMethods(ObjCMethodDecl *ImpMethodDecl,
                                        ObjCMethodDecl *IntfMethodDecl) {
-  if (!Context.hasSameType(IntfMethodDecl->getResultType(),
-                           ImpMethodDecl->getResultType())) {
+  if (!Context.typesAreCompatible(IntfMethodDecl->getResultType(),
+                                  ImpMethodDecl->getResultType()) &&
+      !Context.QualifiedIdConformsQualifiedId(IntfMethodDecl->getResultType(),
+                                              ImpMethodDecl->getResultType())) {
     Diag(ImpMethodDecl->getLocation(), diag::warn_conflicting_ret_types)
       << ImpMethodDecl->getDeclName() << IntfMethodDecl->getResultType()
       << ImpMethodDecl->getResultType();
@@ -764,7 +760,8 @@ void Sema::WarnConflictingTypedMethods(ObjCMethodDecl *ImpMethodDecl,
        IM != EM; ++IM, ++IF) {
     QualType ParmDeclTy = (*IF)->getType().getUnqualifiedType();
     QualType ParmImpTy = (*IM)->getType().getUnqualifiedType();
-    if (Context.hasSameType(ParmDeclTy, ParmImpTy))
+    if (Context.typesAreCompatible(ParmDeclTy, ParmImpTy) ||
+        Context.QualifiedIdConformsQualifiedId(ParmDeclTy, ParmImpTy))
       continue;
 
     Diag((*IM)->getLocation(), diag::warn_conflicting_param_types)
@@ -1622,13 +1619,9 @@ Decl *Sema::ActOnMethodDeclaration(
   // If the interface declared this method, and it was deprecated there,
   // mark it deprecated here.
   if (InterfaceMD)
-   if (Attr *DA = InterfaceMD->getAttr<DeprecatedAttr>()) {
-    StringLiteral *SE = StringLiteral::CreateEmpty(Context, 1);
-    ObjCMethod->addAttr(::new (Context) 
-                        DeprecatedAttr(DA->getLocation(),
-                                       Context, 
-                                       SE->getString()));
-   }
+   if (Attr *DA = InterfaceMD->getAttr<DeprecatedAttr>())
+    ObjCMethod->addAttr(::new (Context) DeprecatedAttr(DA->getLocation(),
+                                                       Context));
 
   return ObjCMethod;
 }

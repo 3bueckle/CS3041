@@ -59,10 +59,6 @@ types::ID Darwin::LookupTypeForExtension(const char *Ext) const {
   return Ty;
 }
 
-bool Darwin::HasNativeLLVMSupport() const {
-  return true;
-}
-
 // FIXME: Can we tablegen this?
 static const char *GetArmArchForMArch(llvm::StringRef Value) {
   if (Value == "armv6k")
@@ -373,30 +369,10 @@ void DarwinGCC::AddLinkRuntimeLibArgs(const ArgList &Args,
 DarwinClang::DarwinClang(const HostInfo &Host, const llvm::Triple& Triple)
   : Darwin(Host, Triple)
 {
-  getProgramPaths().push_back(getDriver().getInstalledDir());
-  if (getDriver().getInstalledDir() != getDriver().Dir)
-    getProgramPaths().push_back(getDriver().Dir);
-
   // We expect 'as', 'ld', etc. to be adjacent to our install dir.
   getProgramPaths().push_back(getDriver().getInstalledDir());
   if (getDriver().getInstalledDir() != getDriver().Dir)
     getProgramPaths().push_back(getDriver().Dir);
-
-  // For fallback, we need to know how to find the GCC cc1 executables, so we
-  // also add the GCC libexec paths. This is legiy code that can be removed once
-  // fallback is no longer useful.
-  std::string ToolChainDir = "i686-apple-darwin";
-  ToolChainDir += llvm::utostr(DarwinVersion[0]);
-  ToolChainDir += "/4.2.1";
-
-  std::string Path = getDriver().Dir;
-  Path += "/../libexec/gcc/";
-  Path += ToolChainDir;
-  getProgramPaths().push_back(Path);
-
-  Path = "/usr/libexec/gcc/";
-  Path += ToolChainDir;
-  getProgramPaths().push_back(Path);
 }
 
 void DarwinClang::AddLinkSearchPathArgs(const ArgList &Args,
@@ -501,20 +477,11 @@ void DarwinClang::AddLinkRuntimeLibArgs(const ArgList &Args,
     else if (isMacosxVersionLT(10, 6))
       CmdArgs.push_back("-lgcc_s.10.5");
 
-    // For OS X, we thought we would only need a static runtime library when
-    // targetting 10.4, to provide versions of the static functions which were
-    // omitted from 10.4.dylib.
-    //
-    // Unfortunately, that turned out to not be true, because Darwin system
-    // headers can still use eprintf on i386, and it is not exported from
-    // libSystem. Therefore, we still must provide a runtime library just for
-    // the tiny tiny handful of projects that *might* use that symbol.
-    if (isMacosxVersionLT(10, 5)) {
+    // For OS X, we only need a static runtime library when targetting 10.4, to
+    // provide versions of the static functions which were omitted from
+    // 10.4.dylib.
+    if (isMacosxVersionLT(10, 5))
       DarwinStaticLib = "libclang_rt.10.4.a";
-    } else {
-      if (getTriple().getArch() == llvm::Triple::x86)
-        DarwinStaticLib = "libclang_rt.eprintf.a";
-    }
   }
 
   /// Add the target specific static library, if needed.
@@ -605,73 +572,6 @@ void Darwin::AddDeploymentTarget(DerivedArgList &Args) const {
         << iPhoneVersion->getAsString(Args);
   }
   setTarget(iPhoneVersion, Major, Minor, Micro);
-}
-
-void DarwinClang::AddCXXStdlibLibArgs(const ArgList &Args,
-                                      ArgStringList &CmdArgs) const {
-  CXXStdlibType Type = GetCXXStdlibType(Args);
-
-  switch (Type) {
-  case ToolChain::CST_Libcxx:
-    CmdArgs.push_back("-lc++");
-    break;
-
-  case ToolChain::CST_Libstdcxx: {
-    // Unfortunately, -lstdc++ doesn't always exist in the standard search path;
-    // it was previously found in the gcc lib dir. However, for all the Darwin
-    // platforms we care about it was -lstdc++.6, so we search for that
-    // explicitly if we can't see an obvious -lstdc++ candidate.
-
-    // Check in the sysroot first.
-    if (const Arg *A = Args.getLastArg(options::OPT_isysroot)) {
-      llvm::sys::Path P(A->getValue(Args));
-      P.appendComponent("usr");
-      P.appendComponent("lib");
-      P.appendComponent("libstdc++.dylib");
-
-      if (!P.exists()) {
-        P.eraseComponent();
-        P.appendComponent("libstdc++.6.dylib");
-        if (P.exists()) {
-          CmdArgs.push_back(Args.MakeArgString(P.str()));
-          return;
-        }
-      }
-    }
-
-    // Otherwise, look in the root.
-    if (!llvm::sys::Path("/usr/lib/libstdc++.dylib").exists() &&
-        llvm::sys::Path("/usr/lib/libstdc++.6.dylib").exists()) {
-      CmdArgs.push_back("/usr/lib/libstdc++.6.dylib");
-      return;
-    }
-
-    // Otherwise, let the linker search.
-    CmdArgs.push_back("-lstdc++");
-    break;
-  }
-  }
-}
-
-void DarwinClang::AddCCKextLibArgs(const ArgList &Args,
-                                   ArgStringList &CmdArgs) const {
-
-  // For Darwin platforms, use the compiler-rt-based support library
-  // instead of the gcc-provided one (which is also incidentally
-  // only present in the gcc lib dir, which makes it hard to find).
-
-  llvm::sys::Path P(getDriver().ResourceDir);
-  P.appendComponent("lib");
-  P.appendComponent("darwin");
-  P.appendComponent("libclang_rt.cc_kext.a");
-  
-  // For now, allow missing resource libraries to support developers who may
-  // not have compiler-rt checked out or integrated into their build.
-  if (!P.exists())
-    getDriver().Diag(clang::diag::warn_drv_missing_resource_library)
-      << P.str();
-  else
-    CmdArgs.push_back(Args.MakeArgString(P.str()));
 }
 
 DerivedArgList *Darwin::TranslateArgs(const DerivedArgList &Args,

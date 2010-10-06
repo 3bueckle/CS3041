@@ -925,11 +925,6 @@ struct DeclaratorChunk {
     /// specification and their locations.
     TypeAndRange *Exceptions;
 
-    /// TrailingReturnType - If this isn't null, it's the trailing return type
-    /// specified. This is actually a ParsedType, but stored as void* to
-    /// allow union storage.
-    void *TrailingReturnType;
-
     /// freeArgs - reset the argument list to having zero arguments.  This is
     /// used in various places for error recovery.
     void freeArgs() {
@@ -1082,8 +1077,7 @@ struct DeclaratorChunk {
                                      SourceRange *ExceptionRanges,
                                      unsigned NumExceptions,
                                      SourceLocation LPLoc, SourceLocation RPLoc,
-                                     Declarator &TheDeclarator,
-                                     ParsedType TrailingReturnType = ParsedType());
+                                     Declarator &TheDeclarator);
 
   /// getBlockPointer - Return a DeclaratorChunk for a block.
   ///

@@ -1,4 +1,4 @@
-//===--- Driver.cpp - Clang GCC Compatible Driver -------------------------===//
+//===--- Driver.cpp - Clang GCC Compatible Driver -----------------------*-===//
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -50,8 +50,8 @@ Driver::Driver(llvm::StringRef _ClangExecutable,
     DefaultImageName(_DefaultImageName),
     DriverTitle("clang \"gcc-compatible\" driver"),
     Host(0),
-    CCPrintOptionsFilename(0), CCCIsCXX(false),
-    CCCEcho(false), CCCPrintBindings(false), CCPrintOptions(false), CCCGenericGCCName("gcc"),
+    CCCGenericGCCName("gcc"), CCPrintOptionsFilename(0), CCCIsCXX(false),
+    CCCEcho(false), CCCPrintBindings(false), CCPrintOptions(false),
     CheckInputsExist(true), CCCUseClang(true), CCCUseClangCXX(true),
     CCCUseClangCPP(true), CCCUsePCH(true), SuppressMissingInputWarning(false) {
   if (IsProduction) {
@@ -115,7 +115,6 @@ InputArgList *Driver::ParseArgStrings(const char **ArgBegin,
 DerivedArgList *Driver::TranslateInputArgs(const InputArgList &Args) const {
   DerivedArgList *DAL = new DerivedArgList(Args);
 
-  bool HasNostdlib = Args.hasArg(options::OPT_nostdlib);
   for (ArgList::const_iterator it = Args.begin(),
          ie = Args.end(); it != ie; ++it) {
     const Arg *A = *it;
@@ -156,25 +155,6 @@ DerivedArgList *Driver::TranslateInputArgs(const InputArgList &Args) const {
       DAL->AddSeparateArg(A, Opts->getOption(options::OPT_MF),
                           A->getValue(Args, 1));
       continue;
-    }
-
-    // Rewrite reserved library names.
-    if (A->getOption().matches(options::OPT_l)) {
-      llvm::StringRef Value = A->getValue(Args);
-
-      // Rewrite unless -nostdlib is present.
-      if (!HasNostdlib && Value == "stdc++") {
-        DAL->AddFlagArg(A, Opts->getOption(
-                              options::OPT_Z_reserved_lib_stdcxx));
-        continue;
-      }
-
-      // Rewrite unconditionally.
-      if (Value == "cc_kext") {
-        DAL->AddFlagArg(A, Opts->getOption(
-                              options::OPT_Z_reserved_lib_cckext));
-        continue;
-      }
     }
 
     DAL->append(*it);
@@ -225,8 +205,6 @@ Compilation *Driver::BuildCompilation(int argc, const char **argv) {
   CCCPrintActions = Args->hasArg(options::OPT_ccc_print_phases);
   CCCPrintBindings = Args->hasArg(options::OPT_ccc_print_bindings);
   CCCIsCXX = Args->hasArg(options::OPT_ccc_cxx) || CCCIsCXX;
-  if (CCCIsCXX)
-    CCCGenericGCCName = "g++";
   CCCEcho = Args->hasArg(options::OPT_ccc_echo);
   if (const Arg *A = Args->getLastArg(options::OPT_ccc_gcc_name))
     CCCGenericGCCName = A->getValue(*Args);
@@ -394,11 +372,6 @@ static void PrintDiagnosticCategories(llvm::raw_ostream &OS) {
 bool Driver::HandleImmediateArgs(const Compilation &C) {
   // The order these options are handled in gcc is all over the place, but we
   // don't expect inconsistencies w.r.t. that to matter in practice.
-
-  if (C.getArgs().hasArg(options::OPT_dumpmachine)) {
-    llvm::outs() << C.getDefaultToolChain().getTripleString() << '\n';
-    return false;
-  }
 
   if (C.getArgs().hasArg(options::OPT_dumpversion)) {
     llvm::outs() << CLANG_VERSION_STRING "\n";

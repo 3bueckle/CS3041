@@ -26,7 +26,6 @@
 #include "clang/AST/Type.h"
 #include "clang/AST/ExprObjC.h"
 #include "clang/AST/ExprCXX.h"
-#include "clang/AST/StmtObjC.h"
 
 namespace clang {
 class AnalysisManager;
@@ -115,6 +114,15 @@ class GRExprEngine : public GRSubEngine {
   GRBugReporter BR;
   
   llvm::OwningPtr<GRTransferFuncs> TF;
+
+  class CallExprWLItem {
+  public:
+    CallExpr::const_arg_iterator I;
+    ExplodedNode *N;
+
+    CallExprWLItem(const CallExpr::const_arg_iterator &i, ExplodedNode *n)
+      : I(i), N(n) {}
+  };
 
 public:
   GRExprEngine(AnalysisManager &mgr, GRTransferFuncs *tf);
@@ -256,7 +264,6 @@ public:
 
   // Functions for external checking of whether we have unfinished work
   bool wasBlockAborted() const { return CoreEngine.wasBlockAborted(); }
-  bool hasEmptyWorkList() const { return !CoreEngine.getWorkList()->hasWork(); }
   bool hasWorkRemaining() const {
     return wasBlockAborted() || CoreEngine.getWorkList()->hasWork();
   }
@@ -377,10 +384,6 @@ public:
   /// VisitMemberExpr - Transfer function for member expressions.
   void VisitMemberExpr(const MemberExpr* M, ExplodedNode* Pred, 
                        ExplodedNodeSet& Dst, bool asLValue);
-
-  /// Transfer function logic for ObjCAtSynchronizedStmts.
-  void VisitObjCAtSynchronizedStmt(const ObjCAtSynchronizedStmt *S,
-                                   ExplodedNode *Pred, ExplodedNodeSet &Dst);
 
   /// VisitObjCIvarRefExpr - Transfer function logic for ObjCIvarRefExprs.
   void VisitObjCIvarRefExpr(const ObjCIvarRefExpr* DR, ExplodedNode* Pred,

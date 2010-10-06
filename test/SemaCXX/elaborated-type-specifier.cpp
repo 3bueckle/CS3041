@@ -35,8 +35,7 @@ namespace NS {
 }
 
 void test_S5_scope() {
-  S4 *s4; // expected-error{{use of undeclared identifier 'S4'}} \
-  // expected-error{{use of undeclared identifier 's4'}}
+  S4 *s4; // expected-error{{use of undeclared identifier 'S4'}}
 }
 
 int test_funcparam_scope(struct S5 * s5) {

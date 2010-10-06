@@ -369,10 +369,6 @@ void ASTContext::InitBuiltinTypes() {
   InitBuiltinType(NullPtrTy,           BuiltinType::NullPtr);
 }
 
-Diagnostic &ASTContext::getDiagnostics() const {
-  return SourceMgr.getDiagnostics();
-}
-
 AttrVec& ASTContext::getDeclAttrs(const Decl *D) {
   AttrVec *&Result = DeclAttrs[D];
   if (!Result) {
@@ -1413,54 +1409,6 @@ QualType ASTContext::getConstantArrayType(QualType EltTy,
   return QualType(New, 0);
 }
 
-/// getIncompleteArrayType - Returns a unique reference to the type for a
-/// incomplete array of the specified element type.
-QualType ASTContext::getUnknownSizeVariableArrayType(QualType Ty) {
-  QualType ElemTy = getBaseElementType(Ty);
-  DeclarationName Name;
-  llvm::SmallVector<QualType, 8> ATypes;
-  QualType ATy = Ty;
-  while (const ArrayType *AT = getAsArrayType(ATy)) {
-    ATypes.push_back(ATy);
-    ATy = AT->getElementType();
-  }
-  for (int i = ATypes.size() - 1; i >= 0; i--) {
-    if (const VariableArrayType *VAT = getAsVariableArrayType(ATypes[i])) {
-      ElemTy = getVariableArrayType(ElemTy, /*ArraySize*/0, ArrayType::Star,
-                                    0, VAT->getBracketsRange());
-    }
-    else if (const ConstantArrayType *CAT = getAsConstantArrayType(ATypes[i])) {
-      llvm::APSInt ConstVal(CAT->getSize());
-      ElemTy = getConstantArrayType(ElemTy, ConstVal, ArrayType::Normal, 0);
-    }
-    else if (getAsIncompleteArrayType(ATypes[i])) {
-      ElemTy = getVariableArrayType(ElemTy, /*ArraySize*/0, ArrayType::Normal,
-                                    0, SourceRange());
-    }
-    else
-      assert(false && "DependentArrayType is seen");
-  }
-  return ElemTy;
-}
-
-/// getVariableArrayDecayedType - Returns a vla type where known sizes
-/// are replaced with [*]
-QualType ASTContext::getVariableArrayDecayedType(QualType Ty) {
-  if (Ty->isPointerType()) {
-    QualType BaseType = Ty->getAs<PointerType>()->getPointeeType();
-    if (isa<VariableArrayType>(BaseType)) {
-      ArrayType *AT = dyn_cast<ArrayType>(BaseType);
-      VariableArrayType *VAT = cast<VariableArrayType>(AT);
-      if (VAT->getSizeExpr()) {
-        Ty = getUnknownSizeVariableArrayType(BaseType);
-        Ty = getPointerType(Ty);
-      }
-    }
-  }
-  return Ty;
-}
-
-
 /// getVariableArrayType - Returns a non-unique reference to the type for a
 /// variable array of the specified element type.
 QualType ASTContext::getVariableArrayType(QualType EltTy,
@@ -1584,11 +1532,11 @@ QualType ASTContext::getIncompleteArrayType(QualType EltTy,
 /// getVectorType - Return the unique reference to a vector type of
 /// the specified element type and size. VectorType must be a built-in type.
 QualType ASTContext::getVectorType(QualType vecType, unsigned NumElts,
-                                   VectorType::AltiVecSpecific AltiVecSpec) {
-  BuiltinType *BaseType;
+    VectorType::AltiVecSpecific AltiVecSpec) {
+  BuiltinType *baseType;
 
-  BaseType = dyn_cast<BuiltinType>(getCanonicalType(vecType).getTypePtr());
-  assert(BaseType != 0 && "getVectorType(): Expecting a built-in type");
+  baseType = dyn_cast<BuiltinType>(getCanonicalType(vecType).getTypePtr());
+  assert(baseType != 0 && "getVectorType(): Expecting a built-in type");
 
   // Check if we've already instantiated a vector of this type.
   llvm::FoldingSetNodeID ID;
@@ -1733,7 +1681,6 @@ QualType ASTContext::getFunctionType(QualType ResultTy,const QualType *ArgArray,
                                      bool hasAnyExceptionSpec, unsigned NumExs,
                                      const QualType *ExArray,
                                      const FunctionType::ExtInfo &Info) {
-
   const CallingConv CallConv= Info.getCC();
   // Unique functions, to guarantee there is only one function of a particular
   // structure.
@@ -2445,8 +2392,8 @@ CanQualType ASTContext::getCanonicalParamType(QualType T) {
   // Push qualifiers into arrays, and then discard any remaining
   // qualifiers.
   T = getCanonicalType(T);
-  T = getVariableArrayDecayedType(T);
   const Type *Ty = T.getTypePtr();
+
   QualType Result;
   if (isa<ArrayType>(Ty)) {
     Result = getArrayDecayedType(QualType(Ty,0));
@@ -2785,6 +2732,7 @@ const ArrayType *ASTContext::getAsArrayType(QualType T) {
                                               VAT->getIndexTypeCVRQualifiers(),
                                               VAT->getBracketsRange()));
 }
+
 
 /// getArrayDecayedType - Return the properly qualified result of decaying the
 /// specified array type to a pointer.  This operation is non-trivial when
@@ -3139,6 +3087,10 @@ QualType ASTContext::getObjCFastEnumerationStateType() {
       Field->setAccess(AS_public);
       ObjCFastEnumerationStateTypeDecl->addDecl(Field);
     }
+    if (getLangOptions().CPlusPlus)
+      if (CXXRecordDecl *CXXRD = 
+            dyn_cast<CXXRecordDecl>(ObjCFastEnumerationStateTypeDecl))
+        CXXRD->setEmpty(false);
 
     ObjCFastEnumerationStateTypeDecl->completeDefinition();
   }
@@ -5181,30 +5133,19 @@ void ExternalASTSource::PrintStats() { }
 //===----------------------------------------------------------------------===//
 
 /// DecodeTypeFromStr - This decodes one type descriptor from Str, advancing the
-/// pointer over the consumed characters.  This returns the resultant type.  If
-/// AllowTypeModifiers is false then modifier like * are not parsed, just basic
-/// types.  This allows "v2i*" to be parsed as a pointer to a v2i instead of
-/// a vector of "i*".
-///
-/// RequiresICE is filled in on return to indicate whether the value is required
-/// to be an Integer Constant Expression.
+/// pointer over the consumed characters.  This returns the resultant type.
 static QualType DecodeTypeFromStr(const char *&Str, ASTContext &Context,
                                   ASTContext::GetBuiltinTypeError &Error,
-                                  bool &RequiresICE,
-                                  bool AllowTypeModifiers) {
+                                  bool AllowTypeModifiers = true) {
   // Modifiers.
   int HowLong = 0;
   bool Signed = false, Unsigned = false;
-  RequiresICE = false;
-  
-  // Read the prefixed modifiers first.
+
+  // Read the modifiers first.
   bool Done = false;
   while (!Done) {
     switch (*Str++) {
     default: Done = true; --Str; break;
-    case 'I':
-      RequiresICE = true;
-      break;
     case 'S':
       assert(!Unsigned && "Can't use both 'S' and 'U' modifiers!");
       assert(!Signed && "Can't use 'S' modifier multiple times!");
@@ -5297,30 +5238,27 @@ static QualType DecodeTypeFromStr(const char *&Str, ASTContext &Context,
     // it to be a __va_list_tag*.
     Type = Context.getBuiltinVaListType();
     assert(!Type.isNull() && "builtin va list type not initialized!");
-    if (Type->isArrayType())
+    if (Type->isArrayType()) {
       Type = Context.getArrayDecayedType(Type);
-    else
+    } else {
       Type = Context.getLValueReferenceType(Type);
+    }
     break;
   case 'V': {
     char *End;
     unsigned NumElements = strtoul(Str, &End, 10);
     assert(End != Str && "Missing vector size");
+
     Str = End;
 
-    QualType ElementType = DecodeTypeFromStr(Str, Context, Error, 
-                                             RequiresICE, false);
-    assert(!RequiresICE && "Can't require vector ICE");
-    
-    // TODO: No way to make AltiVec vectors in builtins yet.
+    QualType ElementType = DecodeTypeFromStr(Str, Context, Error, false);
+    // FIXME: Don't know what to do about AltiVec.
     Type = Context.getVectorType(ElementType, NumElements,
                                  VectorType::NotAltiVec);
     break;
   }
   case 'X': {
-    QualType ElementType = DecodeTypeFromStr(Str, Context, Error, RequiresICE,
-                                             false);
-    assert(!RequiresICE && "Can't require complex ICE");
+    QualType ElementType = DecodeTypeFromStr(Str, Context, Error, false);
     Type = Context.getComplexType(ElementType);
     break;
   }      
@@ -5344,70 +5282,59 @@ static QualType DecodeTypeFromStr(const char *&Str, ASTContext &Context,
     break;
   }
 
-  // If there are modifiers and if we're allowed to parse them, go for it.
-  Done = !AllowTypeModifiers;
+  if (!AllowTypeModifiers)
+    return Type;
+
+  Done = false;
   while (!Done) {
     switch (char c = *Str++) {
-    default: Done = true; --Str; break;
-    case '*':
-    case '&': {
-      // Both pointers and references can have their pointee types
-      // qualified with an address space.
-      char *End;
-      unsigned AddrSpace = strtoul(Str, &End, 10);
-      if (End != Str && AddrSpace != 0) {
-        Type = Context.getAddrSpaceQualType(Type, AddrSpace);
-        Str = End;
-      }
-      if (c == '*')
-        Type = Context.getPointerType(Type);
-      else
-        Type = Context.getLValueReferenceType(Type);
-      break;
-    }
-    // FIXME: There's no way to have a built-in with an rvalue ref arg.
-    case 'C':
-      Type = Type.withConst();
-      break;
-    case 'D':
-      Type = Context.getVolatileType(Type);
-      break;
+      default: Done = true; --Str; break;
+      case '*':
+      case '&':
+        {
+          // Both pointers and references can have their pointee types
+          // qualified with an address space.
+          char *End;
+          unsigned AddrSpace = strtoul(Str, &End, 10);
+          if (End != Str && AddrSpace != 0) {
+            Type = Context.getAddrSpaceQualType(Type, AddrSpace);
+            Str = End;
+          }
+        }
+        if (c == '*')
+          Type = Context.getPointerType(Type);
+        else
+          Type = Context.getLValueReferenceType(Type);
+        break;
+      // FIXME: There's no way to have a built-in with an rvalue ref arg.
+      case 'C':
+        Type = Type.withConst();
+        break;
+      case 'D':
+        Type = Context.getVolatileType(Type);
+        break;
     }
   }
-  
-  assert((!RequiresICE || Type->isIntegralOrEnumerationType()) &&
-         "Integer constant 'I' type must be an integer"); 
 
   return Type;
 }
 
 /// GetBuiltinType - Return the type for the specified builtin.
-QualType ASTContext::GetBuiltinType(unsigned Id,
-                                    GetBuiltinTypeError &Error,
-                                    unsigned *IntegerConstantArgs) {
-  const char *TypeStr = BuiltinInfo.GetTypeString(Id);
+QualType ASTContext::GetBuiltinType(unsigned id,
+                                    GetBuiltinTypeError &Error) {
+  const char *TypeStr = BuiltinInfo.GetTypeString(id);
 
   llvm::SmallVector<QualType, 8> ArgTypes;
 
-  bool RequiresICE = false;
   Error = GE_None;
-  QualType ResType = DecodeTypeFromStr(TypeStr, *this, Error,
-                                       RequiresICE, true);
+  QualType ResType = DecodeTypeFromStr(TypeStr, *this, Error);
   if (Error != GE_None)
     return QualType();
-  
-  assert(!RequiresICE && "Result of intrinsic cannot be required to be an ICE");
-  
   while (TypeStr[0] && TypeStr[0] != '.') {
-    QualType Ty = DecodeTypeFromStr(TypeStr, *this, Error, RequiresICE, true);
+    QualType Ty = DecodeTypeFromStr(TypeStr, *this, Error);
     if (Error != GE_None)
       return QualType();
 
-    // If this argument is required to be an IntegerConstantExpression and the
-    // caller cares, fill in the bitmask we return.
-    if (RequiresICE && IntegerConstantArgs)
-      *IntegerConstantArgs |= 1 << ArgTypes.size();
-    
     // Do array -> pointer decay.  The builtin should use the decayed type.
     if (Ty->isArrayType())
       Ty = getArrayDecayedType(Ty);

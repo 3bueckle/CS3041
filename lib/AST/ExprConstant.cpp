@@ -948,7 +948,7 @@ public:
   }
 
   bool VisitUnaryTypeTraitExpr(const UnaryTypeTraitExpr *E) {
-    return Success(E->getValue(), E);
+    return Success(E->EvaluateTrait(Info.Ctx), E);
   }
 
   bool VisitChooseExpr(const ChooseExpr *E) {
@@ -957,8 +957,6 @@ public:
 
   bool VisitUnaryReal(const UnaryOperator *E);
   bool VisitUnaryImag(const UnaryOperator *E);
-
-  bool VisitCXXNoexceptExpr(const CXXNoexceptExpr *E);
 
 private:
   CharUnits GetAlignOfExpr(const Expr *E);
@@ -1020,6 +1018,7 @@ bool IntExprEvaluator::CheckReferencedDecl(const Expr* E, const Decl* D) {
         }
 
         VD->setEvaluatedValue(APValue());
+        return false;
       }
     }
   }
@@ -1161,24 +1160,6 @@ bool IntExprEvaluator::VisitCallExpr(CallExpr *E) {
 
   case Builtin::BI__builtin_expect:
     return Visit(E->getArg(0));
-      
-  case Builtin::BIstrlen:
-  case Builtin::BI__builtin_strlen:
-    // As an extension, we support strlen() and __builtin_strlen() as constant
-    // expressions when the argument is a string literal.
-    if (StringLiteral *S
-               = dyn_cast<StringLiteral>(E->getArg(0)->IgnoreParenImpCasts())) {
-      // The string literal may have embedded null characters. Find the first
-      // one and truncate there.
-      llvm::StringRef Str = S->getString();
-      llvm::StringRef::size_type Pos = Str.find(0);
-      if (Pos != llvm::StringRef::npos)
-        Str = Str.substr(0, Pos);
-      
-      return Success(Str.size(), E);
-    }
-      
-    return Error(E->getLocStart(), diag::note_invalid_subexpr_in_ice, E);
   }
 }
 
@@ -1740,10 +1721,6 @@ bool IntExprEvaluator::VisitUnaryImag(const UnaryOperator *E) {
   if (!E->getSubExpr()->isEvaluatable(Info.Ctx))
     Info.EvalResult.HasSideEffects = true;
   return Success(0, E);
-}
-
-bool IntExprEvaluator::VisitCXXNoexceptExpr(const CXXNoexceptExpr *E) {
-  return Success(E->getValue(), E);
 }
 
 //===----------------------------------------------------------------------===//
@@ -2403,7 +2380,6 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
   case Expr::CXXMemberCallExprClass:
   case Expr::CXXDynamicCastExprClass:
   case Expr::CXXTypeidExprClass:
-  case Expr::CXXUuidofExprClass:
   case Expr::CXXNullPtrLiteralExprClass:
   case Expr::CXXThisExprClass:
   case Expr::CXXThrowExprClass:
@@ -2447,7 +2423,6 @@ static ICEDiag CheckICE(const Expr* E, ASTContext &Ctx) {
   case Expr::CXXScalarValueInitExprClass:
   case Expr::TypesCompatibleExprClass:
   case Expr::UnaryTypeTraitExprClass:
-  case Expr::CXXNoexceptExprClass:
     return NoDiag();
   case Expr::CallExprClass:
   case Expr::CXXOperatorCallExprClass: {

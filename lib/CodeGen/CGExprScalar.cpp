@@ -11,12 +11,10 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/Frontend/CodeGenOptions.h"
 #include "CodeGenFunction.h"
 #include "CGCXXABI.h"
 #include "CGObjCRuntime.h"
 #include "CodeGenModule.h"
-#include "CGDebugInfo.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/RecordLayout.h"
@@ -107,15 +105,6 @@ public:
   //                            Visitor Methods
   //===--------------------------------------------------------------------===//
 
-  Value *Visit(Expr *E) {
-    llvm::DenseMap<const Expr *, llvm::Value *>::iterator I = 
-      CGF.ConditionalSaveExprs.find(E);
-    if (I != CGF.ConditionalSaveExprs.end())
-      return I->second;
-      
-    return StmtVisitor<ScalarExprEmitter, Value*>::Visit(E);
-  }
-    
   Value *VisitStmt(Stmt *S) {
     S->dump(CGF.getContext().getSourceManager());
     assert(0 && "Stmt can't have complex result type!");
@@ -123,9 +112,7 @@ public:
   }
   Value *VisitExpr(Expr *S);
   
-  Value *VisitParenExpr(ParenExpr *PE) {
-    return Visit(PE->getSubExpr()); 
-  }
+  Value *VisitParenExpr(ParenExpr *PE) { return Visit(PE->getSubExpr()); }
 
   // Leaves.
   Value *VisitIntegerLiteral(const IntegerLiteral *E) {
@@ -291,7 +278,8 @@ public:
     return 0;
   }
   Value *VisitUnaryTypeTraitExpr(const UnaryTypeTraitExpr *E) {
-    return llvm::ConstantInt::get(Builder.getInt1Ty(), E->getValue());
+    return llvm::ConstantInt::get(Builder.getInt1Ty(),
+                                  E->EvaluateTrait(CGF.getContext()));
   }
 
   Value *VisitCXXPseudoDestructorExpr(const CXXPseudoDestructorExpr *E) {
@@ -313,10 +301,6 @@ public:
     return 0;
   }
 
-  Value *VisitCXXNoexceptExpr(const CXXNoexceptExpr *E) {
-    return llvm::ConstantInt::get(Builder.getInt1Ty(), E->getValue());
-  }
-
   // Binary Operators.
   Value *EmitMul(const BinOpInfo &Ops) {
     if (Ops.Ty->hasSignedIntegerRepresentation()) {
@@ -334,23 +318,9 @@ public:
       return Builder.CreateFMul(Ops.LHS, Ops.RHS, "mul");
     return Builder.CreateMul(Ops.LHS, Ops.RHS, "mul");
   }
-  bool isTrapvOverflowBehavior() {
-    return CGF.getContext().getLangOptions().getSignedOverflowBehavior() 
-               == LangOptions::SOB_Trapping; 
-  }
   /// Create a binary op that checks for overflow.
   /// Currently only supports +, - and *.
   Value *EmitOverflowCheckedBinOp(const BinOpInfo &Ops);
-  // Emit the overflow BB when -ftrapv option is activated. 
-  void EmitOverflowBB(llvm::BasicBlock *overflowBB) {
-    Builder.SetInsertPoint(overflowBB);
-    llvm::Function *Trap = CGF.CGM.getIntrinsic(llvm::Intrinsic::trap);
-    Builder.CreateCall(Trap);
-    Builder.CreateUnreachable();
-  }
-  // Check for undefined division and modulus behaviors.
-  void EmitUndefinedBehaviorIntegerDivAndRemCheck(const BinOpInfo &Ops, 
-                                                  llvm::Value *Zero,bool isDiv);
   Value *EmitDiv(const BinOpInfo &Ops);
   Value *EmitRem(const BinOpInfo &Ops);
   Value *EmitAdd(const BinOpInfo &Ops);
@@ -723,17 +693,6 @@ Value *ScalarExprEmitter::VisitMemberExpr(MemberExpr *E) {
       EmitLValue(E->getBase());
     return llvm::ConstantInt::get(VMContext, Result.Val.getInt());
   }
-
-  // Emit debug info for aggregate now, if it was delayed to reduce 
-  // debug info size.
-  CGDebugInfo *DI = CGF.getDebugInfo();
-  if (DI && CGF.CGM.getCodeGenOpts().LimitDebugInfo) {
-    QualType PQTy = E->getBase()->IgnoreParenImpCasts()->getType();
-    if (const PointerType * PTy = dyn_cast<PointerType>(PQTy))
-      if (FieldDecl *M = dyn_cast<FieldDecl>(E->getMemberDecl()))
-        DI->getOrCreateRecordType(PTy->getPointeeType(), 
-                                  M->getParent()->getLocation());
-  }
   return EmitLoadOfLValue(E);
 }
 
@@ -1079,15 +1038,10 @@ Value *ScalarExprEmitter::EmitCastExpr(CastExpr *CE) {
     return Builder.CreatePtrToInt(Src, ConvertType(DestTy));
   }
   case CK_ToVoid: {
-    if (E->Classify(CGF.getContext()).isGLValue()) {
-      LValue LV = CGF.EmitLValue(E);
-      if (LV.isPropertyRef())
-        CGF.EmitLoadOfPropertyRefLValue(LV, E->getType());
-      else if (LV.isKVCRef())
-        CGF.EmitLoadOfKVCRefLValue(LV, E->getType());
-    }
+    if (E->Classify(CGF.getContext()).isGLValue())
+      CGF.EmitLValue(E);
     else
-      CGF.EmitAnyExpr(E, AggValueSlot::ignored(), true);
+      CGF.EmitAnyExpr(E, 0, false, true);
     return 0;
   }
   case CK_VectorSplat: {
@@ -1151,7 +1105,7 @@ Value *ScalarExprEmitter::EmitCastExpr(CastExpr *CE) {
 
   // Okay, this is a cast from an aggregate.  It must be a cast to void.  Just
   // evaluate the result and return.
-  CGF.EmitAggExpr(E, AggValueSlot::ignored(), true);
+  CGF.EmitAggExpr(E, 0, false, true);
   return 0;
 }
 
@@ -1536,51 +1490,8 @@ Value *ScalarExprEmitter::EmitCompoundAssign(const CompoundAssignOperator *E,
   return EmitLoadOfLValue(LHS, E->getType());
 }
 
-void ScalarExprEmitter::EmitUndefinedBehaviorIntegerDivAndRemCheck(
-     					    const BinOpInfo &Ops, 
-				     	    llvm::Value *Zero, bool isDiv) {
-  llvm::BasicBlock *overflowBB = CGF.createBasicBlock("overflow", CGF.CurFn);
-  llvm::BasicBlock *contBB =
-    CGF.createBasicBlock(isDiv ? "div.cont" : "rem.cont", CGF.CurFn);
-
-  const llvm::IntegerType *Ty = cast<llvm::IntegerType>(Zero->getType());
-
-  if (Ops.Ty->hasSignedIntegerRepresentation()) {
-    llvm::Value *IntMin =
-      llvm::ConstantInt::get(VMContext,
-                             llvm::APInt::getSignedMinValue(Ty->getBitWidth()));
-    llvm::Value *NegOne = llvm::ConstantInt::get(Ty, -1ULL);
-
-    llvm::Value *Cond1 = Builder.CreateICmpEQ(Ops.RHS, Zero);
-    llvm::Value *LHSCmp = Builder.CreateICmpEQ(Ops.LHS, IntMin);
-    llvm::Value *RHSCmp = Builder.CreateICmpEQ(Ops.RHS, NegOne);
-    llvm::Value *Cond2 = Builder.CreateAnd(LHSCmp, RHSCmp, "and");
-    Builder.CreateCondBr(Builder.CreateOr(Cond1, Cond2, "or"), 
-                         overflowBB, contBB);
-  } else {
-    CGF.Builder.CreateCondBr(Builder.CreateICmpEQ(Ops.RHS, Zero), 
-                             overflowBB, contBB);
-  }
-  EmitOverflowBB(overflowBB);
-  Builder.SetInsertPoint(contBB);
-}
 
 Value *ScalarExprEmitter::EmitDiv(const BinOpInfo &Ops) {
-  if (isTrapvOverflowBehavior()) { 
-    llvm::Value *Zero = llvm::Constant::getNullValue(ConvertType(Ops.Ty));
-
-    if (Ops.Ty->isIntegerType())
-      EmitUndefinedBehaviorIntegerDivAndRemCheck(Ops, Zero, true);
-    else if (Ops.Ty->isRealFloatingType()) {
-      llvm::BasicBlock *overflowBB = CGF.createBasicBlock("overflow",
-                                                          CGF.CurFn);
-      llvm::BasicBlock *DivCont = CGF.createBasicBlock("div.cont", CGF.CurFn);
-      CGF.Builder.CreateCondBr(Builder.CreateFCmpOEQ(Ops.RHS, Zero), 
-                               overflowBB, DivCont);
-      EmitOverflowBB(overflowBB);
-      Builder.SetInsertPoint(DivCont);
-    }
-  }
   if (Ops.LHS->getType()->isFPOrFPVectorTy())
     return Builder.CreateFDiv(Ops.LHS, Ops.RHS, "div");
   else if (Ops.Ty->hasUnsignedIntegerRepresentation())
@@ -1591,13 +1502,6 @@ Value *ScalarExprEmitter::EmitDiv(const BinOpInfo &Ops) {
 
 Value *ScalarExprEmitter::EmitRem(const BinOpInfo &Ops) {
   // Rem in C can't be a floating point type: C99 6.5.5p2.
-  if (isTrapvOverflowBehavior()) {
-    llvm::Value *Zero = llvm::Constant::getNullValue(ConvertType(Ops.Ty));
-
-    if (Ops.Ty->isIntegerType()) 
-      EmitUndefinedBehaviorIntegerDivAndRemCheck(Ops, Zero, false);
-  }
-
   if (Ops.Ty->isUnsignedIntegerType())
     return Builder.CreateURem(Ops.LHS, Ops.RHS, "rem");
   else
@@ -1640,56 +1544,21 @@ Value *ScalarExprEmitter::EmitOverflowCheckedBinOp(const BinOpInfo &Ops) {
   Value *overflow = Builder.CreateExtractValue(resultAndOverflow, 1);
 
   // Branch in case of overflow.
-  llvm::BasicBlock *initialBB = Builder.GetInsertBlock();
   llvm::BasicBlock *overflowBB = CGF.createBasicBlock("overflow", CGF.CurFn);
   llvm::BasicBlock *continueBB = CGF.createBasicBlock("nooverflow", CGF.CurFn);
 
   Builder.CreateCondBr(overflow, overflowBB, continueBB);
 
   // Handle overflow with llvm.trap.
-  const std::string *handlerName = 
-    &CGF.getContext().getLangOptions().OverflowHandler;
-  if (handlerName->empty()) {
-    EmitOverflowBB(overflowBB);
-    Builder.SetInsertPoint(continueBB);
-    return result;
-  }
-
-  // If an overflow handler is set, then we want to call it and then use its
-  // result, if it returns.
+  // TODO: it would be better to generate one of these blocks per function.
   Builder.SetInsertPoint(overflowBB);
-
-  // Get the overflow handler.
-  const llvm::Type *Int8Ty = llvm::Type::getInt8Ty(VMContext);
-  std::vector<const llvm::Type*> argTypes;
-  argTypes.push_back(CGF.Int64Ty); argTypes.push_back(CGF.Int64Ty);
-  argTypes.push_back(Int8Ty); argTypes.push_back(Int8Ty);
-  llvm::FunctionType *handlerTy =
-      llvm::FunctionType::get(CGF.Int64Ty, argTypes, true);
-  llvm::Value *handler = CGF.CGM.CreateRuntimeFunction(handlerTy, *handlerName);
-
-  // Sign extend the args to 64-bit, so that we can use the same handler for
-  // all types of overflow.
-  llvm::Value *lhs = Builder.CreateSExt(Ops.LHS, CGF.Int64Ty);
-  llvm::Value *rhs = Builder.CreateSExt(Ops.RHS, CGF.Int64Ty);
-
-  // Call the handler with the two arguments, the operation, and the size of
-  // the result.
-  llvm::Value *handlerResult = Builder.CreateCall4(handler, lhs, rhs,
-      Builder.getInt8(OpID),
-      Builder.getInt8(cast<llvm::IntegerType>(opTy)->getBitWidth()));
-
-  // Truncate the result back to the desired size.
-  handlerResult = Builder.CreateTrunc(handlerResult, opTy);
-  Builder.CreateBr(continueBB);
-
+  llvm::Function *Trap = CGF.CGM.getIntrinsic(llvm::Intrinsic::trap);
+  Builder.CreateCall(Trap);
+  Builder.CreateUnreachable();
+  
+  // Continue on.
   Builder.SetInsertPoint(continueBB);
-  llvm::PHINode *phi = Builder.CreatePHI(opTy);
-  phi->reserveOperandSpace(2);
-  phi->addIncoming(result, initialBB);
-  phi->addIncoming(handlerResult, overflowBB);
-
-  return phi;
+  return result;
 }
 
 Value *ScalarExprEmitter::EmitAdd(const BinOpInfo &Ops) {
@@ -2182,52 +2051,7 @@ VisitConditionalOperator(const ConditionalOperator *E) {
       return Visit(Live);
   }
 
-  // OpenCL: If the condition is a vector, we can treat this condition like
-  // the select function.
-  if (CGF.getContext().getLangOptions().OpenCL 
-      && E->getCond()->getType()->isVectorType()) {
-    llvm::Value *CondV = CGF.EmitScalarExpr(E->getCond());
-    llvm::Value *LHS = Visit(E->getLHS());
-    llvm::Value *RHS = Visit(E->getRHS());
-    
-    const llvm::Type *condType = ConvertType(E->getCond()->getType());
-    const llvm::VectorType *vecTy = cast<llvm::VectorType>(condType);
-    
-    unsigned numElem = vecTy->getNumElements();      
-    const llvm::Type *elemType = vecTy->getElementType();
-    
-    std::vector<llvm::Constant*> Zvals;
-    for (unsigned i = 0; i < numElem; ++i)
-      Zvals.push_back(llvm::ConstantInt::get(elemType,0));
 
-    llvm::Value *zeroVec = llvm::ConstantVector::get(Zvals);    
-    llvm::Value *TestMSB = Builder.CreateICmpSLT(CondV, zeroVec);
-    llvm::Value *tmp = Builder.CreateSExt(TestMSB, 
-                                          llvm::VectorType::get(elemType,
-                                                                numElem),         
-                                          "sext");
-    llvm::Value *tmp2 = Builder.CreateNot(tmp);
-    
-    // Cast float to int to perform ANDs if necessary.
-    llvm::Value *RHSTmp = RHS;
-    llvm::Value *LHSTmp = LHS;
-    bool wasCast = false;
-    const llvm::VectorType *rhsVTy = cast<llvm::VectorType>(RHS->getType());
-    if (rhsVTy->getElementType()->isFloatTy()) {
-      RHSTmp = Builder.CreateBitCast(RHS, tmp2->getType());
-      LHSTmp = Builder.CreateBitCast(LHS, tmp->getType());
-      wasCast = true;
-    }
-    
-    llvm::Value *tmp3 = Builder.CreateAnd(RHSTmp, tmp2);
-    llvm::Value *tmp4 = Builder.CreateAnd(LHSTmp, tmp);
-    llvm::Value *tmp5 = Builder.CreateOr(tmp3, tmp4, "cond");
-    if (wasCast)
-      tmp5 = Builder.CreateBitCast(tmp5, RHS->getType());
-
-    return tmp5;
-  }
-  
   // If this is a really simple expression (like x ? 4 : 5), emit this as a
   // select instead of as control flow.  We can only do this if it is cheap and
   // safe to evaluate the LHS and RHS unconditionally.
@@ -2240,10 +2064,17 @@ VisitConditionalOperator(const ConditionalOperator *E) {
     return Builder.CreateSelect(CondV, LHS, RHS, "cond");
   }
 
+  if (!E->getLHS() && CGF.getContext().getLangOptions().CPlusPlus) {
+    // Does not support GNU missing condition extension in C++ yet (see #7726)
+    CGF.ErrorUnsupported(E, "conditional operator with missing LHS");
+    return llvm::UndefValue::get(ConvertType(E->getType()));
+  }
+  
   llvm::BasicBlock *LHSBlock = CGF.createBasicBlock("cond.true");
   llvm::BasicBlock *RHSBlock = CGF.createBasicBlock("cond.false");
   llvm::BasicBlock *ContBlock = CGF.createBasicBlock("cond.end");
-  
+  Value *CondVal = 0;
+
   // If we don't have the GNU missing condition extension, emit a branch on bool
   // the normal way.
   if (E->getLHS()) {
@@ -2254,12 +2085,8 @@ VisitConditionalOperator(const ConditionalOperator *E) {
     // Otherwise, for the ?: extension, evaluate the conditional and then
     // convert it to bool the hard way.  We do this explicitly because we need
     // the unconverted value for the missing middle value of the ?:.
-    Expr *save = E->getSAVE();
-    assert(save && "VisitConditionalOperator - save is null");
-    // Intentianlly not doing direct assignment to ConditionalSaveExprs[save] !!
-    Value *SaveVal = CGF.EmitScalarExpr(save);
-    CGF.ConditionalSaveExprs[save] = SaveVal;
-    Value *CondVal = Visit(E->getCond());
+    CondVal = CGF.EmitScalarExpr(E->getCond());
+
     // In some cases, EmitScalarConversion will delete the "CondVal" expression
     // if there are no extra uses (an optimization).  Inhibit this by making an
     // extra dead use, because we're going to add a use of CondVal later.  We
@@ -2278,7 +2105,11 @@ VisitConditionalOperator(const ConditionalOperator *E) {
   CGF.EmitBlock(LHSBlock);
 
   // Handle the GNU extension for missing LHS.
-  Value *LHS = Visit(E->getTrueExpr());
+  Value *LHS;
+  if (E->getLHS())
+    LHS = Visit(E->getLHS());
+  else    // Perform promotions, to handle cases like "short ?: int"
+    LHS = EmitScalarConversion(CondVal, E->getCond()->getType(), E->getType());
 
   CGF.EndConditionalBranch();
   LHSBlock = Builder.GetInsertBlock();

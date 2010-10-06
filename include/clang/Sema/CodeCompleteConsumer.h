@@ -49,20 +49,17 @@ enum {
   CCP_CodePattern = 30,
   /// \brief Priority for a non-type declaration.
   CCP_Declaration = 50,
-  /// \brief Priority for a type.
-  CCP_Type = CCP_Declaration,
   /// \brief Priority for a constant value (e.g., enumerator).
-  CCP_Constant = 65,
+  CCP_Constant = 60,
+  /// \brief Priority for a type.
+  CCP_Type = 65,
   /// \brief Priority for a preprocessor macro.
   CCP_Macro = 70,
   /// \brief Priority for a nested-name-specifier.
   CCP_NestedNameSpecifier = 75,
   /// \brief Priority for a result that isn't likely to be what the user wants,
   /// but is included for completeness.
-  CCP_Unlikely = 80,
-  
-  /// \brief Priority for the Objective-C "_cmd" implicit parameter.
-  CCP_ObjC_cmd = CCP_Unlikely
+  CCP_Unlikely = 80
 };
 
 /// \brief Priority value deltas that are added to code-completion results
@@ -70,17 +67,18 @@ enum {
 enum {
   /// \brief The result is in a base class.
   CCD_InBaseClass = 2,
+  /// \brief The result is a type match against void.
+  ///
+  /// Since everything converts to "void", we don't give as drastic an 
+  /// adjustment for matching void.
+  CCD_VoidMatch = -5,
   /// \brief The result is a C++ non-static member function whose qualifiers
   /// exactly match the object type on which the member function can be called.
   CCD_ObjectQualifierMatch = -1,
   /// \brief The selector of the given message exactly matches the selector
   /// of the current method, which might imply that some kind of delegation
   /// is occurring.
-  CCD_SelectorMatch = -3,
-  
-  /// \brief Adjustment to the "bool" type in Objective-C, where the typedef
-  /// "BOOL" is preferred.
-  CCD_bool_in_ObjC = 1
+  CCD_SelectorMatch = -3
 };
 
 /// \brief Priority value factors by which we will divide or multiply the
@@ -121,12 +119,9 @@ QualType getDeclUsageType(ASTContext &C, NamedDecl *ND);
 ///
 /// \param MacroName The name of the macro.
 ///
-/// \param LangOpts Options describing the current language dialect.
-///
 /// \param PreferredTypeIsPointer Whether the preferred type for the context
 /// of this macro is a pointer type.
 unsigned getMacroUsagePriority(llvm::StringRef MacroName, 
-                               const LangOptions &LangOpts,
                                bool PreferredTypeIsPointer = false);
 
 /// \brief Determine the libclang cursor kind associated with the given
@@ -146,7 +141,7 @@ class Sema;
 class CodeCompletionContext {
 public:
   enum Kind {
-    /// \brief An unspecified code-completion context, where the 
+    /// \brief An unspecified code-completion context.
     CCC_Other,
     /// \brief Code completion occurred within a "top-level" completion context,
     /// e.g., at namespace or global scope.
@@ -217,13 +212,7 @@ public:
     /// \brief Code completion for a selector, as in an @selector expression.
     CCC_SelectorName,
     /// \brief Code completion within a type-qualifier list.
-    CCC_TypeQualifiers,
-    /// \brief Code completion in a parenthesized expression, which means that
-    /// we may also have types here in C and Objective-C (as well as in C++).
-    CCC_ParenthesizedExpression,
-    /// \brief An unknown context, in which we are recovering from a parsing 
-    /// error and don't know which completions we should give.
-    CCC_Recovery
+    CCC_TypeQualifiers
   };
 
 private:
@@ -259,10 +248,6 @@ public:
   /// \brief Retrieve the type of the base object in a member-access 
   /// expression.
   QualType getBaseType() const { return BaseType; }
-
-  /// \brief Determines whether we want C++ constructors as results within this
-  /// context.
-  bool wantConstructorResults() const;
 };
 
 
@@ -613,7 +598,7 @@ public:
     
   void Destroy();
     
-  /// \brief Determine a base priority for the given declaration.
+  /// brief Determine a base priority for the given declaration.
   static unsigned getPriorityFromDecl(NamedDecl *ND);
     
 private:

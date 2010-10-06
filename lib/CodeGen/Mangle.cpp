@@ -1333,7 +1333,7 @@ void CXXNameMangler::mangleType(const DependentSizedArrayType *T) {
   mangleType(T->getElementType());
 }
 void CXXNameMangler::mangleType(const IncompleteArrayType *T) {
-  Out << "A_";
+  Out << 'A' << '_';
   mangleType(T->getElementType());
 }
 
@@ -1617,9 +1617,7 @@ void CXXNameMangler::mangleExpression(const Expr *E, unsigned Arity) {
   case Expr::StmtExprClass:
   case Expr::TypesCompatibleExprClass:
   case Expr::UnaryTypeTraitExprClass:
-  case Expr::VAArgExprClass:
-  case Expr::CXXUuidofExprClass:
-  case Expr::CXXNoexceptExprClass: {
+  case Expr::VAArgExprClass: {
     // As bad as this diagnostic is, it's better than crashing.
     Diagnostic &Diags = Context.getDiags();
     unsigned DiagID = Diags.getCustomDiagID(Diagnostic::Error,
@@ -1949,7 +1947,7 @@ void CXXNameMangler::mangleExpression(const Expr *E, unsigned Arity) {
   case Expr::ImaginaryLiteralClass: {
     const ImaginaryLiteral *IE = cast<ImaginaryLiteral>(E);
     // Mangle as if a complex literal.
-    // Proposal from David Vandevoorde, 2010.06.30.
+    // Proposal from David Vandervoorde, 2010.06.30.
     Out << 'L';
     mangleType(E->getType());
     if (const FloatingLiteral *Imag =
@@ -1959,7 +1957,7 @@ void CXXNameMangler::mangleExpression(const Expr *E, unsigned Arity) {
       Out << '_';
       mangleFloat(Imag->getValue());
     } else {
-      Out << "0_";
+      Out << '0' << '_';
       llvm::APSInt Value(cast<IntegerLiteral>(IE->getSubExpr())->getValue());
       if (IE->getSubExpr()->getType()->isSignedIntegerType())
         Value.setIsSigned(true);
@@ -2453,8 +2451,8 @@ MangleContext::mangleCXXDtorThunk(const CXXDestructorDecl *DD, CXXDtorType Type,
 
 /// mangleGuardVariable - Returns the mangled name for a guard variable
 /// for the passed in VarDecl.
-void MangleContext::mangleItaniumGuardVariable(const VarDecl *D,
-                                         llvm::SmallVectorImpl<char> &Res) {
+void MangleContext::mangleGuardVariable(const VarDecl *D,
+                                        llvm::SmallVectorImpl<char> &Res) {
   //  <special-name> ::= GV <object name>       # Guard variable for one-time
   //                                            # initialization
   CXXNameMangler Mangler(*this, Res);

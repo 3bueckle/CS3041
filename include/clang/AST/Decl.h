@@ -928,9 +928,7 @@ class ImplicitParamDecl : public VarDecl {
 protected:
   ImplicitParamDecl(Kind DK, DeclContext *DC, SourceLocation L,
                     IdentifierInfo *Id, QualType Tw)
-    : VarDecl(DK, DC, L, Id, Tw, /*TInfo=*/0, SC_None, SC_None) {
-    setImplicit();
-  }
+    : VarDecl(DK, DC, L, Id, Tw, /*TInfo=*/0, SC_None, SC_None) {}
 public:
   static ImplicitParamDecl *Create(ASTContext &C, DeclContext *DC,
                                    SourceLocation L, IdentifierInfo *Id,
@@ -1104,6 +1102,7 @@ private:
   bool HasWrittenPrototype : 1;
   bool IsDeleted : 1;
   bool IsTrivial : 1; // sunk from CXXMethodDecl
+  bool IsCopyAssignment : 1;  // sunk from CXXMethodDecl
   bool HasImplicitReturnZero : 1;
 
   /// \brief End part of this FunctionDecl's source range.
@@ -1137,42 +1136,6 @@ private:
   /// declaration name embedded in the DeclaratorDecl base class.
   DeclarationNameLoc DNLoc;
 
-  /// \brief Specify that this function declaration is actually a function
-  /// template specialization.
-  ///
-  /// \param C the ASTContext.
-  ///
-  /// \param Template the function template that this function template
-  /// specialization specializes.
-  ///
-  /// \param TemplateArgs the template arguments that produced this
-  /// function template specialization from the template.
-  ///
-  /// \param InsertPos If non-NULL, the position in the function template
-  /// specialization set where the function template specialization data will
-  /// be inserted.
-  ///
-  /// \param TSK the kind of template specialization this is.
-  ///
-  /// \param TemplateArgsAsWritten location info of template arguments.
-  ///
-  /// \param PointOfInstantiation point at which the function template
-  /// specialization was first instantiated. 
-  void setFunctionTemplateSpecialization(ASTContext &C,
-                                         FunctionTemplateDecl *Template,
-                                       const TemplateArgumentList *TemplateArgs,
-                                         void *InsertPos,
-                                         TemplateSpecializationKind TSK,
-                          const TemplateArgumentListInfo *TemplateArgsAsWritten,
-                                         SourceLocation PointOfInstantiation);
-
-  /// \brief Specify that this record is an instantiation of the
-  /// member function FD.
-  void setInstantiationOfMemberFunction(ASTContext &C, FunctionDecl *FD,
-                                        TemplateSpecializationKind TSK);
-
-  void setParams(ASTContext &C, ParmVarDecl **NewParamInfo, unsigned NumParams);
-
 protected:
   FunctionDecl(Kind DK, DeclContext *DC, const DeclarationNameInfo &NameInfo,
                QualType T, TypeSourceInfo *TInfo,
@@ -1183,6 +1146,7 @@ protected:
       SClass(S), SClassAsWritten(SCAsWritten), IsInline(isInline),
       IsVirtualAsWritten(false), IsPure(false), HasInheritedPrototype(false),
       HasWrittenPrototype(true), IsDeleted(false), IsTrivial(false),
+      IsCopyAssignment(false),
       HasImplicitReturnZero(false),
       EndRangeLoc(NameInfo.getEndLoc()),
       TemplateOrSpecialization(),
@@ -1282,7 +1246,7 @@ public:
   /// Whether this virtual function is pure, i.e. makes the containing class
   /// abstract.
   bool isPure() const { return IsPure; }
-  void setPure(bool P = true);
+  void setPure(bool P = true) { IsPure = P; }
 
   /// Whether this function is "trivial" in some specialized C++ senses.
   /// Can only be true for default constructors, copy constructors,
@@ -1290,6 +1254,9 @@ public:
   /// the class has been fully built by Sema.
   bool isTrivial() const { return IsTrivial; }
   void setTrivial(bool IT) { IsTrivial = IT; }
+
+  bool isCopyAssignment() const { return IsCopyAssignment; }
+  void setCopyAssignment(bool CA) { IsCopyAssignment = CA; }
 
   /// Whether falling off this function implicitly returns null/zero.
   /// If a more specific implicit return value is required, front-ends
@@ -1376,9 +1343,7 @@ public:
     assert(i < getNumParams() && "Illegal param #");
     return ParamInfo[i];
   }
-  void setParams(ParmVarDecl **NewParamInfo, unsigned NumParams) {
-    setParams(getASTContext(), NewParamInfo, NumParams);
-  }
+  void setParams(ParmVarDecl **NewParamInfo, unsigned NumParams);
 
   /// getMinRequiredArguments - Returns the minimum number of arguments
   /// needed to call this function. This may be fewer than the number of
@@ -1467,9 +1432,7 @@ public:
   /// \brief Specify that this record is an instantiation of the
   /// member function FD.
   void setInstantiationOfMemberFunction(FunctionDecl *FD,
-                                        TemplateSpecializationKind TSK) {
-    setInstantiationOfMemberFunction(getASTContext(), FD, TSK);
-  }
+                                        TemplateSpecializationKind TSK);
 
   /// \brief Retrieves the function template that is described by this
   /// function declaration.
@@ -1563,11 +1526,43 @@ public:
                                          void *InsertPos,
                     TemplateSpecializationKind TSK = TSK_ImplicitInstantiation,
                     const TemplateArgumentListInfo *TemplateArgsAsWritten = 0,
-                    SourceLocation PointOfInstantiation = SourceLocation()) {
-    setFunctionTemplateSpecialization(getASTContext(), Template, TemplateArgs,
-                                      InsertPos, TSK, TemplateArgsAsWritten,
-                                      PointOfInstantiation);
-  }
+                    SourceLocation PointOfInstantiation = SourceLocation());
+
+  /// \brief Specify that this function declaration is actually a function
+  /// template specialization.
+  ///
+  /// \param Template the function template that this function template
+  /// specialization specializes.
+  ///
+  /// \param NumTemplateArgs number of template arguments that produced this
+  /// function template specialization from the template.
+  ///
+  /// \param TemplateArgs array of template arguments that produced this
+  /// function template specialization from the template.
+  ///
+  /// \param TSK the kind of template specialization this is.
+  ///
+  /// \param NumTemplateArgsAsWritten number of template arguments that produced
+  /// this function template specialization from the template.
+  ///
+  /// \param TemplateArgsAsWritten array of location info for the template
+  /// arguments.
+  ///
+  /// \param LAngleLoc location of left angle token.
+  ///
+  /// \param RAngleLoc location of right angle token.
+  ///
+  /// \param PointOfInstantiation point at which the function template
+  /// specialization was first instantiated. 
+  void setFunctionTemplateSpecialization(FunctionTemplateDecl *Template,
+                                         unsigned NumTemplateArgs,
+                                         const TemplateArgument *TemplateArgs,
+                                         TemplateSpecializationKind TSK,
+                                         unsigned NumTemplateArgsAsWritten,
+                                     TemplateArgumentLoc *TemplateArgsAsWritten,
+                                          SourceLocation LAngleLoc,
+                                          SourceLocation RAngleLoc,
+                                          SourceLocation PointOfInstantiation);
 
   /// \brief Specifies that this function declaration is actually a
   /// dependent function template specialization.
@@ -1864,11 +1859,6 @@ protected:
   typedef Redeclarable<TagDecl> redeclarable_base;
   virtual TagDecl *getNextRedeclaration() { return RedeclLink.getNext(); }
 
-  /// @brief Completes the definition of this tag declaration.
-  ///
-  /// This is a helper function for derived classes.
-  void completeDefinition();    
-    
 public:
   typedef redeclarable_base::redecl_iterator redecl_iterator;
   redecl_iterator redecls_begin() const {
@@ -1932,6 +1922,9 @@ public:
   /// of this tag declaration. It will set the tag type into a state
   /// where it is in the process of being defined.
   void startDefinition();
+
+  /// @brief Completes the definition of this tag declaration.
+  void completeDefinition();
 
   /// getDefinition - Returns the TagDecl that actually defines this
   ///  struct/union/class/enum.  When determining whether or not a
@@ -2251,7 +2244,7 @@ public:
 
   /// completeDefinition - Notes that the definition of this type is
   /// now complete.
-  virtual void completeDefinition();
+  void completeDefinition();
 
   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
   static bool classof(const RecordDecl *D) { return true; }

@@ -418,25 +418,18 @@ SourceLocation Decl::getBodyRBrace() const {
 
 #ifndef NDEBUG
 void Decl::CheckAccessDeclContext() const {
+  // FIXME: Disable this until rdar://8146294 "access specifier for inner class
+  // templates is not set or checked" is fixed.
+  return;
   // Suppress this check if any of the following hold:
   // 1. this is the translation unit (and thus has no parent)
   // 2. this is a template parameter (and thus doesn't belong to its context)
-  // 3. this is a non-type template parameter
-  // 4. the context is not a record
-  // 5. it's invalid
-  // 6. it's a C++0x static_assert.
+  // 3. the context is not a record
+  // 4. it's invalid
   if (isa<TranslationUnitDecl>(this) ||
       isa<TemplateTypeParmDecl>(this) ||
-      isa<NonTypeTemplateParmDecl>(this) ||
       !isa<CXXRecordDecl>(getDeclContext()) ||
-      isInvalidDecl() ||
-      isa<StaticAssertDecl>(this) ||
-      // FIXME: a ParmVarDecl can have ClassTemplateSpecialization
-      // as DeclContext (?).
-      isa<ParmVarDecl>(this) ||
-      // FIXME: a ClassTemplateSpecialization or CXXRecordDecl can have
-      // AS_none as access specifier.
-      isa<CXXRecordDecl>(this))
+      isInvalidDecl())
     return;
 
   assert(Access != AS_none &&
@@ -778,11 +771,6 @@ void DeclContext::addHiddenDecl(Decl *D) {
   } else {
     FirstDecl = LastDecl = D;
   }
-
-  // Notify a C++ record declaration that we've added a member, so it can
-  // update it's class-specific state.
-  if (CXXRecordDecl *Record = dyn_cast<CXXRecordDecl>(this))
-    Record->addedMember(D);
 }
 
 void DeclContext::addDecl(Decl *D) {

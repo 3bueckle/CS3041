@@ -110,8 +110,6 @@ void CodeGenModule::Release() {
   EmitAnnotations();
   EmitLLVMUsed();
 
-  SimplifyPersonality();
-
   if (getCodeGenOpts().EmitDeclMetadata)
     EmitDeclMetadata();
 }
@@ -456,9 +454,6 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
 
   if (D->hasAttr<AlwaysInlineAttr>())
     F->addFnAttr(llvm::Attribute::AlwaysInline);
-
-  if (D->hasAttr<NakedAttr>())
-    F->addFnAttr(llvm::Attribute::Naked);
 
   if (D->hasAttr<NoInlineAttr>())
     F->addFnAttr(llvm::Attribute::NoInline);
@@ -870,7 +865,7 @@ CodeGenModule::GetOrCreateLLVMFunction(llvm::StringRef MangledName,
         DeferredDeclsToEmit.push_back(D);
       }
     } else if (const CXXMethodDecl *MD = dyn_cast<CXXMethodDecl>(FD)) {
-      if (MD->isImplicit() && MD->isCopyAssignmentOperator()) {
+      if (MD->isCopyAssignment() && MD->isImplicit()) {
         assert(MD->isUsed() && "Sema doesn't consider CopyAssignment as used.");
         DeferredDeclsToEmit.push_back(D);
       }
@@ -1499,9 +1494,18 @@ GetConstantCFStringEntry(llvm::StringMap<llvm::Constant*> &Map,
   const UTF8 *FromPtr = (UTF8 *)String.data();
   UTF16 *ToPtr = &ToBuf[0];
 
-  (void)ConvertUTF8toUTF16(&FromPtr, FromPtr + NumBytes,
-                           &ToPtr, ToPtr + NumBytes,
-                           strictConversion);
+  ConversionResult Result = ConvertUTF8toUTF16(&FromPtr, FromPtr + NumBytes,
+                                               &ToPtr, ToPtr + NumBytes,
+                                               strictConversion);
+
+  // Check for conversion failure.
+  if (Result != conversionOK) {
+    // FIXME: Have Sema::CheckObjCString() validate the UTF-8 string and remove
+    // this duplicate code.
+    assert(Result == sourceIllegal && "UTF-8 to UTF-16 conversion failed");
+    StringLength = NumBytes;
+    return Map.GetOrCreateValue(String);
+  }
 
   // ConvertUTF8toUTF16 returns the length in ToPtr.
   StringLength = ToPtr - &ToBuf[0];

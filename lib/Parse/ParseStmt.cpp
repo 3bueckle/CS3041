@@ -75,7 +75,7 @@ using namespace clang;
 /// [OBC]   '@' 'throw' ';'
 ///
 StmtResult
-Parser::ParseStatementOrDeclaration(StmtVector &Stmts, bool OnlyStatement) {
+Parser::ParseStatementOrDeclaration(bool OnlyStatement) {
   const char *SemiError = 0;
   StmtResult Res;
   
@@ -101,7 +101,7 @@ Parser::ParseStatementOrDeclaration(StmtVector &Stmts, bool OnlyStatement) {
   case tok::code_completion:
     Actions.CodeCompleteOrdinaryName(getCurScope(), Sema::PCC_Statement);
     ConsumeCodeCompletionToken();
-    return ParseStatementOrDeclaration(Stmts, OnlyStatement);
+    return ParseStatementOrDeclaration(OnlyStatement);
       
   case tok::identifier:
     if (NextToken().is(tok::colon)) { // C99 6.8.1: labeled-statement
@@ -114,7 +114,7 @@ Parser::ParseStatementOrDeclaration(StmtVector &Stmts, bool OnlyStatement) {
     if ((getLang().CPlusPlus || !OnlyStatement) && isDeclarationStatement()) {
       SourceLocation DeclStart = Tok.getLocation(), DeclEnd;
       AttrList.take(); //Passing 'Attr' to ParseDeclaration transfers ownership.
-      DeclGroupPtrTy Decl = ParseDeclaration(Stmts, Declarator::BlockContext, DeclEnd,
+      DeclGroupPtrTy Decl = ParseDeclaration(Declarator::BlockContext, DeclEnd,
                                              Attr);
       return Actions.ActOnDeclStmt(Decl, DeclStart, DeclEnd);
     }
@@ -137,7 +137,7 @@ Parser::ParseStatementOrDeclaration(StmtVector &Stmts, bool OnlyStatement) {
       return StmtError();
     }
     // Otherwise, eat the semicolon.
-    ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);
+    ExpectAndConsume(tok::semi, diag::err_expected_semi_after_expr);
     return Actions.ActOnExprStmt(Actions.MakeFullExpr(Expr.get()));
   }
 
@@ -241,9 +241,10 @@ StmtResult Parser::ParseLabeledStatement(AttributeList *Attr) {
   if (SubStmt.isInvalid())
     SubStmt = Actions.ActOnNullStmt(ColonLoc);
 
+  // FIXME: use attributes?
   return Actions.ActOnLabelStmt(IdentTok.getLocation(),
                                 IdentTok.getIdentifierInfo(),
-                                ColonLoc, SubStmt.get(), AttrList.take());
+                                ColonLoc, SubStmt.get());
 }
 
 /// ParseCaseStatement
@@ -459,18 +460,18 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
   PrettyStackTraceLoc CrashInfo(PP.getSourceManager(),
                                 Tok.getLocation(),
                                 "in compound statement ('{}')");
-  InMessageExpressionRAIIObject InMessage(*this, false);
-  
+
   SourceLocation LBraceLoc = ConsumeBrace();  // eat the '{'.
 
   // TODO: "__label__ X, Y, Z;" is the GNU "Local Label" extension.  These are
   // only allowed at the start of a compound stmt regardless of the language.
 
-  StmtVector Stmts(Actions);
+  typedef StmtVector StmtsTy;
+  StmtsTy Stmts(Actions);
   while (Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof)) {
     StmtResult R;
     if (Tok.isNot(tok::kw___extension__)) {
-      R = ParseStatementOrDeclaration(Stmts, false);
+      R = ParseStatementOrDeclaration(false);
     } else {
       // __extension__ can start declarations and it can also be a unary
       // operator for expressions.  Consume multiple __extension__ markers here
@@ -491,8 +492,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
         ExtensionRAIIObject O(Diags);
 
         SourceLocation DeclStart = Tok.getLocation(), DeclEnd;
-        DeclGroupPtrTy Res = ParseDeclaration(Stmts,
-                                              Declarator::BlockContext, DeclEnd,
+        DeclGroupPtrTy Res = ParseDeclaration(Declarator::BlockContext, DeclEnd,
                                               Attr);
         R = Actions.ActOnDeclStmt(Res, DeclStart, DeclEnd);
       } else {
@@ -507,7 +507,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
         // FIXME: Use attributes?
         // Eat the semicolon at the end of stmt and convert the expr into a
         // statement.
-        ExpectAndConsumeSemi(diag::err_expected_semi_after_expr);
+        ExpectAndConsume(tok::semi, diag::err_expected_semi_after_expr);
         R = Actions.ActOnExprStmt(Actions.MakeFullExpr(Res.get()));
       }
     }
@@ -1015,9 +1015,8 @@ StmtResult Parser::ParseForStatement(AttributeList *Attr) {
       AttrList = ParseCXX0XAttributes().AttrList;
 
     SourceLocation DeclStart = Tok.getLocation(), DeclEnd;
-    StmtVector Stmts(Actions);
-    DeclGroupPtrTy DG = ParseSimpleDeclaration(Stmts, Declarator::ForContext, 
-                                               DeclEnd, AttrList, false);
+    DeclGroupPtrTy DG = ParseSimpleDeclaration(Declarator::ForContext, DeclEnd,
+                                               AttrList, false);
     FirstPart = Actions.ActOnDeclStmt(DG, DeclStart, Tok.getLocation());
 
     if (Tok.is(tok::semi)) {  // for (int x = 4;

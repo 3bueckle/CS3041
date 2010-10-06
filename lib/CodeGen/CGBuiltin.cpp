@@ -35,7 +35,7 @@ static void EmitMemoryBarrier(CodeGenFunction &CGF,
   Value *C[5] = { LoadLoad ? True : False,
                   LoadStore ? True : False,
                   StoreLoad ? True : False,
-                  StoreStore ? True : False,
+                  StoreStore  ? True : False,
                   Device ? True : False };
   CGF.Builder.CreateCall(CGF.CGM.getIntrinsic(Intrinsic::memory_barrier),
                          C, C + 5);
@@ -43,9 +43,9 @@ static void EmitMemoryBarrier(CodeGenFunction &CGF,
 
 static Value *EmitCastToInt(CodeGenFunction &CGF,
                             const llvm::Type *ToType, Value *Val) {
-  if (Val->getType()->isPointerTy())
+  if (Val->getType()->isPointerTy()) {
     return CGF.Builder.CreatePtrToInt(Val, ToType);
-
+  }
   assert(Val->getType()->isIntegerTy() &&
          "Used a non-integer and non-pointer type with atomic builtin");
   assert(Val->getType()->getScalarSizeInBits() <=
@@ -85,17 +85,15 @@ static Value *EmitCallWithBarrier(CodeGenFunction &CGF, Value *Fn,
 /// and the expression node.
 static RValue EmitBinaryAtomic(CodeGenFunction &CGF,
                                Intrinsic::ID Id, const CallExpr *E) {
-  llvm::Value *DestPtr = CGF.EmitScalarExpr(E->getArg(0));
-  unsigned AddrSpace =
-    cast<llvm::PointerType>(DestPtr->getType())->getAddressSpace();
   const llvm::Type *ValueType =
     llvm::IntegerType::get(CGF.getLLVMContext(),
                            CGF.getContext().getTypeSize(E->getType()));
-  const llvm::Type *PtrType = ValueType->getPointerTo(AddrSpace);
+  const llvm::Type *PtrType = ValueType->getPointerTo();
   const llvm::Type *IntrinsicTypes[2] = { ValueType, PtrType };
   Value *AtomF = CGF.CGM.getIntrinsic(Id, IntrinsicTypes, 2);
 
-  Value *Args[2] = { CGF.Builder.CreateBitCast(DestPtr, PtrType),
+  Value *Args[2] = { CGF.Builder.CreateBitCast(CGF.EmitScalarExpr(E->getArg(0)),
+                                               PtrType),
                      EmitCastToInt(CGF, ValueType,
                                    CGF.EmitScalarExpr(E->getArg(1))) };
   return RValue::get(EmitCastFromInt(CGF, E->getType(),
@@ -109,18 +107,15 @@ static RValue EmitBinaryAtomic(CodeGenFunction &CGF,
 static RValue EmitBinaryAtomicPost(CodeGenFunction &CGF,
                                    Intrinsic::ID Id, const CallExpr *E,
                                    Instruction::BinaryOps Op) {
-  llvm::Value *DestPtr = CGF.EmitScalarExpr(E->getArg(0));
-  unsigned AddrSpace =
-    cast<llvm::PointerType>(DestPtr->getType())->getAddressSpace();
-  
   const llvm::Type *ValueType =
     llvm::IntegerType::get(CGF.getLLVMContext(),
                            CGF.getContext().getTypeSize(E->getType()));
-  const llvm::Type *PtrType = ValueType->getPointerTo(AddrSpace);
+  const llvm::Type *PtrType = ValueType->getPointerTo();
   const llvm::Type *IntrinsicTypes[2] = { ValueType, PtrType };
   Value *AtomF = CGF.CGM.getIntrinsic(Id, IntrinsicTypes, 2);
 
-  Value *Args[2] = { CGF.Builder.CreateBitCast(DestPtr, PtrType),
+  Value *Args[2] = { CGF.Builder.CreateBitCast(CGF.EmitScalarExpr(E->getArg(0)),
+                                               PtrType),
                      EmitCastToInt(CGF, ValueType,
                                    CGF.EmitScalarExpr(E->getArg(1))) };
   Value *Result = EmitCallWithBarrier(CGF, AtomF, Args, Args + 2);
@@ -160,7 +155,7 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     if (Result.Val.isInt())
       return RValue::get(llvm::ConstantInt::get(VMContext,
                                                 Result.Val.getInt()));
-    if (Result.Val.isFloat())
+    else if (Result.Val.isFloat())
       return RValue::get(ConstantFP::get(VMContext, Result.Val.getFloat()));
   }
 
@@ -793,18 +788,16 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
   case Builtin::BI__sync_val_compare_and_swap_4:
   case Builtin::BI__sync_val_compare_and_swap_8:
   case Builtin::BI__sync_val_compare_and_swap_16: {
-    llvm::Value *DestPtr = CGF.EmitScalarExpr(E->getArg(0));
-    unsigned AddrSpace =
-      cast<llvm::PointerType>(DestPtr->getType())->getAddressSpace();
     const llvm::Type *ValueType =
       llvm::IntegerType::get(CGF.getLLVMContext(),
                              CGF.getContext().getTypeSize(E->getType()));
-    const llvm::Type *PtrType = ValueType->getPointerTo(AddrSpace);
+    const llvm::Type *PtrType = ValueType->getPointerTo();
     const llvm::Type *IntrinsicTypes[2] = { ValueType, PtrType };
     Value *AtomF = CGM.getIntrinsic(Intrinsic::atomic_cmp_swap,
                                     IntrinsicTypes, 2);
 
-    Value *Args[3] = { Builder.CreateBitCast(DestPtr, PtrType),
+    Value *Args[3] = { Builder.CreateBitCast(CGF.EmitScalarExpr(E->getArg(0)),
+                                             PtrType),
                        EmitCastToInt(CGF, ValueType,
                                      CGF.EmitScalarExpr(E->getArg(1))),
                        EmitCastToInt(CGF, ValueType,
@@ -819,18 +812,17 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
   case Builtin::BI__sync_bool_compare_and_swap_4:
   case Builtin::BI__sync_bool_compare_and_swap_8:
   case Builtin::BI__sync_bool_compare_and_swap_16: {
-    llvm::Value *DestPtr = CGF.EmitScalarExpr(E->getArg(0));
-    unsigned AddrSpace =
-      cast<llvm::PointerType>(DestPtr->getType())->getAddressSpace();
     const llvm::Type *ValueType =
-      llvm::IntegerType::get(CGF.getLLVMContext(),
+      llvm::IntegerType::get(
+        CGF.getLLVMContext(),
         CGF.getContext().getTypeSize(E->getArg(1)->getType()));
-    const llvm::Type *PtrType = ValueType->getPointerTo(AddrSpace);
+    const llvm::Type *PtrType = ValueType->getPointerTo();
     const llvm::Type *IntrinsicTypes[2] = { ValueType, PtrType };
     Value *AtomF = CGM.getIntrinsic(Intrinsic::atomic_cmp_swap,
                                     IntrinsicTypes, 2);
 
-    Value *Args[3] = { Builder.CreateBitCast(DestPtr, PtrType),
+    Value *Args[3] = { Builder.CreateBitCast(CGF.EmitScalarExpr(E->getArg(0)),
+                                             PtrType),
                        EmitCastToInt(CGF, ValueType,
                                      CGF.EmitScalarExpr(E->getArg(1))),
                        EmitCastToInt(CGF, ValueType,
@@ -943,30 +935,11 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
   if (IntrinsicID != Intrinsic::not_intrinsic) {
     SmallVector<Value*, 16> Args;
 
-    // Find out if any arguments are required to be integer constant
-    // expressions.
-    unsigned ICEArguments = 0;
-    ASTContext::GetBuiltinTypeError Error;
-    getContext().GetBuiltinType(BuiltinID, Error, &ICEArguments);
-    assert(Error == ASTContext::GE_None && "Should not codegen an error");
-
     Function *F = CGM.getIntrinsic(IntrinsicID);
     const llvm::FunctionType *FTy = F->getFunctionType();
 
     for (unsigned i = 0, e = E->getNumArgs(); i != e; ++i) {
-      Value *ArgValue;
-      // If this is a normal argument, just emit it as a scalar.
-      if ((ICEArguments & (1 << i)) == 0) {
-        ArgValue = EmitScalarExpr(E->getArg(i));
-      } else {
-        // If this is required to be a constant, constant fold it so that we 
-        // know that the generated intrinsic gets a ConstantInt.
-        llvm::APSInt Result;
-        bool IsConst = E->getArg(i)->isIntegerConstantExpr(Result,getContext());
-        assert(IsConst && "Constant arg isn't actually constant?");
-        (void)IsConst;
-        ArgValue = llvm::ConstantInt::get(VMContext, Result);
-      }
+      Value *ArgValue = EmitScalarExpr(E->getArg(i));
 
       // If the intrinsic arg type is different from the builtin arg type
       // we need to do a bit cast.
@@ -1893,26 +1866,8 @@ Value *CodeGenFunction::EmitX86BuiltinExpr(unsigned BuiltinID,
 
   llvm::SmallVector<Value*, 4> Ops;
 
-  // Find out if any arguments are required to be integer constant expressions.
-  unsigned ICEArguments = 0;
-  ASTContext::GetBuiltinTypeError Error;
-  getContext().GetBuiltinType(BuiltinID, Error, &ICEArguments);
-  assert(Error == ASTContext::GE_None && "Should not codegen an error");
-
-  for (unsigned i = 0, e = E->getNumArgs(); i != e; i++) {
-    // If this is a normal argument, just emit it as a scalar.
-    if ((ICEArguments & (1 << i)) == 0) {
-      Ops.push_back(EmitScalarExpr(E->getArg(i)));
-      continue;
-    }
-
-    // If this is required to be a constant, constant fold it so that we know
-    // that the generated intrinsic gets a ConstantInt.
-    llvm::APSInt Result;
-    bool IsConst = E->getArg(i)->isIntegerConstantExpr(Result, getContext());
-    assert(IsConst && "Constant arg isn't actually constant?"); (void)IsConst;
-    Ops.push_back(llvm::ConstantInt::get(VMContext, Result));
-  }
+  for (unsigned i = 0, e = E->getNumArgs(); i != e; i++)
+    Ops.push_back(EmitScalarExpr(E->getArg(i)));
 
   switch (BuiltinID) {
   default: return 0;

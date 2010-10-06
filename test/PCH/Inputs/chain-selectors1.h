@@ -10,7 +10,3 @@ void foo1() {
   //(void)@selector(x);
   (void)@selector(f);
 }
-
-@interface X (Blah)
-- (void)blah_method;
-@end

@@ -394,7 +394,7 @@ void rdar_7332673_test1() {
 int rdar_7332673_test2_aux(char *x);
 void rdar_7332673_test2() {
     char *value;
-    if ( rdar_7332673_test2_aux(value) != 1 ) {} // expected-warning{{Function call argument is an uninitialized value}}
+    if ( rdar_7332673_test2_aux(value) != 1 ) {} // expected-warning{{Pass-by-value argument in function call is undefined}}
 }
 
 //===----------------------------------------------------------------------===//
@@ -671,7 +671,7 @@ typedef void (^RDar_7462324_Callback)(id obj);
   builder = ^(id object) {
     id x;
     if (object) {
-      builder(x); // expected-warning{{Function call argument is an uninitialized value}}
+      builder(x); // expected-warning{{Pass-by-value argument in function call is undefined}}
     }
   };
   builder(target);
@@ -1103,18 +1103,16 @@ void pr8015_C() {
   }
 }
 
-// Tests that we correctly handle that 'number' is perfectly constrained
-// after 'if (nunber == 0)', allowing us to resolve that
-// numbers[number] == numbers[0].
+// FIXME: This is a false positive due to not reasoning about symbolic
+// array indices correctly.  Discussion in PR 8015.
 void pr8015_D_FIXME() {
   int number = pr8015_A();
   const char *numbers[] = { "zero" };
   if (number == 0) {
-    if (numbers[number] == numbers[0]) // expected-warning{{Both operands to '==' always have the same value}}
+    if (numbers[number] == numbers[0])
       return;
-    // Unreachable.
     int *p = 0;
-    *p = 0xDEADBEEF; // no-warnng
+    *p = 0xDEADBEEF; // expected-warning{{Dereference of null pointer}}
   }
 }
 
@@ -1141,45 +1139,4 @@ void pr8015_F_FIXME() {
     *q = 0xDEADBEEF; // expected-warning{{Dereference of null pointer}}
   }
 }
-
-// PR 8141.  Previously the statement expression in the for loop caused
-// the CFG builder to crash.
-struct list_pr8141
-{
-  struct list_pr8141 *tail;
-};
-
-struct list_pr8141 *
-pr8141 (void) {
-  struct list_pr8141 *items;
-  for (;; items = ({ do { } while (0); items->tail; })) // expected-warning{{Dereference of undefined pointer value}}
-    {
-    }
-}
-
-// <rdar://problem/8424269> - Handle looking at the size of a VLA in
-// ArrayBoundChecker.  Nothing intelligent (yet); just don't crash.
-typedef struct RDar8424269_A {
-  int RDar8424269_C;
-} RDar8424269_A;
-static void RDar8424269_B(RDar8424269_A *p, unsigned char *RDar8424269_D,
-                          const unsigned char *RDar8424269_E, int RDar8424269_F,
-    int b_w, int b_h, int dx, int dy) {
-  int x, y, b, r, l;
-  unsigned char tmp2t[3][RDar8424269_F * (32 + 8)];
-  unsigned char *tmp2 = tmp2t[0];
-  if (p && !p->RDar8424269_C)
-    b = 15;
-  tmp2 = tmp2t[1];
-  if (b & 2) { // expected-warning{{The left operand of '&' is a garbage value}}
-    for (y = 0; y < b_h; y++) {
-      for (x = 0; x < b_w + 1; x++) {
-        int am = 0;
-        tmp2[x] = am;
-      }
-    }
-  }
-  tmp2 = tmp2t[2];
-}
-
 

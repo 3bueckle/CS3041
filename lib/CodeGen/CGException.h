@@ -29,15 +29,15 @@ namespace CodeGen {
 
 /// The exceptions personality for a function.  When 
 class EHPersonality {
-  llvm::StringRef PersonalityFn;
+  const char *PersonalityFn;
 
   // If this is non-null, this personality requires a non-standard
   // function for rethrowing an exception after a catchall cleanup.
   // This function must have prototype void(void*).
-  llvm::StringRef CatchallRethrowFn;
+  const char *CatchallRethrowFn;
 
-  EHPersonality(llvm::StringRef PersonalityFn,
-                llvm::StringRef CatchallRethrowFn = llvm::StringRef())
+  EHPersonality(const char *PersonalityFn,
+                const char *CatchallRethrowFn = 0)
     : PersonalityFn(PersonalityFn),
       CatchallRethrowFn(CatchallRethrowFn) {}
 
@@ -49,8 +49,8 @@ public:
   static const EHPersonality GNU_CPlusPlus;
   static const EHPersonality GNU_CPlusPlus_SJLJ;
 
-  llvm::StringRef getPersonalityFnName() const { return PersonalityFn; }
-  llvm::StringRef getCatchallRethrowFnName() const { return CatchallRethrowFn; }
+  const char *getPersonalityFnName() const { return PersonalityFn; }
+  const char *getCatchallRethrowFnName() const { return CatchallRethrowFn; }
 };
 
 /// A protected scope for zero-cost EH handling.
@@ -160,14 +160,11 @@ class EHCleanupScope : public EHScope {
   /// Whether this cleanup needs to be run along exception edges.
   bool IsEHCleanup : 1;
 
-  /// Whether this cleanup is currently active.
-  bool IsActive : 1;
+  /// Whether this cleanup was activated before all normal uses.
+  bool ActivatedBeforeNormalUse : 1;
 
-  /// Whether the normal cleanup should test the activation flag.
-  bool TestFlagInNormalCleanup : 1;
-
-  /// Whether the EH cleanup should test the activation flag.
-  bool TestFlagInEHCleanup : 1;
+  /// Whether this cleanup was activated before all EH uses.
+  bool ActivatedBeforeEHUse : 1;
 
   /// The amount of extra storage needed by the Cleanup.
   /// Always a multiple of the scope-stack alignment.
@@ -176,7 +173,7 @@ class EHCleanupScope : public EHScope {
   /// The number of fixups required by enclosing scopes (not including
   /// this one).  If this is the top cleanup scope, all the fixups
   /// from this index onwards belong to this scope.
-  unsigned FixupDepth : BitsRemaining - 17; // currently 13
+  unsigned FixupDepth : BitsRemaining - 16;
 
   /// The nearest normal cleanup scope enclosing this one.
   EHScopeStack::stable_iterator EnclosingNormal;
@@ -193,8 +190,12 @@ class EHCleanupScope : public EHScope {
   llvm::BasicBlock *EHBlock;
 
   /// An optional i1 variable indicating whether this cleanup has been
-  /// activated yet.
-  llvm::AllocaInst *ActiveFlag;
+  /// activated yet.  This has one of three states:
+  ///   - it is null if the cleanup is inactive
+  ///   - it is activeSentinel() if the cleanup is active and was not
+  ///     required before activation
+  ///   - it points to a valid variable
+  llvm::AllocaInst *ActiveVar;
 
   /// Extra information required for cleanups that have resolved
   /// branches through them.  This has to be allocated on the side
@@ -245,11 +246,14 @@ public:
                  EHScopeStack::stable_iterator EnclosingNormal,
                  EHScopeStack::stable_iterator EnclosingEH)
     : EHScope(EHScope::Cleanup),
-      IsNormalCleanup(IsNormal), IsEHCleanup(IsEH), IsActive(IsActive),
-      TestFlagInNormalCleanup(false), TestFlagInEHCleanup(false),
+      IsNormalCleanup(IsNormal), IsEHCleanup(IsEH),
+      ActivatedBeforeNormalUse(IsActive),
+      ActivatedBeforeEHUse(IsActive),
       CleanupSize(CleanupSize), FixupDepth(FixupDepth),
       EnclosingNormal(EnclosingNormal), EnclosingEH(EnclosingEH),
-      NormalBlock(0), EHBlock(0), ActiveFlag(0), ExtInfo(0)
+      NormalBlock(0), EHBlock(0),
+      ActiveVar(IsActive ? activeSentinel() : 0),
+      ExtInfo(0)
   {
     assert(this->CleanupSize == CleanupSize && "cleanup size overflow");
   }
@@ -266,17 +270,19 @@ public:
   llvm::BasicBlock *getEHBlock() const { return EHBlock; }
   void setEHBlock(llvm::BasicBlock *BB) { EHBlock = BB; }
 
-  bool isActive() const { return IsActive; }
-  void setActive(bool A) { IsActive = A; }
+  static llvm::AllocaInst *activeSentinel() {
+    return reinterpret_cast<llvm::AllocaInst*>(1);
+  }
 
-  llvm::AllocaInst *getActiveFlag() const { return ActiveFlag; }
-  void setActiveFlag(llvm::AllocaInst *Var) { ActiveFlag = Var; }
+  bool isActive() const { return ActiveVar != 0; }
+  llvm::AllocaInst *getActiveVar() const { return ActiveVar; }
+  void setActiveVar(llvm::AllocaInst *Var) { ActiveVar = Var; }
 
-  void setTestFlagInNormalCleanup() { TestFlagInNormalCleanup = true; }
-  bool shouldTestFlagInNormalCleanup() const { return TestFlagInNormalCleanup; }
+  bool wasActivatedBeforeNormalUse() const { return ActivatedBeforeNormalUse; }
+  void setActivatedBeforeNormalUse(bool B) { ActivatedBeforeNormalUse = B; }
 
-  void setTestFlagInEHCleanup() { TestFlagInEHCleanup = true; }
-  bool shouldTestFlagInEHCleanup() const { return TestFlagInEHCleanup; }
+  bool wasActivatedBeforeEHUse() const { return ActivatedBeforeEHUse; }
+  void setActivatedBeforeEHUse(bool B) { ActivatedBeforeEHUse = B; }
 
   unsigned getFixupDepth() const { return FixupDepth; }
   EHScopeStack::stable_iterator getEnclosingNormalCleanup() const {

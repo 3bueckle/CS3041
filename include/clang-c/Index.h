@@ -1000,6 +1000,7 @@ enum CXCursorKind {
   CXCursor_UsingDirective                = 34,
   /** \brief A using declaration. */
   CXCursor_UsingDeclaration              = 35,
+  
   CXCursor_FirstDecl                     = CXCursor_UnexposedDecl,
   CXCursor_LastDecl                      = CXCursor_UsingDeclaration,
 
@@ -1026,75 +1027,15 @@ enum CXCursorKind {
   CXCursor_TypeRef                       = 43,
   CXCursor_CXXBaseSpecifier              = 44,
   /** 
-   * \brief A reference to a class template, function template, template
-   * template parameter, or class template partial specialization.
+   * \brief A reference to a class template, function template, or template
+   * template parameter. 
    */
   CXCursor_TemplateRef                   = 45,
   /**
    * \brief A reference to a namespace or namespace alias.
    */
   CXCursor_NamespaceRef                  = 46,
-  /**
-   * \brief A reference to a member of a struct, union, or class that occurs in 
-   * some non-expression context, e.g., a designated initializer.
-   */
-  CXCursor_MemberRef                     = 47,
-  /**
-   * \brief A reference to a labeled statement.
-   *
-   * This cursor kind is used to describe the jump to "start_over" in the 
-   * goto statement in the following example:
-   *
-   * \code
-   *   start_over:
-   *     ++counter;
-   *
-   *     goto start_over;
-   * \endcode
-   *
-   * A label reference cursor refers to a label statement.
-   */
-  CXCursor_LabelRef                      = 48,
-  
-  /**
-   * \brief A reference to a set of overloaded functions or function templates
-   * that has not yet been resolved to a specific function or function template.
-   *
-   * An overloaded declaration reference cursor occurs in C++ templates where
-   * a dependent name refers to a function. For example:
-   *
-   * \code
-   * template<typename T> void swap(T&, T&);
-   *
-   * struct X { ... };
-   * void swap(X&, X&);
-   *
-   * template<typename T>
-   * void reverse(T* first, T* last) {
-   *   while (first < last - 1) {
-   *     swap(*first, *--last);
-   *     ++first;
-   *   }
-   * }
-   *
-   * struct Y { };
-   * void swap(Y&, Y&);
-   * \endcode
-   *
-   * Here, the identifier "swap" is associated with an overloaded declaration
-   * reference. In the template definition, "swap" refers to either of the two
-   * "swap" functions declared above, so both results will be available. At
-   * instantiation time, "swap" may also refer to other functions found via
-   * argument-dependent lookup (e.g., the "swap" function at the end of the
-   * example).
-   *
-   * The functions \c clang_getNumOverloadedDecls() and 
-   * \c clang_getOverloadedDecl() can be used to retrieve the definitions
-   * referenced by this cursor.
-   */
-  CXCursor_OverloadedDeclRef             = 49,
-  
-  CXCursor_LastRef                       = CXCursor_OverloadedDeclRef,
+  CXCursor_LastRef                       = CXCursor_NamespaceRef,
 
   /* Error conditions */
   CXCursor_FirstInvalid                  = 70,
@@ -1154,21 +1095,7 @@ enum CXCursorKind {
    * reported.
    */
   CXCursor_UnexposedStmt                 = 200,
-  
-  /** \brief A labelled statement in a function. 
-   *
-   * This cursor kind is used to describe the "start_over:" label statement in 
-   * the following example:
-   *
-   * \code
-   *   start_over:
-   *     ++counter;
-   * \endcode
-   *
-   */
-  CXCursor_LabelStmt                     = 201,
-  
-  CXCursor_LastStmt                      = CXCursor_LabelStmt,
+  CXCursor_LastStmt                      = 200,
 
   /**
    * \brief Cursor that represents the translation unit itself.
@@ -1350,125 +1277,6 @@ CINDEX_LINKAGE enum CXLanguageKind {
  * \brief Determine the "language" of the entity referred to by a given cursor.
  */
 CINDEX_LINKAGE enum CXLanguageKind clang_getCursorLanguage(CXCursor cursor);
-
-  
-/**
- * \brief Determine the semantic parent of the given cursor.
- *
- * The semantic parent of a cursor is the cursor that semantically contains
- * the given \p cursor. For many declarations, the lexical and semantic parents
- * are equivalent (the lexical parent is returned by 
- * \c clang_getCursorLexicalParent()). They diverge when declarations or
- * definitions are provided out-of-line. For example:
- *
- * \code
- * class C {
- *  void f();
- * };
- *
- * void C::f() { }
- * \endcode
- *
- * In the out-of-line definition of \c C::f, the semantic parent is the 
- * the class \c C, of which this function is a member. The lexical parent is
- * the place where the declaration actually occurs in the source code; in this
- * case, the definition occurs in the translation unit. In general, the 
- * lexical parent for a given entity can change without affecting the semantics
- * of the program, and the lexical parent of different declarations of the
- * same entity may be different. Changing the semantic parent of a declaration,
- * on the other hand, can have a major impact on semantics, and redeclarations
- * of a particular entity should all have the same semantic context.
- *
- * In the example above, both declarations of \c C::f have \c C as their
- * semantic context, while the lexical context of the first \c C::f is \c C
- * and the lexical context of the second \c C::f is the translation unit.
- */
-CINDEX_LINKAGE CXCursor clang_getCursorSemanticParent(CXCursor cursor);
-
-/**
- * \brief Determine the lexical parent of the given cursor.
- *
- * The lexical parent of a cursor is the cursor in which the given \p cursor
- * was actually written. For many declarations, the lexical and semantic parents
- * are equivalent (the semantic parent is returned by 
- * \c clang_getCursorSemanticParent()). They diverge when declarations or
- * definitions are provided out-of-line. For example:
- *
- * \code
- * class C {
- *  void f();
- * };
- *
- * void C::f() { }
- * \endcode
- *
- * In the out-of-line definition of \c C::f, the semantic parent is the 
- * the class \c C, of which this function is a member. The lexical parent is
- * the place where the declaration actually occurs in the source code; in this
- * case, the definition occurs in the translation unit. In general, the 
- * lexical parent for a given entity can change without affecting the semantics
- * of the program, and the lexical parent of different declarations of the
- * same entity may be different. Changing the semantic parent of a declaration,
- * on the other hand, can have a major impact on semantics, and redeclarations
- * of a particular entity should all have the same semantic context.
- *
- * In the example above, both declarations of \c C::f have \c C as their
- * semantic context, while the lexical context of the first \c C::f is \c C
- * and the lexical context of the second \c C::f is the translation unit.
- */
-CINDEX_LINKAGE CXCursor clang_getCursorLexicalParent(CXCursor cursor);
-
-/**
- * \brief Determine the set of methods that are overridden by the given
- * method.
- *
- * In both Objective-C and C++, a method (aka virtual member function,
- * in C++) can override a virtual method in a base class. For
- * Objective-C, a method is said to override any method in the class's
- * interface (if we're coming from an implementation), its protocols,
- * or its categories, that has the same selector and is of the same
- * kind (class or instance). If no such method exists, the search
- * continues to the class's superclass, its protocols, and its
- * categories, and so on.
- *
- * For C++, a virtual member function overrides any virtual member
- * function with the same signature that occurs in its base
- * classes. With multiple inheritance, a virtual member function can
- * override several virtual member functions coming from different
- * base classes.
- *
- * In all cases, this function determines the immediate overridden
- * method, rather than all of the overridden methods. For example, if
- * a method is originally declared in a class A, then overridden in B
- * (which in inherits from A) and also in C (which inherited from B),
- * then the only overridden method returned from this function when
- * invoked on C's method will be B's method. The client may then
- * invoke this function again, given the previously-found overridden
- * methods, to map out the complete method-override set.
- *
- * \param cursor A cursor representing an Objective-C or C++
- * method. This routine will compute the set of methods that this
- * method overrides.
- * 
- * \param overridden A pointer whose pointee will be replaced with a
- * pointer to an array of cursors, representing the set of overridden
- * methods. If there are no overridden methods, the pointee will be
- * set to NULL. The pointee must be freed via a call to 
- * \c clang_disposeOverriddenCursors().
- *
- * \param num_overridden A pointer to the number of overridden
- * functions, will be set to the number of overridden functions in the
- * array pointed to by \p overridden.
- */
-CINDEX_LINKAGE void clang_getOverriddenCursors(CXCursor cursor, 
-                                               CXCursor **overridden,
-                                               unsigned *num_overridden);
-
-/**
- * \brief Free the set of overridden cursors returned by \c
- * clang_getOverriddenCursors().
- */
-CINDEX_LINKAGE void clang_disposeOverriddenCursors(CXCursor *overridden);
 
 /**
  * @}
@@ -1688,34 +1496,6 @@ enum CX_CXXAccessSpecifier {
 CINDEX_LINKAGE enum CX_CXXAccessSpecifier clang_getCXXAccessSpecifier(CXCursor);
 
 /**
- * \brief Determine the number of overloaded declarations referenced by a 
- * \c CXCursor_OverloadedDeclRef cursor.
- *
- * \param cursor The cursor whose overloaded declarations are being queried.
- *
- * \returns The number of overloaded declarations referenced by \c cursor. If it
- * is not a \c CXCursor_OverloadedDeclRef cursor, returns 0.
- */
-CINDEX_LINKAGE unsigned clang_getNumOverloadedDecls(CXCursor cursor);
-
-/**
- * \brief Retrieve a cursor for one of the overloaded declarations referenced
- * by a \c CXCursor_OverloadedDeclRef cursor.
- *
- * \param cursor The cursor whose overloaded declarations are being queried.
- *
- * \param index The zero-based index into the set of overloaded declarations in
- * the cursor.
- *
- * \returns A cursor representing the declaration referenced by the given 
- * \c cursor at the specified \c index. If the cursor does not have an 
- * associated set of overloaded declarations, or if the index is out of bounds,
- * returns \c clang_getNullCursor();
- */
-CINDEX_LINKAGE CXCursor clang_getOverloadedDecl(CXCursor cursor, 
-                                                unsigned index);
-  
-/**
  * @}
  */
   
@@ -1884,15 +1664,6 @@ CINDEX_LINKAGE CXString clang_constructUSR_ObjCProperty(const char *property,
  */
 CINDEX_LINKAGE CXString clang_getCursorSpelling(CXCursor);
 
-/**
- * \brief Retrieve the display name for the entity referenced by this cursor.
- *
- * The display name contains extra information that helps identify the cursor,
- * such as the parameters of a function or template or the arguments of a 
- * class template specialization.
- */
-CINDEX_LINKAGE CXString clang_getCursorDisplayName(CXCursor);
-  
 /** \brief For a cursor that is a reference, retrieve a cursor representing the
  * entity that it references.
  *

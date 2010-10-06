@@ -532,12 +532,7 @@ Parser::TPResult Parser::TryParseDeclarator(bool mayBeAbstract,
       // '(' declarator ')'
       // '(' attributes declarator ')'
       // '(' abstract-declarator ')'
-      if (Tok.is(tok::kw___attribute) ||
-          Tok.is(tok::kw___declspec) ||
-          Tok.is(tok::kw___cdecl) ||
-          Tok.is(tok::kw___stdcall) ||
-          Tok.is(tok::kw___fastcall) ||
-          Tok.is(tok::kw___thiscall))
+      if (Tok.is(tok::kw___attribute))
         return TPResult::True(); // attributes indicate declaration
       TPResult TPR = TryParseDeclarator(mayBeAbstract, mayHaveIdentifier);
       if (TPR != TPResult::Ambiguous())
@@ -826,9 +821,6 @@ Parser::TPResult Parser::isCXXDeclarationSpecifier() {
     if (NextToken().is(tok::l_paren))
       return TPResult::Ambiguous();
 
-    if (isStartOfObjCClassMessageMissingOpenBracket())
-      return TPResult::False();
-      
     return TPResult::True();
 
   // GNU typeof support.
