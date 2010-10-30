@@ -1,0 +1,11 @@
+# alignof rename.
+117774
+
+# <rdar://problem/8611144> [PR8506] valueprop crash
+117709
+
+# <rdar://problem/8611556> [PR8471] - [scev] clang segfaults while optimizing a snippet of C code
+117698
+
+# Test fix needed for <rdar://problem/8611144> [PR8506] valueprop crash
+117712
