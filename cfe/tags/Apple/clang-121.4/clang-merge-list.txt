@@ -1,0 +1,29 @@
+# Reversion of r117678, which broke various projects.
+117829
+
+# <rdar://problem/8614832> Massive log spam of entries like "0.0579 (100.0%"
+117910
+
+# <rdar://problem/8614470> linker crash during project build
+117887
+
+# <rdar://problem/8613075> clang is leaking a ton of small allocations
+117912
+
+# <rdar://problem/8580129> crash at clang::SourceManager::isBeforeInTranslationUnit const + 509
+117946
+
+# <rdar://problem/8084251> crash at clang::Sema::MaybeBindToTemporary
+117954
+
+# <rdar://problem/8501494> crash at clang::TextDiagnosticPrinter::HandleDiagnostic + 153
+117990
+
+# <rdar://problem/8622014> private extern visibility is wrong
+118034
+
+# <rdar://problem/8621026> stop erroring on -fasm-blocks
+118037
+
+# <rdar://problem/8622647> visibility of static locals is wrong
+118065
