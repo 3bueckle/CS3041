@@ -560,9 +560,10 @@ public:
                                                TemplateName Template,
                                                CXXScopeSpec &SS);
 
-  QualType TransformDependentTemplateSpecializationType(
-      TypeLocBuilder &TLB, DependentTemplateSpecializationTypeLoc TL,
-      NestedNameSpecifierLoc QualifierLoc);
+  QualType
+  TransformDependentTemplateSpecializationType(TypeLocBuilder &TLB,
+                                               DependentTemplateSpecializationTypeLoc TL,
+                                         NestedNameSpecifierLoc QualifierLoc);
 
   /// \brief Transforms the parameters of a function type into the
   /// given vectors.
@@ -1664,8 +1665,10 @@ public:
   }
 
   StmtResult RebuildSEHTryStmt(bool IsCXXTry, SourceLocation TryLoc,
-                               Stmt *TryBlock, Stmt *Handler) {
-    return getSema().ActOnSEHTryBlock(IsCXXTry, TryLoc, TryBlock, Handler);
+                               Stmt *TryBlock, Stmt *Handler, int HandlerIndex,
+                               int HandlerParentIndex) {
+    return getSema().ActOnSEHTryBlock(IsCXXTry, TryLoc, TryBlock, Handler,
+                                      HandlerIndex, HandlerParentIndex);
   }
 
   StmtResult RebuildSEHExceptStmt(SourceLocation Loc, Expr *FilterExpr,
@@ -5144,8 +5147,8 @@ TreeTransform<Derived>::TransformElaboratedType(TypeLocBuilder &TLB,
     if (const TemplateSpecializationType *TST =
           NamedT->getAs<TemplateSpecializationType>()) {
       TemplateName Template = TST->getTemplateName();
-      if (TypeAliasTemplateDecl *TAT = dyn_cast_or_null<TypeAliasTemplateDecl>(
-              Template.getAsTemplateDecl())) {
+      if (TypeAliasTemplateDecl *TAT =
+          dyn_cast_or_null<TypeAliasTemplateDecl>(Template.getAsTemplateDecl())) {
         SemaRef.Diag(TL.getNamedTypeLoc().getBeginLoc(),
                      diag::err_tag_reference_non_tag) << 4;
         SemaRef.Diag(TAT->getLocation(), diag::note_declared_at);
@@ -6377,8 +6380,9 @@ StmtResult TreeTransform<Derived>::TransformSEHTryStmt(SEHTryStmt *S) {
       Handler.get() == S->getHandler())
     return S;
 
-  return getDerived().RebuildSEHTryStmt(S->getIsCXXTry(), S->getTryLoc(),
-                                        TryBlock.get(), Handler.get());
+  return getDerived().RebuildSEHTryStmt(
+      S->getIsCXXTry(), S->getTryLoc(), TryBlock.get(), Handler.get(),
+      S->getHandlerIndex(), S->getHandlerParentIndex());
 }
 
 template <typename Derived>
@@ -6629,28 +6633,6 @@ TreeTransform<Derived>::TransformOMPFlushDirective(OMPFlushDirective *D) {
   return Res;
 }
 
-template <typename Derived>
-StmtResult
-TreeTransform<Derived>::TransformOMPOrderedDirective(OMPOrderedDirective *D) {
-  DeclarationNameInfo DirName;
-  getDerived().getSema().StartOpenMPDSABlock(OMPD_ordered, DirName, nullptr,
-                                             D->getLocStart());
-  StmtResult Res = getDerived().TransformOMPExecutableDirective(D);
-  getDerived().getSema().EndOpenMPDSABlock(Res.get());
-  return Res;
-}
-
-template <typename Derived>
-StmtResult
-TreeTransform<Derived>::TransformOMPAtomicDirective(OMPAtomicDirective *D) {
-  DeclarationNameInfo DirName;
-  getDerived().getSema().StartOpenMPDSABlock(OMPD_atomic, DirName, nullptr,
-                                             D->getLocStart());
-  StmtResult Res = getDerived().TransformOMPExecutableDirective(D);
-  getDerived().getSema().EndOpenMPDSABlock(Res.get());
-  return Res;
-}
-
 //===----------------------------------------------------------------------===//
 // OpenMP clause transformation
 //===----------------------------------------------------------------------===//
@@ -6753,39 +6735,6 @@ TreeTransform<Derived>::TransformOMPUntiedClause(OMPUntiedClause *C) {
 template <typename Derived>
 OMPClause *
 TreeTransform<Derived>::TransformOMPMergeableClause(OMPMergeableClause *C) {
-  // No need to rebuild this clause, no template-dependent parameters.
-  return C;
-}
-
-template <typename Derived>
-OMPClause *TreeTransform<Derived>::TransformOMPReadClause(OMPReadClause *C) {
-  // No need to rebuild this clause, no template-dependent parameters.
-  return C;
-}
-
-template <typename Derived>
-OMPClause *TreeTransform<Derived>::TransformOMPWriteClause(OMPWriteClause *C) {
-  // No need to rebuild this clause, no template-dependent parameters.
-  return C;
-}
-
-template <typename Derived>
-OMPClause *
-TreeTransform<Derived>::TransformOMPUpdateClause(OMPUpdateClause *C) {
-  // No need to rebuild this clause, no template-dependent parameters.
-  return C;
-}
-
-template <typename Derived>
-OMPClause *
-TreeTransform<Derived>::TransformOMPCaptureClause(OMPCaptureClause *C) {
-  // No need to rebuild this clause, no template-dependent parameters.
-  return C;
-}
-
-template <typename Derived>
-OMPClause *
-TreeTransform<Derived>::TransformOMPSeqCstClause(OMPSeqCstClause *C) {
   // No need to rebuild this clause, no template-dependent parameters.
   return C;
 }
@@ -7924,11 +7873,15 @@ TreeTransform<Derived>::TransformCXXNamedCastExpr(CXXNamedCastExpr *E) {
       Type == E->getTypeInfoAsWritten() &&
       SubExpr.get() == E->getSubExpr())
     return E;
-  return getDerived().RebuildCXXNamedCastExpr(
-      E->getOperatorLoc(), E->getStmtClass(), E->getAngleBrackets().getBegin(),
-      Type, E->getAngleBrackets().getEnd(),
-      // FIXME. this should be '(' location
-      E->getAngleBrackets().getEnd(), SubExpr.get(), E->getRParenLoc());
+  return getDerived().RebuildCXXNamedCastExpr(E->getOperatorLoc(),
+                                              E->getStmtClass(),
+                                              E->getAngleBrackets().getBegin(),
+                                              Type,
+                                              E->getAngleBrackets().getEnd(),
+                                              // FIXME. this should be '(' location
+                                              E->getAngleBrackets().getEnd(),
+                                              SubExpr.get(),
+                                              E->getRParenLoc());
 }
 
 template<typename Derived>

@@ -422,6 +422,7 @@
 // AARCH64:#define __aarch64__ 1
 //
 // RUN: %clang_cc1 -E -dM -ffreestanding -triple=aarch64_be-none-none < /dev/null | FileCheck -check-prefix AARCH64-BE %s
+// RUN: %clang_cc1 -E -dM -ffreestanding -triple=arm64_be-none-none < /dev/null | FileCheck -check-prefix AARCH64-BE %s
 //
 // AARCH64-BE:#define _LP64 1
 // AARCH64-BE:#define __AARCH64EB__ 1
@@ -4916,15 +4917,6 @@
 // PPC64-LINUX:#define __powerpc__ 1
 // PPC64-LINUX:#define __ppc64__ 1
 // PPC64-LINUX:#define __ppc__ 1
-
-// RUN: %clang_cc1 -E -dM -ffreestanding -triple=powerpc64-unknown-linux-gnu < /dev/null | FileCheck -check-prefix PPC64-ELFv1 %s
-// RUN: %clang_cc1 -E -dM -ffreestanding -triple=powerpc64-unknown-linux-gnu -target-abi elfv1 < /dev/null | FileCheck -check-prefix PPC64-ELFv1 %s
-// RUN: %clang_cc1 -E -dM -ffreestanding -triple=powerpc64-unknown-linux-gnu -target-abi elfv2 < /dev/null | FileCheck -check-prefix PPC64-ELFv2 %s
-// RUN: %clang_cc1 -E -dM -ffreestanding -triple=powerpc64le-unknown-linux-gnu < /dev/null | FileCheck -check-prefix PPC64-ELFv2 %s
-// RUN: %clang_cc1 -E -dM -ffreestanding -triple=powerpc64le-unknown-linux-gnu -target-abi elfv1 < /dev/null | FileCheck -check-prefix PPC64-ELFv1 %s
-// RUN: %clang_cc1 -E -dM -ffreestanding -triple=powerpc64le-unknown-linux-gnu -target-abi elfv2 < /dev/null | FileCheck -check-prefix PPC64-ELFv2 %s
-// PPC64-ELFv1:#define _CALL_ELF 1
-// PPC64-ELFv2:#define _CALL_ELF 2
 //
 // RUN: %clang_cc1 -E -dM -ffreestanding -triple=powerpc-none-none -fno-signed-char < /dev/null | FileCheck -check-prefix PPC %s
 //

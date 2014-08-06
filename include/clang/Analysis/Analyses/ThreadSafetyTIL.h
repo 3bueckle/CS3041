@@ -100,7 +100,6 @@ enum TIL_CastOpcode : unsigned char {
   CAST_truncNum,    // truncate precision of numeric type
   CAST_toFloat,     // convert to floating point type
   CAST_toInt,       // convert to integer type
-  CAST_objToPtr     // convert smart pointer to pointer  (C++ only)
 };
 
 const TIL_Opcode       COP_Min  = COP_Future;
@@ -406,8 +405,7 @@ public:
     return Vs.reduceVariableRef(this);
   }
 
-  template <class C>
-  typename C::CType compare(const Variable* E, C& Cmp) const {
+  template <class C> typename C::CType compare(Variable* E, C& Cmp) {
     return Cmp.compareVariableRefs(this, E);
   }
 
@@ -457,7 +455,7 @@ public:
   virtual SExpr *create() { return nullptr; }
 
   // Return the result of this future if it exists, otherwise return null.
-  SExpr *maybeGetResult() const {
+  SExpr *maybeGetResult() {
     return Result;
   }
 
@@ -480,8 +478,7 @@ public:
     return Vs.traverse(Result, Ctx);
   }
 
-  template <class C>
-  typename C::CType compare(const Future* E, C& Cmp) const {
+  template <class C> typename C::CType compare(Future* E, C& Cmp) {
     if (!Result || !E->Result)
       return Cmp.comparePointers(this, E);
     return Cmp.compare(Result, E->Result);
@@ -575,9 +572,8 @@ public:
     return Vs.reduceUndefined(*this);
   }
 
-  template <class C>
-  typename C::CType compare(const Undefined* E, C& Cmp) const {
-    return Cmp.trueResult();
+  template <class C> typename C::CType compare(Undefined* E, C& Cmp) {
+    return Cmp.comparePointers(Cstmt, E->Cstmt);
   }
 
 private:
@@ -597,8 +593,7 @@ public:
     return Vs.reduceWildcard(*this);
   }
 
-  template <class C>
-  typename C::CType compare(const Wildcard* E, C& Cmp) const {
+  template <class C> typename C::CType compare(Wildcard* E, C& Cmp) {
     return Cmp.trueResult();
   }
 };
@@ -631,10 +626,9 @@ public:
 
   template <class V> typename V::R_SExpr traverse(V &Vs, typename V::R_Ctx Ctx);
 
-  template <class C>
-  typename C::CType compare(const Literal* E, C& Cmp) const {
-    // TODO: defer actual comparison to LiteralT
-    return Cmp.trueResult();
+  template <class C> typename C::CType compare(Literal* E, C& Cmp) {
+    // TODO -- use value, not pointer equality
+    return Cmp.comparePointers(Cexpr, E->Cexpr);
   }
 
 private:
@@ -733,8 +727,7 @@ public:
     return Vs.reduceLiteralPtr(*this);
   }
 
-  template <class C>
-  typename C::CType compare(const LiteralPtr* E, C& Cmp) const {
+  template <class C> typename C::CType compare(LiteralPtr* E, C& Cmp) {
     return Cmp.comparePointers(Cvdecl, E->Cvdecl);
   }
 
@@ -776,8 +769,7 @@ public:
     return Vs.reduceFunction(*this, Nvd, E1);
   }
 
-  template <class C>
-  typename C::CType compare(const Function* E, C& Cmp) const {
+  template <class C> typename C::CType compare(Function* E, C& Cmp) {
     typename C::CType Ct =
       Cmp.compare(VarDecl->definition(), E->VarDecl->definition());
     if (Cmp.notTrue(Ct))
@@ -832,8 +824,7 @@ public:
     return Vs.reduceSFunction(*this, Nvd, E1);
   }
 
-  template <class C>
-  typename C::CType compare(const SFunction* E, C& Cmp) const {
+  template <class C> typename C::CType compare(SFunction* E, C& Cmp) {
     Cmp.enterScope(variableDecl(), E->variableDecl());
     typename C::CType Ct = Cmp.compare(body(), E->body());
     Cmp.leaveScope();
@@ -868,8 +859,7 @@ public:
     return Vs.reduceCode(*this, Nt, Nb);
   }
 
-  template <class C>
-  typename C::CType compare(const Code* E, C& Cmp) const {
+  template <class C> typename C::CType compare(Code* E, C& Cmp) {
     typename C::CType Ct = Cmp.compare(returnType(), E->returnType());
     if (Cmp.notTrue(Ct))
       return Ct;
@@ -904,8 +894,7 @@ public:
     return Vs.reduceField(*this, Nr, Nb);
   }
 
-  template <class C>
-  typename C::CType compare(const Field* E, C& Cmp) const {
+  template <class C> typename C::CType compare(Field* E, C& Cmp) {
     typename C::CType Ct = Cmp.compare(range(), E->range());
     if (Cmp.notTrue(Ct))
       return Ct;
@@ -941,8 +930,7 @@ public:
     return Vs.reduceApply(*this, Nf, Na);
   }
 
-  template <class C>
-  typename C::CType compare(const Apply* E, C& Cmp) const {
+  template <class C> typename C::CType compare(Apply* E, C& Cmp) {
     typename C::CType Ct = Cmp.compare(fun(), E->fun());
     if (Cmp.notTrue(Ct))
       return Ct;
@@ -970,7 +958,7 @@ public:
   SExpr *arg() { return Arg.get() ? Arg.get() : Sfun.get(); }
   const SExpr *arg() const { return Arg.get() ? Arg.get() : Sfun.get(); }
 
-  bool isDelegation() const { return Arg != nullptr; }
+  bool isDelegation() const { return Arg == nullptr; }
 
   template <class V>
   typename V::R_SExpr traverse(V &Vs, typename V::R_Ctx Ctx) {
@@ -980,8 +968,7 @@ public:
     return Vs.reduceSApply(*this, Nf, Na);
   }
 
-  template <class C>
-  typename C::CType compare(const SApply* E, C& Cmp) const {
+  template <class C> typename C::CType compare(SApply* E, C& Cmp) {
     typename C::CType Ct = Cmp.compare(sfun(), E->sfun());
     if (Cmp.notTrue(Ct) || (!arg() && !E->arg()))
       return Ct;
@@ -1002,7 +989,7 @@ public:
   Project(SExpr *R, StringRef SName)
       : SExpr(COP_Project), Rec(R), SlotName(SName), Cvdecl(nullptr)
   { }
-  Project(SExpr *R, const clang::ValueDecl *Cvd)
+  Project(SExpr *R, clang::ValueDecl *Cvd)
       : SExpr(COP_Project), Rec(R), SlotName(Cvd->getName()), Cvdecl(Cvd)
   { }
   Project(const Project &P, SExpr *R)
@@ -1012,13 +999,7 @@ public:
   SExpr *record() { return Rec.get(); }
   const SExpr *record() const { return Rec.get(); }
 
-  const clang::ValueDecl *clangDecl() const { return Cvdecl; }
-
-  bool isArrow() const { return (Flags & 0x01) != 0; }
-  void setArrow(bool b) {
-    if (b) Flags |= 0x01;
-    else Flags &= 0xFFFE;
-  }
+  const clang::ValueDecl *clangValueDecl() const { return Cvdecl; }
 
   StringRef slotName() const {
     if (Cvdecl)
@@ -1033,8 +1014,7 @@ public:
     return Vs.reduceProject(*this, Nr);
   }
 
-  template <class C>
-  typename C::CType compare(const Project* E, C& Cmp) const {
+  template <class C> typename C::CType compare(Project* E, C& Cmp) {
     typename C::CType Ct = Cmp.compare(record(), E->record());
     if (Cmp.notTrue(Ct))
       return Ct;
@@ -1044,7 +1024,7 @@ public:
 private:
   SExprRef Rec;
   StringRef SlotName;
-  const clang::ValueDecl *Cvdecl;
+  clang::ValueDecl *Cvdecl;
 };
 
 
@@ -1068,8 +1048,7 @@ public:
     return Vs.reduceCall(*this, Nt);
   }
 
-  template <class C>
-  typename C::CType compare(const Call* E, C& Cmp) const {
+  template <class C> typename C::CType compare(Call* E, C& Cmp) {
     return Cmp.compare(target(), E->target());
   }
 
@@ -1103,8 +1082,7 @@ public:
     return Vs.reduceAlloc(*this, Nd);
   }
 
-  template <class C>
-  typename C::CType compare(const Alloc* E, C& Cmp) const {
+  template <class C> typename C::CType compare(Alloc* E, C& Cmp) {
     typename C::CType Ct = Cmp.compareIntegers(kind(), E->kind());
     if (Cmp.notTrue(Ct))
       return Ct;
@@ -1133,8 +1111,7 @@ public:
     return Vs.reduceLoad(*this, Np);
   }
 
-  template <class C>
-  typename C::CType compare(const Load* E, C& Cmp) const {
+  template <class C> typename C::CType compare(Load* E, C& Cmp) {
     return Cmp.compare(pointer(), E->pointer());
   }
 
@@ -1165,8 +1142,7 @@ public:
     return Vs.reduceStore(*this, Np, Nv);
   }
 
-  template <class C>
-  typename C::CType compare(const Store* E, C& Cmp) const {
+  template <class C> typename C::CType compare(Store* E, C& Cmp) {
     typename C::CType Ct = Cmp.compare(destination(), E->destination());
     if (Cmp.notTrue(Ct))
       return Ct;
@@ -1202,8 +1178,7 @@ public:
     return Vs.reduceArrayIndex(*this, Na, Ni);
   }
 
-  template <class C>
-  typename C::CType compare(const ArrayIndex* E, C& Cmp) const {
+  template <class C> typename C::CType compare(ArrayIndex* E, C& Cmp) {
     typename C::CType Ct = Cmp.compare(array(), E->array());
     if (Cmp.notTrue(Ct))
       return Ct;
@@ -1240,8 +1215,7 @@ public:
     return Vs.reduceArrayAdd(*this, Na, Ni);
   }
 
-  template <class C>
-  typename C::CType compare(const ArrayAdd* E, C& Cmp) const {
+  template <class C> typename C::CType compare(ArrayAdd* E, C& Cmp) {
     typename C::CType Ct = Cmp.compare(array(), E->array());
     if (Cmp.notTrue(Ct))
       return Ct;
@@ -1277,8 +1251,7 @@ public:
     return Vs.reduceUnaryOp(*this, Ne);
   }
 
-  template <class C>
-  typename C::CType compare(const UnaryOp* E, C& Cmp) const {
+  template <class C> typename C::CType compare(UnaryOp* E, C& Cmp) {
     typename C::CType Ct =
       Cmp.compareIntegers(unaryOpcode(), E->unaryOpcode());
     if (Cmp.notTrue(Ct))
@@ -1322,8 +1295,7 @@ public:
     return Vs.reduceBinaryOp(*this, Ne0, Ne1);
   }
 
-  template <class C>
-  typename C::CType compare(const BinaryOp* E, C& Cmp) const {
+  template <class C> typename C::CType compare(BinaryOp* E, C& Cmp) {
     typename C::CType Ct =
       Cmp.compareIntegers(binaryOpcode(), E->binaryOpcode());
     if (Cmp.notTrue(Ct))
@@ -1361,8 +1333,7 @@ public:
     return Vs.reduceCast(*this, Ne);
   }
 
-  template <class C>
-  typename C::CType compare(const Cast* E, C& Cmp) const {
+  template <class C> typename C::CType compare(Cast* E, C& Cmp) {
     typename C::CType Ct =
       Cmp.compareIntegers(castOpcode(), E->castOpcode());
     if (Cmp.notTrue(Ct))
@@ -1415,8 +1386,7 @@ public:
     return Vs.reducePhi(*this, Nvs);
   }
 
-  template <class C>
-  typename C::CType compare(const Phi *E, C &Cmp) const {
+  template <class C> typename C::CType compare(Phi *E, C &Cmp) {
     // TODO: implement CFG comparisons
     return Cmp.comparePointers(this, E);
   }
@@ -1533,8 +1503,7 @@ public:
     return Vs.reduceBasicBlock(*this, Nas, Nis, Nt);
   }
 
-  template <class C>
-  typename C::CType compare(const BasicBlock *E, C &Cmp) const {
+  template <class C> typename C::CType compare(BasicBlock *E, C &Cmp) {
     // TODO: implement CFG comparisons
     return Cmp.comparePointers(this, E);
   }
@@ -1621,8 +1590,7 @@ public:
     return Vs.reduceSCFG(*this, Bbs);
   }
 
-  template <class C>
-  typename C::CType compare(const SCFG *E, C &Cmp) const {
+  template <class C> typename C::CType compare(SCFG *E, C &Cmp) {
     // TODO -- implement CFG comparisons
     return Cmp.comparePointers(this, E);
   }
@@ -1655,8 +1623,7 @@ public:
     return Vs.reduceGoto(*this, Ntb);
   }
 
-  template <class C>
-  typename C::CType compare(const Goto *E, C &Cmp) const {
+  template <class C> typename C::CType compare(Goto *E, C &Cmp) {
     // TODO -- implement CFG comparisons
     return Cmp.comparePointers(this, E);
   }
@@ -1701,8 +1668,7 @@ public:
     return Vs.reduceBranch(*this, Nc, Ntb, Nte);
   }
 
-  template <class C>
-  typename C::CType compare(const Branch *E, C &Cmp) const {
+  template <class C> typename C::CType compare(Branch *E, C &Cmp) {
     // TODO -- implement CFG comparisons
     return Cmp.comparePointers(this, E);
   }
@@ -1732,8 +1698,7 @@ public:
     return Vs.reduceIdentifier(*this);
   }
 
-  template <class C>
-  typename C::CType compare(const Identifier* E, C& Cmp) const {
+  template <class C> typename C::CType compare(Identifier* E, C& Cmp) {
     return Cmp.compareStrings(name(), E->name());
   }
 
@@ -1772,8 +1737,7 @@ public:
     return Vs.reduceIfThenElse(*this, Nc, Nt, Ne);
   }
 
-  template <class C>
-  typename C::CType compare(const IfThenElse* E, C& Cmp) const {
+  template <class C> typename C::CType compare(IfThenElse* E, C& Cmp) {
     typename C::CType Ct = Cmp.compare(condition(), E->condition());
     if (Cmp.notTrue(Ct))
       return Ct;
@@ -1820,8 +1784,7 @@ public:
     return Vs.reduceLet(*this, Nvd, E1);
   }
 
-  template <class C>
-  typename C::CType compare(const Let* E, C& Cmp) const {
+  template <class C> typename C::CType compare(Let* E, C& Cmp) {
     typename C::CType Ct =
       Cmp.compare(VarDecl->definition(), E->VarDecl->definition());
     if (Cmp.notTrue(Ct))
@@ -1839,8 +1802,7 @@ private:
 
 
 
-const SExpr *getCanonicalVal(const SExpr *E);
-SExpr* simplifyToCanonicalVal(SExpr *E);
+SExpr *getCanonicalVal(SExpr *E);
 void simplifyIncompleteArg(Variable *V, til::Phi *Ph);
 
 

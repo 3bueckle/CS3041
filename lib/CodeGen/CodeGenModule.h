@@ -17,7 +17,6 @@
 #include "CGVTables.h"
 #include "CodeGenTypes.h"
 #include "SanitizerBlacklist.h"
-#include "SanitizerMetadata.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclObjC.h"
@@ -73,7 +72,6 @@ class DiagnosticsEngine;
 class AnnotateAttr;
 class CXXDestructorDecl;
 class Module;
-class CoverageSourceInfo;
 
 namespace CodeGen {
 
@@ -88,7 +86,6 @@ class CGOpenMPRuntime;
 class CGCUDARuntime;
 class BlockFieldFlags;
 class FunctionArgList;
-class CoverageMappingModuleGen;
 
 struct OrderGlobalInits {
   unsigned int priority;
@@ -476,18 +473,11 @@ class CodeGenModule : public CodeGenTypeCache {
 
   SanitizerBlacklist SanitizerBL;
 
-  std::unique_ptr<SanitizerMetadata> SanitizerMD;
-
   /// @}
-
-  llvm::DenseMap<const Decl *, bool> DeferredEmptyCoverageMappingDecls;
-
-  std::unique_ptr<CoverageMappingModuleGen> CoverageMapping;
 public:
   CodeGenModule(ASTContext &C, const CodeGenOptions &CodeGenOpts,
                 llvm::Module &M, const llvm::DataLayout &TD,
-                DiagnosticsEngine &Diags,
-                CoverageSourceInfo *CoverageInfo = nullptr);
+                DiagnosticsEngine &Diags);
 
   ~CodeGenModule();
 
@@ -535,10 +525,6 @@ public:
 
   InstrProfStats &getPGOStats() { return PGOStats; }
   llvm::IndexedInstrProfReader *getPGOReader() const { return PGOReader.get(); }
-
-  CoverageMappingModuleGen *getCoverageMapping() const {
-    return CoverageMapping.get();
-  }
 
   llvm::Constant *getStaticLocalDeclAddress(const VarDecl *D) {
     return StaticLocalDeclMap[D];
@@ -826,18 +812,6 @@ public:
   /// Emit code for a single top level declaration.
   void EmitTopLevelDecl(Decl *D);
 
-  /// \brief Stored a deferred empty coverage mapping for an unused
-  /// and thus uninstrumented top level declaration.
-  void AddDeferredUnusedCoverageMapping(Decl *D);
-
-  /// \brief Remove the deferred empty coverage mapping as this
-  /// declaration is actually instrumented.
-  void ClearUnusedCoverageMapping(const Decl *D);
-
-  /// \brief Emit all the deferred coverage mappings
-  /// for the uninstrumented functions.
-  void EmitDeferredUnusedCoverageMappings();
-
   /// Tell the consumer that this variable has been instantiated.
   void HandleCXXStaticMemberVarInstantiation(VarDecl *VD);
 
@@ -1039,9 +1013,14 @@ public:
     return SanitizerBL;
   }
 
-  SanitizerMetadata *getSanitizerMetadata() {
-    return SanitizerMD.get();
-  }
+  void reportGlobalToASan(llvm::GlobalVariable *GV, const VarDecl &D,
+                          bool IsDynInit = false);
+  void reportGlobalToASan(llvm::GlobalVariable *GV, SourceLocation Loc,
+                          StringRef Name, bool IsDynInit = false,
+                          bool IsBlacklisted = false);
+
+  /// Disable sanitizer instrumentation for this global.
+  void disableSanitizerForGlobal(llvm::GlobalVariable *GV);
 
   void addDeferredVTable(const CXXRecordDecl *RD) {
     DeferredVTables.push_back(RD);

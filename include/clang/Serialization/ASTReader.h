@@ -1142,7 +1142,7 @@ private:
   QualType readTypeRecord(unsigned Index);
   void readExceptionSpec(ModuleFile &ModuleFile,
                          SmallVectorImpl<QualType> &ExceptionStorage,
-                         FunctionProtoType::ExceptionSpecInfo &ESI,
+                         FunctionProtoType::ExtProtoInfo &EPI,
                          const RecordData &Record, unsigned &Index);
   RecordLocation TypeCursorForIndex(unsigned Index);
   void LoadedDecl(unsigned Index, Decl *D);
@@ -1245,7 +1245,6 @@ private:
   void PassInterestingDeclToConsumer(Decl *D);
 
   void finishPendingActions();
-  void diagnoseOdrViolations();
 
   void pushExternalDeclIntoScope(NamedDecl *D, DeclarationName Name);
 
@@ -1833,18 +1832,17 @@ public:
                                  ModuleFile &M, uint64_t Offset);
 
   void installImportedMacro(IdentifierInfo *II, ModuleMacroInfo *MMI,
-                            Module *Owner);
+                            Module *Owner, bool FromFinalization);
 
   typedef llvm::TinyPtrVector<DefMacroDirective *> AmbiguousMacros;
   llvm::DenseMap<IdentifierInfo*, AmbiguousMacros> AmbiguousMacroDefs;
 
   void
-  removeOverriddenMacros(IdentifierInfo *II, SourceLocation Loc,
-                         AmbiguousMacros &Ambig,
+  removeOverriddenMacros(IdentifierInfo *II, AmbiguousMacros &Ambig,
                          ArrayRef<serialization::SubmoduleID> Overrides);
 
   AmbiguousMacros *
-  removeOverriddenMacros(IdentifierInfo *II, SourceLocation Loc,
+  removeOverriddenMacros(IdentifierInfo *II,
                          ArrayRef<serialization::SubmoduleID> Overrides);
 
   /// \brief Retrieve the macro with the given ID.

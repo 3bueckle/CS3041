@@ -146,7 +146,8 @@ void CodeGenFunction::EmitVarDecl(const VarDecl &D) {
   return EmitAutoVarDecl(D);
 }
 
-static std::string GetStaticDeclName(CodeGenFunction &CGF, const VarDecl &D) {
+static std::string GetStaticDeclName(CodeGenFunction &CGF, const VarDecl &D,
+                                     const char *Separator) {
   CodeGenModule &CGM = CGF.CGM;
 
   if (CGF.getLangOpts().CPlusPlus)
@@ -168,11 +169,12 @@ static std::string GetStaticDeclName(CodeGenFunction &CGF, const VarDecl &D) {
   else
     llvm_unreachable("Unknown context for static var decl");
 
-  return ContextName.str() + "." + D.getNameAsString();
+  return ContextName.str() + Separator + D.getNameAsString();
 }
 
 llvm::Constant *
 CodeGenFunction::CreateStaticVarDecl(const VarDecl &D,
+                                     const char *Separator,
                                      llvm::GlobalValue::LinkageTypes Linkage) {
   QualType Ty = D.getType();
   assert(Ty->isConstantSizeType() && "VLAs can't be static");
@@ -182,7 +184,7 @@ CodeGenFunction::CreateStaticVarDecl(const VarDecl &D,
   if (D.hasAttr<AsmLabelAttr>())
     Name = CGM.getMangledName(&D);
   else
-    Name = GetStaticDeclName(*this, D);
+    Name = GetStaticDeclName(*this, D, Separator);
 
   llvm::Type *LTy = CGM.getTypes().ConvertTypeForMem(Ty);
   unsigned AddrSpace =
@@ -300,7 +302,7 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
     CGM.getStaticLocalDeclAddress(&D);
 
   if (!addr)
-    addr = CreateStaticVarDecl(D, Linkage);
+    addr = CreateStaticVarDecl(D, ".", Linkage);
 
   // Store into LocalDeclMap before generating initializer to handle
   // circular references.
@@ -343,7 +345,7 @@ void CodeGenFunction::EmitStaticVarDecl(const VarDecl &D,
   DMEntry = castedAddr;
   CGM.setStaticLocalDeclAddress(&D, castedAddr);
 
-  CGM.getSanitizerMetadata()->reportGlobalToASan(var, D);
+  CGM.reportGlobalToASan(var, D);
 
   // Emit global variable debug descriptor for static vars.
   CGDebugInfo *DI = getDebugInfo();
@@ -1127,7 +1129,7 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
   } else {
     // Otherwise, create a temporary global with the initializer then
     // memcpy from the global to the alloca.
-    std::string Name = GetStaticDeclName(*this, D);
+    std::string Name = GetStaticDeclName(*this, D, ".");
     llvm::GlobalVariable *GV =
       new llvm::GlobalVariable(CGM.getModule(), constant->getType(), true,
                                llvm::GlobalValue::PrivateLinkage,
@@ -1654,9 +1656,7 @@ void CodeGenFunction::EmitParmDecl(const VarDecl &D, llvm::Value *Arg,
     DeclPtr = Arg->getType() == IRTy ? Arg : Builder.CreateBitCast(Arg, IRTy,
                                                                    D.getName());
     // Push a destructor cleanup for this parameter if the ABI requires it.
-    // Don't push a cleanup in a thunk for a method that will also emit a
-    // cleanup.
-    if (!IsScalar && !CurFuncIsThunk &&
+    if (!IsScalar &&
         getTarget().getCXXABI().areArgsDestroyedLeftToRightInCallee()) {
       const CXXRecordDecl *RD = Ty->getAsCXXRecordDecl();
       if (RD && RD->hasNonTrivialDestructor())

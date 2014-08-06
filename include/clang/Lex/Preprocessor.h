@@ -433,11 +433,16 @@ private:  // Cached tokens state.
   struct MacroInfoChain {
     MacroInfo MI;
     MacroInfoChain *Next;
+    MacroInfoChain *Prev;
   };
 
   /// MacroInfos are managed as a chain for easy disposal.  This is the head
   /// of that list.
   MacroInfoChain *MIChainHead;
+
+  /// A "freelist" of MacroInfo objects that can be reused for quick
+  /// allocation.
+  MacroInfoChain *MICache;
 
   struct DeserializedMacroInfoChain {
     MacroInfo MI;
@@ -600,15 +605,13 @@ public:
   void appendMacroDirective(IdentifierInfo *II, MacroDirective *MD);
   DefMacroDirective *appendDefMacroDirective(IdentifierInfo *II, MacroInfo *MI,
                                              SourceLocation Loc,
-                                             unsigned ImportedFromModuleID,
-                                             ArrayRef<unsigned> Overrides) {
-    DefMacroDirective *MD =
-        AllocateDefMacroDirective(MI, Loc, ImportedFromModuleID, Overrides);
+                                             bool isImported) {
+    DefMacroDirective *MD = AllocateDefMacroDirective(MI, Loc, isImported);
     appendMacroDirective(II, MD);
     return MD;
   }
   DefMacroDirective *appendDefMacroDirective(IdentifierInfo *II, MacroInfo *MI){
-    return appendDefMacroDirective(II, MI, MI->getDefinitionLoc(), 0, None);
+    return appendDefMacroDirective(II, MI, MI->getDefinitionLoc(), false);
   }
   /// \brief Set a MacroDirective that was loaded from a PCH file.
   void setLoadedMacroDirective(IdentifierInfo *II, MacroDirective *MD);
@@ -1367,16 +1370,17 @@ private:
   /// \brief Allocate a new MacroInfo object.
   MacroInfo *AllocateMacroInfo();
 
-  DefMacroDirective *
-  AllocateDefMacroDirective(MacroInfo *MI, SourceLocation Loc,
-                            unsigned ImportedFromModuleID = 0,
-                            ArrayRef<unsigned> Overrides = None);
-  UndefMacroDirective *
-  AllocateUndefMacroDirective(SourceLocation UndefLoc,
-                              unsigned ImportedFromModuleID = 0,
-                              ArrayRef<unsigned> Overrides = None);
+  DefMacroDirective *AllocateDefMacroDirective(MacroInfo *MI,
+                                               SourceLocation Loc,
+                                               bool isImported);
+  UndefMacroDirective *AllocateUndefMacroDirective(SourceLocation UndefLoc);
   VisibilityMacroDirective *AllocateVisibilityMacroDirective(SourceLocation Loc,
                                                              bool isPublic);
+
+  /// \brief Release the specified MacroInfo for re-use.
+  ///
+  /// This memory will  be reused for allocating new MacroInfo objects.
+  void ReleaseMacroInfo(MacroInfo* MI);
 
   /// \brief Lex and validate a macro name, which occurs after a
   /// \#define or \#undef. 

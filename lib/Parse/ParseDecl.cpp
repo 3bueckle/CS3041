@@ -2449,11 +2449,8 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
                                         DeclSpecContext DSContext,
                                         LateParsedAttrList *LateAttrs) {
   if (DS.getSourceRange().isInvalid()) {
-    // Start the range at the current token but make the end of the range
-    // invalid.  This will make the entire range invalid unless we successfully
-    // consume a token.
     DS.SetRangeStart(Tok.getLocation());
-    DS.SetRangeEnd(SourceLocation());
+    DS.SetRangeEnd(Tok.getLocation());
   }
 
   bool EnteringContext = (DSContext == DSC_class || DSContext == DSC_top_level);
@@ -4376,18 +4373,20 @@ bool Parser::isConstructorDeclarator(bool IsUnqualified) {
 ///          type-qualifier-list: [C99 6.7.5]
 ///            type-qualifier
 /// [vendor]   attributes
-///              [ only if AttrReqs & AR_VendorAttributesParsed ]
+///              [ only if VendorAttributesAllowed=true ]
 ///            type-qualifier-list type-qualifier
 /// [vendor]   type-qualifier-list attributes
-///              [ only if AttrReqs & AR_VendorAttributesParsed ]
+///              [ only if VendorAttributesAllowed=true ]
 /// [C++0x]    attribute-specifier[opt] is allowed before cv-qualifier-seq
-///              [ only if AttReqs & AR_CXX11AttributesParsed ]
-/// Note: vendor can be GNU, MS, etc and can be explicitly controlled via
-/// AttrRequirements bitmask values.
-void Parser::ParseTypeQualifierListOpt(DeclSpec &DS, unsigned AttrReqs,
+///              [ only if CXX11AttributesAllowed=true ]
+/// Note: vendor can be GNU, MS, etc.
+///
+void Parser::ParseTypeQualifierListOpt(DeclSpec &DS,
+                                       bool VendorAttributesAllowed,
+                                       bool CXX11AttributesAllowed,
                                        bool AtomicAllowed,
                                        bool IdentifierRequired) {
-  if (getLangOpts().CPlusPlus11 && (AttrReqs & AR_CXX11AttributesParsed) &&
+  if (getLangOpts().CPlusPlus11 && CXX11AttributesAllowed &&
       isCXX11AttributeSpecifier()) {
     ParsedAttributesWithRange attrs(AttrFactory);
     ParseCXX11Attributes(attrs);
@@ -4440,7 +4439,7 @@ void Parser::ParseTypeQualifierListOpt(DeclSpec &DS, unsigned AttrReqs,
     case tok::kw___uptr:
       // GNU libc headers in C mode use '__uptr' as an identifer which conflicts
       // with the MS modifier keyword.
-      if ((AttrReqs & AR_DeclspecAttributesParsed) && !getLangOpts().CPlusPlus &&
+      if (VendorAttributesAllowed && !getLangOpts().CPlusPlus &&
           IdentifierRequired && DS.isEmpty() && NextToken().is(tok::semi)) {
         if (TryKeywordIdentFallback(false))
           continue;
@@ -4454,26 +4453,19 @@ void Parser::ParseTypeQualifierListOpt(DeclSpec &DS, unsigned AttrReqs,
     case tok::kw___fastcall:
     case tok::kw___thiscall:
     case tok::kw___unaligned:
-      if (AttrReqs & AR_DeclspecAttributesParsed) {
+      if (VendorAttributesAllowed) {
         ParseMicrosoftTypeAttributes(DS.getAttributes());
         continue;
       }
       goto DoneWithTypeQuals;
     case tok::kw___pascal:
-      if (AttrReqs & AR_VendorAttributesParsed) {
+      if (VendorAttributesAllowed) {
         ParseBorlandTypeAttributes(DS.getAttributes());
         continue;
       }
       goto DoneWithTypeQuals;
     case tok::kw___attribute:
-      if (AttrReqs & AR_GNUAttributesParsedAndRejected)
-        // When GNU attributes are expressly forbidden, diagnose their usage.
-        Diag(Tok, diag::err_attributes_not_allowed);
-
-      // Parse the attributes even if they are rejected to ensure that error
-      // recovery is graceful.
-      if (AttrReqs & AR_GNUAttributesParsed ||
-          AttrReqs & AR_GNUAttributesParsedAndRejected) {
+      if (VendorAttributesAllowed) {
         ParseGNUAttributes(DS.getAttributes());
         continue; // do *not* consume the next token!
       }
@@ -4609,13 +4601,8 @@ void Parser::ParseDeclaratorInternal(Declarator &D,
     // Is a pointer.
     DeclSpec DS(AttrFactory);
 
-    // GNU attributes are not allowed here in a new-type-id, but Declspec and
-    // C++11 attributes are allowed.
-    unsigned Reqs = AR_CXX11AttributesParsed | AR_DeclspecAttributesParsed |
-                            ((D.getContext() != Declarator::CXXNewContext)
-                                 ? AR_GNUAttributesParsed
-                                 : AR_GNUAttributesParsedAndRejected);
-    ParseTypeQualifierListOpt(DS, Reqs, true, !D.mayOmitIdentifier());
+    // FIXME: GNU attributes are not allowed here in a new-type-id.
+    ParseTypeQualifierListOpt(DS, true, true, true, !D.mayOmitIdentifier());
     D.ExtendWithDeclSpec(DS);
 
     // Recursively parse the declarator.
@@ -5162,7 +5149,8 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
       // with the virt-specifier-seq and pure-specifier in the same way.
 
       // Parse cv-qualifier-seq[opt].
-      ParseTypeQualifierListOpt(DS, AR_NoAttributesParsed,
+      ParseTypeQualifierListOpt(DS, /*VendorAttributesAllowed*/ false,
+                                /*CXX11AttributesAllowed*/ false,
                                 /*AtomicAllowed*/ false);
       if (!DS.getSourceRange().getEnd().isInvalid()) {
         EndLoc = DS.getSourceRange().getEnd();
@@ -5558,7 +5546,7 @@ void Parser::ParseBracketDeclarator(Declarator &D) {
   // If there is a type-qualifier-list, read it now.
   // Type qualifiers in an array subscript are a C99 feature.
   DeclSpec DS(AttrFactory);
-  ParseTypeQualifierListOpt(DS, AR_CXX11AttributesParsed);
+  ParseTypeQualifierListOpt(DS, false /*no attributes*/);
 
   // If we haven't already read 'static', check to see if there is one after the
   // type-qualifier-list.

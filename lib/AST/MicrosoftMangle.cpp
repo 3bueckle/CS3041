@@ -279,8 +279,7 @@ private:
 
   void mangleTemplateArgs(const TemplateDecl *TD,
                           const TemplateArgumentList &TemplateArgs);
-  void mangleTemplateArg(const TemplateDecl *TD, const TemplateArgument &TA,
-                         const NamedDecl *Parm);
+  void mangleTemplateArg(const TemplateDecl *TD, const TemplateArgument &TA);
 };
 }
 
@@ -802,7 +801,10 @@ void MicrosoftCXXNameMangler::mangleUnqualifiedName(const NamedDecl *ND,
 void MicrosoftCXXNameMangler::mangleNestedName(const NamedDecl *ND) {
   // <postfix> ::= <unqualified-name> [<postfix>]
   //           ::= <substitution> [<postfix>]
-  const DeclContext *DC = getEffectiveDeclContext(ND);
+  if (isLambda(ND))
+    return;
+
+  const DeclContext *DC = ND->getDeclContext();
 
   while (!DC->isTranslationUnit()) {
     if (isa<TagDecl>(ND) || isa<VarDecl>(ND)) {
@@ -1102,18 +1104,12 @@ void MicrosoftCXXNameMangler::mangleExpression(const Expr *E) {
 void MicrosoftCXXNameMangler::mangleTemplateArgs(
     const TemplateDecl *TD, const TemplateArgumentList &TemplateArgs) {
   // <template-args> ::= <template-arg>+
-  const TemplateParameterList *TPL = TD->getTemplateParameters();
-  assert(TPL->size() == TemplateArgs.size() &&
-         "size mismatch between args and parms!");
-
-  unsigned Idx = 0;
   for (const TemplateArgument &TA : TemplateArgs.asArray())
-    mangleTemplateArg(TD, TA, TPL->getParam(Idx++));
+    mangleTemplateArg(TD, TA);
 }
 
 void MicrosoftCXXNameMangler::mangleTemplateArg(const TemplateDecl *TD,
-                                                const TemplateArgument &TA,
-                                                const NamedDecl *Parm) {
+                                                const TemplateArgument &TA) {
   // <template-arg> ::= <type>
   //                ::= <integer-literal>
   //                ::= <member-data-pointer>
@@ -1176,33 +1172,17 @@ void MicrosoftCXXNameMangler::mangleTemplateArg(const TemplateDecl *TD,
   case TemplateArgument::Pack: {
     ArrayRef<TemplateArgument> TemplateArgs = TA.getPackAsArray();
     if (TemplateArgs.empty()) {
-      if (isa<TemplateTypeParmDecl>(Parm) ||
-          isa<TemplateTemplateParmDecl>(Parm))
-        Out << "$$V";
-      else if (isa<NonTypeTemplateParmDecl>(Parm))
-        Out << "$S";
-      else
-        llvm_unreachable("unexpected template parameter decl!");
+      Out << "$S";
     } else {
       for (const TemplateArgument &PA : TemplateArgs)
-        mangleTemplateArg(TD, PA, Parm);
+        mangleTemplateArg(TD, PA);
     }
     break;
   }
-  case TemplateArgument::Template: {
-    const NamedDecl *ND =
-        TA.getAsTemplate().getAsTemplateDecl()->getTemplatedDecl();
-    if (const auto *TD = dyn_cast<TagDecl>(ND)) {
-      mangleType(TD);
-    } else if (isa<TypeAliasDecl>(ND)) {
-      // FIXME: The mangling, while compatible with VS "14", is horribly
-      // broken.  Update this when they release their next compiler.
-      Out << '$';
-    } else {
-      llvm_unreachable("unexpected template template NamedDecl!");
-    }
+  case TemplateArgument::Template:
+    mangleType(cast<TagDecl>(
+        TA.getAsTemplate().getAsTemplateDecl()->getTemplatedDecl()));
     break;
-  }
   }
 }
 

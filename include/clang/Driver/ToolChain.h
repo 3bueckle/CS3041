@@ -118,7 +118,7 @@ public:
 
   /// \brief Provide the default architecture name (as expected by -arch) for
   /// this toolchain. Note t
-  StringRef getDefaultUniversalArchName() const;
+  std::string getDefaultUniversalArchName() const;
 
   std::string getTripleString() const {
     return Triple.getTriple();

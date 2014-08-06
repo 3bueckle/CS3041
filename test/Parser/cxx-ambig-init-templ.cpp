@@ -169,9 +169,3 @@ namespace ElaboratedTypeSpecifiers {
     enum E {};
   };
 }
-
-namespace PR20459 {
-  template <typename EncTraits> struct A {
-     void foo(int = EncTraits::template TypeEnc<int, int>::val); // ok
-  };
-}

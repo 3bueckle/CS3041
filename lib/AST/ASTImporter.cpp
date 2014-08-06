@@ -1622,14 +1622,15 @@ QualType ASTNodeImporter::VisitFunctionProtoType(const FunctionProtoType *T) {
   ToEPI.HasTrailingReturn = FromEPI.HasTrailingReturn;
   ToEPI.TypeQuals = FromEPI.TypeQuals;
   ToEPI.RefQualifier = FromEPI.RefQualifier;
-  ToEPI.ExceptionSpec.Type = FromEPI.ExceptionSpec.Type;
-  ToEPI.ExceptionSpec.Exceptions = ExceptionTypes;
-  ToEPI.ExceptionSpec.NoexceptExpr =
-      Importer.Import(FromEPI.ExceptionSpec.NoexceptExpr);
-  ToEPI.ExceptionSpec.SourceDecl = cast_or_null<FunctionDecl>(
-      Importer.Import(FromEPI.ExceptionSpec.SourceDecl));
-  ToEPI.ExceptionSpec.SourceTemplate = cast_or_null<FunctionDecl>(
-      Importer.Import(FromEPI.ExceptionSpec.SourceTemplate));
+  ToEPI.NumExceptions = ExceptionTypes.size();
+  ToEPI.Exceptions = ExceptionTypes.data();
+  ToEPI.ConsumedParameters = FromEPI.ConsumedParameters;
+  ToEPI.ExceptionSpecType = FromEPI.ExceptionSpecType;
+  ToEPI.NoexceptExpr = Importer.Import(FromEPI.NoexceptExpr);
+  ToEPI.ExceptionSpecDecl = cast_or_null<FunctionDecl>(
+                                Importer.Import(FromEPI.ExceptionSpecDecl));
+  ToEPI.ExceptionSpecTemplate = cast_or_null<FunctionDecl>(
+                                Importer.Import(FromEPI.ExceptionSpecTemplate));
 
   return Importer.getToContext().getFunctionType(ToResultType, ArgTypes, ToEPI);
 }
@@ -2711,9 +2712,8 @@ Decl *ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
     // FunctionDecl that we are importing the FunctionProtoType for.
     // To avoid an infinite recursion when importing, create the FunctionDecl
     // with a simplified function type and update it afterwards.
-    if (FromEPI.ExceptionSpec.SourceDecl ||
-        FromEPI.ExceptionSpec.SourceTemplate ||
-        FromEPI.ExceptionSpec.NoexceptExpr) {
+    if (FromEPI.ExceptionSpecDecl || FromEPI.ExceptionSpecTemplate ||
+        FromEPI.NoexceptExpr) {
       FunctionProtoType::ExtProtoInfo DefaultEPI;
       FromTy = Importer.getFromContext().getFunctionType(
           FromFPT->getReturnType(), FromFPT->getParamTypes(), DefaultEPI);

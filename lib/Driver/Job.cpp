@@ -95,8 +95,7 @@ static void PrintArg(raw_ostream &OS, const char *Arg, bool Quote) {
 
 void Command::Print(raw_ostream &OS, const char *Terminator, bool Quote,
                     bool CrashReport) const {
-  // Always quote the exe.
-  PrintArg(OS, Executable, /*Quote=*/true);
+  OS << " \"" << Executable << '"';
 
   for (size_t i = 0, e = Arguments.size(); i < e; ++i) {
     const char *const Arg = Arguments[i];

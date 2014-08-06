@@ -1953,19 +1953,10 @@ void Parser::ParseCXXMemberDeclaratorBeforeInitializer(
 
   // For compatibility with code written to older Clang, also accept a
   // virt-specifier *after* the GNU attributes.
-  if (BitfieldSize.isUnset() && VS.isUnset()) {
+  // FIXME: If we saw any attributes that are known to GCC followed by a
+  // virt-specifier, issue a GCC-compat warning.
+  if (BitfieldSize.isUnset() && VS.isUnset())
     ParseOptionalCXX11VirtSpecifierSeq(VS, getCurrentClass().IsInterface);
-    if (!VS.isUnset()) {
-      // If we saw any GNU-style attributes that are known to GCC followed by a
-      // virt-specifier, issue a GCC-compat warning.
-      const AttributeList *Attr = DeclaratorInfo.getAttributes();
-      while (Attr) {
-        if (Attr->isKnownToGCC() && !Attr->isCXX11Attribute())
-          Diag(Attr->getLoc(), diag::warn_gcc_attribute_location);
-        Attr = Attr->getNext();
-      }
-    }
-  }
 }
 
 /// ParseCXXClassMemberDeclaration - Parse a C++ class member declaration.
@@ -2075,10 +2066,9 @@ void Parser::ParseCXXClassMemberDeclaration(AccessSpecifier AS,
     }
   }
 
-  // static_assert-declaration. A templated static_assert declaration is
-  // diagnosed in Parser::ParseSingleDeclarationAfterTemplate.
-  if (!TemplateInfo.Kind &&
-      (Tok.is(tok::kw_static_assert) || Tok.is(tok::kw__Static_assert))) {
+  // static_assert-declaration
+  if (Tok.is(tok::kw_static_assert) || Tok.is(tok::kw__Static_assert)) {
+    // FIXME: Check for templates
     SourceLocation DeclEnd;
     ParseStaticAssertDeclaration(DeclEnd);
     return;

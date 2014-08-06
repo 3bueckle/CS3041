@@ -3131,12 +3131,13 @@ static void InstantiateExceptionSpec(Sema &SemaRef, FunctionDecl *New,
     }
   }
 
-  FunctionProtoType::ExceptionSpecInfo ESI;
-  ESI.Type = Proto->getExceptionSpecType();
-  ESI.Exceptions = Exceptions;
-  ESI.NoexceptExpr = NoexceptExpr;
+  FunctionProtoType::ExtProtoInfo EPI;
+  EPI.ExceptionSpecType = Proto->getExceptionSpecType();
+  EPI.NumExceptions = Exceptions.size();
+  EPI.Exceptions = Exceptions.data();
+  EPI.NoexceptExpr = NoexceptExpr;
 
-  SemaRef.UpdateExceptionSpec(New, ESI);
+  SemaRef.UpdateExceptionSpec(New, EPI);
 }
 
 void Sema::InstantiateExceptionSpec(SourceLocation PointOfInstantiation,
@@ -3150,7 +3151,9 @@ void Sema::InstantiateExceptionSpec(SourceLocation PointOfInstantiation,
   if (Inst.isInvalid()) {
     // We hit the instantiation depth limit. Clear the exception specification
     // so that our callers don't have to cope with EST_Uninstantiated.
-    UpdateExceptionSpec(Decl, EST_None);
+    FunctionProtoType::ExtProtoInfo EPI;
+    EPI.ExceptionSpecType = EST_None;
+    UpdateExceptionSpec(Decl, EPI);
     return;
   }
 
@@ -3215,14 +3218,14 @@ TemplateDeclInstantiator::InitFunctionInstantiation(FunctionDecl *New,
     // DR1330: In C++11, defer instantiation of a non-trivial
     // exception specification.
     if (SemaRef.getLangOpts().CPlusPlus11 &&
-        EPI.ExceptionSpec.Type != EST_None &&
-        EPI.ExceptionSpec.Type != EST_DynamicNone &&
-        EPI.ExceptionSpec.Type != EST_BasicNoexcept) {
+        EPI.ExceptionSpecType != EST_None &&
+        EPI.ExceptionSpecType != EST_DynamicNone &&
+        EPI.ExceptionSpecType != EST_BasicNoexcept) {
       FunctionDecl *ExceptionSpecTemplate = Tmpl;
-      if (EPI.ExceptionSpec.Type == EST_Uninstantiated)
-        ExceptionSpecTemplate = EPI.ExceptionSpec.SourceTemplate;
+      if (EPI.ExceptionSpecType == EST_Uninstantiated)
+        ExceptionSpecTemplate = EPI.ExceptionSpecTemplate;
       ExceptionSpecificationType NewEST = EST_Uninstantiated;
-      if (EPI.ExceptionSpec.Type == EST_Unevaluated)
+      if (EPI.ExceptionSpecType == EST_Unevaluated)
         NewEST = EST_Unevaluated;
 
       // Mark the function has having an uninstantiated exception specification.
@@ -3230,9 +3233,9 @@ TemplateDeclInstantiator::InitFunctionInstantiation(FunctionDecl *New,
         = New->getType()->getAs<FunctionProtoType>();
       assert(NewProto && "Template instantiation without function prototype?");
       EPI = NewProto->getExtProtoInfo();
-      EPI.ExceptionSpec.Type = NewEST;
-      EPI.ExceptionSpec.SourceDecl = New;
-      EPI.ExceptionSpec.SourceTemplate = ExceptionSpecTemplate;
+      EPI.ExceptionSpecType = NewEST;
+      EPI.ExceptionSpecDecl = New;
+      EPI.ExceptionSpecTemplate = ExceptionSpecTemplate;
       New->setType(SemaRef.Context.getFunctionType(
           NewProto->getReturnType(), NewProto->getParamTypes(), EPI));
     } else {

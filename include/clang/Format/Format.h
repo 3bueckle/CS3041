@@ -235,13 +235,6 @@ struct FormatStyle {
   /// initializer lists.
   unsigned ConstructorInitializerIndentWidth;
 
-  /// \brief If \c true, always break after function definition return types.
-  ///
-  /// More truthfully called 'break before the identifier following the type
-  /// in a function definition'. PenaltyReturnTypeOnItsOwnLine becomes
-  /// irrelevant.
-  bool AlwaysBreakAfterDefinitionReturnType;
-
   /// \brief If \c true, always break after the <tt>template<...></tt> of a
   /// template declaration.
   bool AlwaysBreakTemplateDeclarations;
@@ -276,7 +269,7 @@ struct FormatStyle {
     /// Like \c Attach, but break before braces on function, namespace and
     /// class definitions.
     BS_Linux,
-    /// Like \c Attach, but break before function definitions, and 'else'.
+    /// Like \c Attach, but break before function definitions.
     BS_Stroustrup,
     /// Always break before braces.
     BS_Allman,
@@ -377,8 +370,6 @@ struct FormatStyle {
            AllowShortIfStatementsOnASingleLine ==
                R.AllowShortIfStatementsOnASingleLine &&
            AllowShortLoopsOnASingleLine == R.AllowShortLoopsOnASingleLine &&
-           AlwaysBreakAfterDefinitionReturnType ==
-               R.AlwaysBreakAfterDefinitionReturnType &&
            AlwaysBreakTemplateDeclarations ==
                R.AlwaysBreakTemplateDeclarations &&
            AlwaysBreakBeforeMultilineStrings ==

@@ -774,13 +774,12 @@ IdentifierInfo *ASTIdentifierLookupTrait::ReadData(const internal_key_type& k,
     DataLen -= 4;
     SmallVector<uint32_t, 8> LocalMacroIDs;
     if (hasSubmoduleMacros) {
-      while (true) {
-        uint32_t LocalMacroID =
-            endian::readNext<uint32_t, little, unaligned>(d);
+      while (uint32_t LocalMacroID =
+                 endian::readNext<uint32_t, little, unaligned>(d)) {
         DataLen -= 4;
-        if (LocalMacroID == 0xdeadbeef) break;
         LocalMacroIDs.push_back(LocalMacroID);
       }
+      DataLen -= 4;
     }
 
     if (F.Kind == MK_Module) {
@@ -1733,12 +1732,10 @@ struct ASTReader::ModuleMacroInfo {
     return llvm::makeArrayRef(Overrides + 1, *Overrides);
   }
 
-  MacroDirective *import(Preprocessor &PP, SourceLocation ImportLoc) const {
+  DefMacroDirective *import(Preprocessor &PP, SourceLocation ImportLoc) const {
     if (!MI)
-      return PP.AllocateUndefMacroDirective(ImportLoc, SubModID,
-                                            getOverriddenSubmodules());
-    return PP.AllocateDefMacroDirective(MI, ImportLoc, SubModID,
-                                        getOverriddenSubmodules());
+      return nullptr;
+    return PP.AllocateDefMacroDirective(MI, ImportLoc, /*isImported=*/true);
   }
 };
 
@@ -1793,7 +1790,7 @@ void ASTReader::resolvePendingMacro(IdentifierInfo *II,
     // install if we make this module visible.
     HiddenNamesMap[Owner].HiddenMacros.insert(std::make_pair(II, MMI));
   } else {
-    installImportedMacro(II, MMI, Owner);
+    installImportedMacro(II, MMI, Owner, /*FromFinalization*/false);
   }
 }
 
@@ -1831,35 +1828,22 @@ void ASTReader::installPCHMacroDirectives(IdentifierInfo *II,
     case MacroDirective::MD_Define: {
       GlobalMacroID GMacID = getGlobalMacroID(M, Record[Idx++]);
       MacroInfo *MI = getMacro(GMacID);
-      SubmoduleID ImportedFrom = Record[Idx++];
-      bool IsAmbiguous = Record[Idx++];
-      llvm::SmallVector<unsigned, 4> Overrides;
-      if (ImportedFrom) {
-        Overrides.insert(Overrides.end(),
-                         &Record[Idx] + 1, &Record[Idx] + 1 + Record[Idx]);
-        Idx += Overrides.size() + 1;
-      }
+      bool isImported = Record[Idx++];
+      bool isAmbiguous = Record[Idx++];
       DefMacroDirective *DefMD =
-          PP.AllocateDefMacroDirective(MI, Loc, ImportedFrom, Overrides);
-      DefMD->setAmbiguous(IsAmbiguous);
+          PP.AllocateDefMacroDirective(MI, Loc, isImported);
+      DefMD->setAmbiguous(isAmbiguous);
       MD = DefMD;
       break;
     }
-    case MacroDirective::MD_Undefine: {
-      SubmoduleID ImportedFrom = Record[Idx++];
-      llvm::SmallVector<unsigned, 4> Overrides;
-      if (ImportedFrom) {
-        Overrides.insert(Overrides.end(),
-                         &Record[Idx] + 1, &Record[Idx] + 1 + Record[Idx]);
-        Idx += Overrides.size() + 1;
-      }
-      MD = PP.AllocateUndefMacroDirective(Loc, ImportedFrom, Overrides);
+    case MacroDirective::MD_Undefine:
+      MD = PP.AllocateUndefMacroDirective(Loc);
       break;
-    }
-    case MacroDirective::MD_Visibility:
+    case MacroDirective::MD_Visibility: {
       bool isPublic = Record[Idx++];
       MD = PP.AllocateVisibilityMacroDirective(Loc, isPublic);
       break;
+    }
     }
 
     if (!Latest)
@@ -1893,7 +1877,6 @@ static bool areDefinedInSystemModules(MacroInfo *PrevMI, MacroInfo *NewMI,
 }
 
 void ASTReader::removeOverriddenMacros(IdentifierInfo *II,
-                                       SourceLocation ImportLoc,
                                        AmbiguousMacros &Ambig,
                                        ArrayRef<SubmoduleID> Overrides) {
   for (unsigned OI = 0, ON = Overrides.size(); OI != ON; ++OI) {
@@ -1904,12 +1887,9 @@ void ASTReader::removeOverriddenMacros(IdentifierInfo *II,
     HiddenNames &Hidden = HiddenNamesMap[Owner];
     HiddenMacrosMap::iterator HI = Hidden.HiddenMacros.find(II);
     if (HI != Hidden.HiddenMacros.end()) {
-      // Register the macro now so we don't lose it when we re-export.
-      PP.appendMacroDirective(II, HI->second->import(PP, ImportLoc));
-
       auto SubOverrides = HI->second->getOverriddenSubmodules();
       Hidden.HiddenMacros.erase(HI);
-      removeOverriddenMacros(II, ImportLoc, Ambig, SubOverrides);
+      removeOverriddenMacros(II, Ambig, SubOverrides);
     }
 
     // If this macro is already in our list of conflicts, remove it from there.
@@ -1923,7 +1903,6 @@ void ASTReader::removeOverriddenMacros(IdentifierInfo *II,
 
 ASTReader::AmbiguousMacros *
 ASTReader::removeOverriddenMacros(IdentifierInfo *II,
-                                  SourceLocation ImportLoc,
                                   ArrayRef<SubmoduleID> Overrides) {
   MacroDirective *Prev = PP.getMacroDirective(II);
   if (!Prev && Overrides.empty())
@@ -1936,7 +1915,7 @@ ASTReader::removeOverriddenMacros(IdentifierInfo *II,
     AmbiguousMacros &Ambig = AmbiguousMacroDefs[II];
     Ambig.push_back(PrevDef);
 
-    removeOverriddenMacros(II, ImportLoc, Ambig, Overrides);
+    removeOverriddenMacros(II, Ambig, Overrides);
 
     if (!Ambig.empty())
       return &Ambig;
@@ -1948,7 +1927,7 @@ ASTReader::removeOverriddenMacros(IdentifierInfo *II,
     if (PrevDef)
       Ambig.push_back(PrevDef);
 
-    removeOverriddenMacros(II, ImportLoc, Ambig, Overrides);
+    removeOverriddenMacros(II, Ambig, Overrides);
 
     if (!Ambig.empty()) {
       AmbiguousMacros &Result = AmbiguousMacroDefs[II];
@@ -1962,11 +1941,11 @@ ASTReader::removeOverriddenMacros(IdentifierInfo *II,
 }
 
 void ASTReader::installImportedMacro(IdentifierInfo *II, ModuleMacroInfo *MMI,
-                                     Module *Owner) {
+                                     Module *Owner, bool FromFinalization) {
   assert(II && Owner);
 
   SourceLocation ImportLoc = Owner->MacroVisibilityLoc;
-  if (ImportLoc.isInvalid()) {
+  if (ImportLoc.isInvalid() && !FromFinalization) {
     // FIXME: If we made macros from this module visible but didn't provide a
     // source location for the import, we don't have a location for the macro.
     // Use the location at which the containing module file was first imported
@@ -1976,16 +1955,18 @@ void ASTReader::installImportedMacro(IdentifierInfo *II, ModuleMacroInfo *MMI,
   }
 
   AmbiguousMacros *Prev =
-      removeOverriddenMacros(II, ImportLoc, MMI->getOverriddenSubmodules());
+      removeOverriddenMacros(II, MMI->getOverriddenSubmodules());
 
   // Create a synthetic macro definition corresponding to the import (or null
   // if this was an undefinition of the macro).
-  MacroDirective *Imported = MMI->import(PP, ImportLoc);
-  DefMacroDirective *MD = dyn_cast<DefMacroDirective>(Imported);
+  DefMacroDirective *MD = MMI->import(PP, ImportLoc);
 
   // If there's no ambiguity, just install the macro.
   if (!Prev) {
-    PP.appendMacroDirective(II, Imported);
+    if (MD)
+      PP.appendMacroDirective(II, MD);
+    else
+      PP.appendMacroDirective(II, PP.AllocateUndefMacroDirective(ImportLoc));
     return;
   }
   assert(!Prev->empty());
@@ -1993,14 +1974,10 @@ void ASTReader::installImportedMacro(IdentifierInfo *II, ModuleMacroInfo *MMI,
   if (!MD) {
     // We imported a #undef that didn't remove all prior definitions. The most
     // recent prior definition remains, and we install it in the place of the
-    // imported directive, as if by a local #pragma pop_macro.
+    // imported directive.
     MacroInfo *NewMI = Prev->back()->getInfo();
     Prev->pop_back();
-    MD = PP.AllocateDefMacroDirective(NewMI, ImportLoc);
-
-    // Install our #undef first so that we don't lose track of it. We'll replace
-    // this with whichever macro definition ends up winning.
-    PP.appendMacroDirective(II, Imported);
+    MD = PP.AllocateDefMacroDirective(NewMI, ImportLoc, /*Imported*/true);
   }
 
   // We're introducing a macro definition that creates or adds to an ambiguity.
@@ -3359,13 +3336,8 @@ void ASTReader::makeNamesVisible(const HiddenNames &Names, Module *Owner,
 
   assert((FromFinalization || Owner->NameVisibility >= Module::MacrosVisible) &&
          "nothing to make visible?");
-  for (const auto &Macro : Names.HiddenMacros) {
-    if (FromFinalization)
-      PP.appendMacroDirective(Macro.first,
-                              Macro.second->import(PP, SourceLocation()));
-    else
-      installImportedMacro(Macro.first, Macro.second, Owner);
-  }
+  for (const auto &Macro : Names.HiddenMacros)
+    installImportedMacro(Macro.first, Macro.second, Owner, FromFinalization);
 }
 
 void ASTReader::makeModuleVisible(Module *Mod,
@@ -5262,19 +5234,17 @@ QualType ASTReader::readTypeRecord(unsigned Index) {
                                         /*produces*/ Record[5]);
 
     unsigned Idx = 6;
+    unsigned NumParams = Record[Idx++];
+    SmallVector<QualType, 16> ParamTypes;
+    for (unsigned I = 0; I != NumParams; ++I)
+      ParamTypes.push_back(readType(*Loc.F, Record, Idx));
 
     EPI.Variadic = Record[Idx++];
     EPI.HasTrailingReturn = Record[Idx++];
     EPI.TypeQuals = Record[Idx++];
     EPI.RefQualifier = static_cast<RefQualifierKind>(Record[Idx++]);
     SmallVector<QualType, 8> ExceptionStorage;
-    readExceptionSpec(*Loc.F, ExceptionStorage, EPI.ExceptionSpec, Record, Idx);
-
-    unsigned NumParams = Record[Idx++];
-    SmallVector<QualType, 16> ParamTypes;
-    for (unsigned I = 0; I != NumParams; ++I)
-      ParamTypes.push_back(readType(*Loc.F, Record, Idx));
-
+    readExceptionSpec(*Loc.F, ExceptionStorage, EPI, Record, Idx);
     return Context.getFunctionType(ResultType, ParamTypes, EPI);
   }
 
@@ -5537,22 +5507,24 @@ QualType ASTReader::readTypeRecord(unsigned Index) {
 
 void ASTReader::readExceptionSpec(ModuleFile &ModuleFile,
                                   SmallVectorImpl<QualType> &Exceptions,
-                                  FunctionProtoType::ExceptionSpecInfo &ESI,
+                                  FunctionProtoType::ExtProtoInfo &EPI,
                                   const RecordData &Record, unsigned &Idx) {
   ExceptionSpecificationType EST =
       static_cast<ExceptionSpecificationType>(Record[Idx++]);
-  ESI.Type = EST;
+  EPI.ExceptionSpecType = EST;
   if (EST == EST_Dynamic) {
-    for (unsigned I = 0, N = Record[Idx++]; I != N; ++I)
+    EPI.NumExceptions = Record[Idx++];
+    for (unsigned I = 0; I != EPI.NumExceptions; ++I)
       Exceptions.push_back(readType(ModuleFile, Record, Idx));
-    ESI.Exceptions = Exceptions;
+    EPI.Exceptions = Exceptions.data();
   } else if (EST == EST_ComputedNoexcept) {
-    ESI.NoexceptExpr = ReadExpr(ModuleFile);
+    EPI.NoexceptExpr = ReadExpr(ModuleFile);
   } else if (EST == EST_Uninstantiated) {
-    ESI.SourceDecl = ReadDeclAs<FunctionDecl>(ModuleFile, Record, Idx);
-    ESI.SourceTemplate = ReadDeclAs<FunctionDecl>(ModuleFile, Record, Idx);
+    EPI.ExceptionSpecDecl = ReadDeclAs<FunctionDecl>(ModuleFile, Record, Idx);
+    EPI.ExceptionSpecTemplate =
+        ReadDeclAs<FunctionDecl>(ModuleFile, Record, Idx);
   } else if (EST == EST_Unevaluated) {
-    ESI.SourceDecl = ReadDeclAs<FunctionDecl>(ModuleFile, Record, Idx);
+    EPI.ExceptionSpecDecl = ReadDeclAs<FunctionDecl>(ModuleFile, Record, Idx);
   }
 }
 
@@ -8052,7 +8024,7 @@ void ASTReader::finishPendingActions() {
   while (!PendingIdentifierInfos.empty() ||
          !PendingIncompleteDeclChains.empty() || !PendingDeclChains.empty() ||
          !PendingMacroIDs.empty() || !PendingDeclContextInfos.empty() ||
-         !PendingUpdateRecords.empty()) {
+         !PendingUpdateRecords.empty() || !PendingOdrMergeChecks.empty()) {
     // If any identifiers with corresponding top-level declarations have
     // been loaded, load those declarations now.
     typedef llvm::DenseMap<IdentifierInfo *, SmallVector<Decl *, 2> >
@@ -8132,6 +8104,78 @@ void ASTReader::finishPendingActions() {
       ReadingKindTracker ReadingKind(Read_Decl, *this);
       loadDeclUpdateRecords(Update.first, Update.second);
     }
+
+    // Trigger the import of the full definition of each class that had any
+    // odr-merging problems, so we can produce better diagnostics for them.
+    for (auto &Merge : PendingOdrMergeFailures) {
+      Merge.first->buildLookup();
+      Merge.first->decls_begin();
+      Merge.first->bases_begin();
+      Merge.first->vbases_begin();
+      for (auto *RD : Merge.second) {
+        RD->decls_begin();
+        RD->bases_begin();
+        RD->vbases_begin();
+      }
+    }
+
+    // For each declaration from a merged context, check that the canonical
+    // definition of that context also contains a declaration of the same
+    // entity.
+    while (!PendingOdrMergeChecks.empty()) {
+      NamedDecl *D = PendingOdrMergeChecks.pop_back_val();
+
+      // FIXME: Skip over implicit declarations for now. This matters for things
+      // like implicitly-declared special member functions. This isn't entirely
+      // correct; we can end up with multiple unmerged declarations of the same
+      // implicit entity.
+      if (D->isImplicit())
+        continue;
+
+      DeclContext *CanonDef = D->getDeclContext();
+      DeclContext::lookup_result R = CanonDef->lookup(D->getDeclName());
+
+      bool Found = false;
+      const Decl *DCanon = D->getCanonicalDecl();
+
+      llvm::SmallVector<const NamedDecl*, 4> Candidates;
+      for (DeclContext::lookup_iterator I = R.begin(), E = R.end();
+           !Found && I != E; ++I) {
+        for (auto RI : (*I)->redecls()) {
+          if (RI->getLexicalDeclContext() == CanonDef) {
+            // This declaration is present in the canonical definition. If it's
+            // in the same redecl chain, it's the one we're looking for.
+            if (RI->getCanonicalDecl() == DCanon)
+              Found = true;
+            else
+              Candidates.push_back(cast<NamedDecl>(RI));
+            break;
+          }
+        }
+      }
+
+      if (!Found) {
+        D->setInvalidDecl();
+
+        std::string CanonDefModule =
+            getOwningModuleNameForDiagnostic(cast<Decl>(CanonDef));
+        Diag(D->getLocation(), diag::err_module_odr_violation_missing_decl)
+          << D << getOwningModuleNameForDiagnostic(D)
+          << CanonDef << CanonDefModule.empty() << CanonDefModule;
+
+        if (Candidates.empty())
+          Diag(cast<Decl>(CanonDef)->getLocation(),
+               diag::note_module_odr_violation_no_possible_decls) << D;
+        else {
+          for (unsigned I = 0, N = Candidates.size(); I != N; ++I)
+            Diag(Candidates[I]->getLocation(),
+                 diag::note_module_odr_violation_possible_decl)
+              << Candidates[I];
+        }
+
+        DiagnosedOdrMergeFailures.insert(CanonDef);
+      }
+    }
   }
   
   // If we deserialized any C++ or Objective-C class definitions, any
@@ -8198,88 +8242,9 @@ void ASTReader::finishPendingActions() {
       MD->setLazyBody(PB->second);
   }
   PendingBodies.clear();
-}
-
-void ASTReader::diagnoseOdrViolations() {
-  // Trigger the import of the full definition of each class that had any
-  // odr-merging problems, so we can produce better diagnostics for them.
-  for (auto &Merge : PendingOdrMergeFailures) {
-    Merge.first->buildLookup();
-    Merge.first->decls_begin();
-    Merge.first->bases_begin();
-    Merge.first->vbases_begin();
-    for (auto *RD : Merge.second) {
-      RD->decls_begin();
-      RD->bases_begin();
-      RD->vbases_begin();
-    }
-  }
-
-  // For each declaration from a merged context, check that the canonical
-  // definition of that context also contains a declaration of the same
-  // entity.
-  //
-  // Caution: this loop does things that might invalidate iterators into
-  // PendingOdrMergeChecks. Don't turn this into a range-based for loop!
-  while (!PendingOdrMergeChecks.empty()) {
-    NamedDecl *D = PendingOdrMergeChecks.pop_back_val();
-
-    // FIXME: Skip over implicit declarations for now. This matters for things
-    // like implicitly-declared special member functions. This isn't entirely
-    // correct; we can end up with multiple unmerged declarations of the same
-    // implicit entity.
-    if (D->isImplicit())
-      continue;
-
-    DeclContext *CanonDef = D->getDeclContext();
-    DeclContext::lookup_result R = CanonDef->lookup(D->getDeclName());
-
-    bool Found = false;
-    const Decl *DCanon = D->getCanonicalDecl();
-
-    llvm::SmallVector<const NamedDecl*, 4> Candidates;
-    for (DeclContext::lookup_iterator I = R.begin(), E = R.end();
-         !Found && I != E; ++I) {
-      for (auto RI : (*I)->redecls()) {
-        if (RI->getLexicalDeclContext() == CanonDef) {
-          // This declaration is present in the canonical definition. If it's
-          // in the same redecl chain, it's the one we're looking for.
-          if (RI->getCanonicalDecl() == DCanon)
-            Found = true;
-          else
-            Candidates.push_back(cast<NamedDecl>(RI));
-          break;
-        }
-      }
-    }
-
-    if (!Found) {
-      D->setInvalidDecl();
-
-      std::string CanonDefModule =
-          getOwningModuleNameForDiagnostic(cast<Decl>(CanonDef));
-      Diag(D->getLocation(), diag::err_module_odr_violation_missing_decl)
-        << D << getOwningModuleNameForDiagnostic(D)
-        << CanonDef << CanonDefModule.empty() << CanonDefModule;
-
-      if (Candidates.empty())
-        Diag(cast<Decl>(CanonDef)->getLocation(),
-             diag::note_module_odr_violation_no_possible_decls) << D;
-      else {
-        for (unsigned I = 0, N = Candidates.size(); I != N; ++I)
-          Diag(Candidates[I]->getLocation(),
-               diag::note_module_odr_violation_possible_decl)
-            << Candidates[I];
-      }
-
-      DiagnosedOdrMergeFailures.insert(CanonDef);
-    }
-  }
 
   // Issue any pending ODR-failure diagnostics.
   for (auto &Merge : PendingOdrMergeFailures) {
-    // If we've already pointed out a specific problem with this class, don't
-    // bother issuing a general "something's different" diagnostic.
     if (!DiagnosedOdrMergeFailures.insert(Merge.first))
       continue;
 
@@ -8329,13 +8294,10 @@ void ASTReader::FinishedDeserializing() {
   }
   --NumCurrentElementsDeserializing;
 
-  if (NumCurrentElementsDeserializing == 0) {
-    diagnoseOdrViolations();
-
+  if (NumCurrentElementsDeserializing == 0 && Consumer) {
     // We are not in recursive loading, so it's safe to pass the "interesting"
     // decls to the consumer.
-    if (Consumer)
-      PassInterestingDeclsToConsumer();
+    PassInterestingDeclsToConsumer();
   }
 }
 

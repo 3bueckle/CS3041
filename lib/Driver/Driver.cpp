@@ -548,8 +548,6 @@ void Driver::generateCompilationDiagnostics(Compilation &C,
         StringRef NewFilename = llvm::sys::path::filename(*it);
         I = StringRef(Cmd).rfind(OldFilename);
         E = I + OldFilename.size();
-        if (E + 1 < Cmd.size() && Cmd[E] == '"')
-          ++E;  // Replace a trailing quote if present.
         I = Cmd.rfind(" ", I) + 1;
         Cmd.replace(I, E - I, NewFilename.data(), NewFilename.size());
         if (!VFS.empty()) {
@@ -1895,6 +1893,8 @@ static llvm::Triple computeTargetTriple(StringRef DefaultTargetTriple,
         Target.setArch(llvm::Triple::mips64el);
       else if (Target.getArch() == llvm::Triple::aarch64_be)
         Target.setArch(llvm::Triple::aarch64);
+      else if (Target.getArch() == llvm::Triple::arm64_be)
+        Target.setArch(llvm::Triple::arm64);
     } else {
       if (Target.getArch() == llvm::Triple::mipsel)
         Target.setArch(llvm::Triple::mips);
@@ -1902,6 +1902,8 @@ static llvm::Triple computeTargetTriple(StringRef DefaultTargetTriple,
         Target.setArch(llvm::Triple::mips64);
       else if (Target.getArch() == llvm::Triple::aarch64)
         Target.setArch(llvm::Triple::aarch64_be);
+      else if (Target.getArch() == llvm::Triple::arm64)
+        Target.setArch(llvm::Triple::arm64_be);
     }
   }
 

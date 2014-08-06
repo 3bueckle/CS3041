@@ -914,13 +914,13 @@ void ASTDumper::VisitFunctionDecl(const FunctionDecl *D) {
 
   if (const FunctionProtoType *FPT = D->getType()->getAs<FunctionProtoType>()) {
     FunctionProtoType::ExtProtoInfo EPI = FPT->getExtProtoInfo();
-    switch (EPI.ExceptionSpec.Type) {
+    switch (EPI.ExceptionSpecType) {
     default: break;
     case EST_Unevaluated:
-      OS << " noexcept-unevaluated " << EPI.ExceptionSpec.SourceDecl;
+      OS << " noexcept-unevaluated " << EPI.ExceptionSpecDecl;
       break;
     case EST_Uninstantiated:
-      OS << " noexcept-uninstantiated " << EPI.ExceptionSpec.SourceTemplate;
+      OS << " noexcept-uninstantiated " << EPI.ExceptionSpecTemplate;
       break;
     }
   }

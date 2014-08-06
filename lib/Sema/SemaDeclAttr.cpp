@@ -88,39 +88,21 @@ static QualType getFunctionOrMethodParamType(const Decl *D, unsigned Idx) {
   return cast<ObjCMethodDecl>(D)->parameters()[Idx]->getType();
 }
 
-static SourceRange getFunctionOrMethodParamRange(const Decl *D, unsigned Idx) {
-  if (const auto *FD = dyn_cast<FunctionDecl>(D))
-    return FD->getParamDecl(Idx)->getSourceRange();
-  if (const auto *MD = dyn_cast<ObjCMethodDecl>(D))
-    return MD->parameters()[Idx]->getSourceRange();
-  if (const auto *BD = dyn_cast<BlockDecl>(D))
-    return BD->getParamDecl(Idx)->getSourceRange();
-  return SourceRange();
-}
-
 static QualType getFunctionOrMethodResultType(const Decl *D) {
   if (const FunctionType *FnTy = D->getFunctionType())
     return cast<FunctionType>(FnTy)->getReturnType();
   return cast<ObjCMethodDecl>(D)->getReturnType();
 }
 
-static SourceRange getFunctionOrMethodResultSourceRange(const Decl *D) {
-  if (const auto *FD = dyn_cast<FunctionDecl>(D))
-    return FD->getReturnTypeSourceRange();
-  if (const auto *MD = dyn_cast<ObjCMethodDecl>(D))
-    return MD->getReturnTypeSourceRange();
-  return SourceRange();
-}
-
 static bool isFunctionOrMethodVariadic(const Decl *D) {
   if (const FunctionType *FnTy = D->getFunctionType()) {
     const FunctionProtoType *proto = cast<FunctionProtoType>(FnTy);
     return proto->isVariadic();
-  }
-  if (const BlockDecl *BD = dyn_cast<BlockDecl>(D))
+  } else if (const BlockDecl *BD = dyn_cast<BlockDecl>(D))
     return BD->isVariadic();
-
-  return cast<ObjCMethodDecl>(D)->isVariadic();
+  else {
+    return cast<ObjCMethodDecl>(D)->isVariadic();
+  }
 }
 
 static bool isInstanceMethod(const Decl *D) {
@@ -166,43 +148,30 @@ static unsigned getNumAttributeArgs(const AttributeList &Attr) {
   return Attr.getNumArgs() + Attr.hasParsedType();
 }
 
-template <typename Compare>
-static bool checkAttributeNumArgsImpl(Sema &S, const AttributeList &Attr,
-                                      unsigned Num, unsigned Diag,
-                                      Compare Comp) {
-  if (Comp(getNumAttributeArgs(Attr), Num)) {
-    S.Diag(Attr.getLoc(), Diag) << Attr.getName() << Num;
+/// \brief Check if the attribute has exactly as many args as Num. May
+/// output an error.
+static bool checkAttributeNumArgs(Sema &S, const AttributeList &Attr,
+                                  unsigned Num) {
+  if (getNumAttributeArgs(Attr) != Num) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_wrong_number_arguments)
+      << Attr.getName() << Num;
     return false;
   }
 
   return true;
 }
 
-/// \brief Check if the attribute has exactly as many args as Num. May
-/// output an error.
-static bool checkAttributeNumArgs(Sema &S, const AttributeList &Attr,
-                                  unsigned Num) {
-  return checkAttributeNumArgsImpl(S, Attr, Num,
-                                   diag::err_attribute_wrong_number_arguments,
-                                   std::not_equal_to<unsigned>());
-}
-
 /// \brief Check if the attribute has at least as many args as Num. May
 /// output an error.
 static bool checkAttributeAtLeastNumArgs(Sema &S, const AttributeList &Attr,
                                          unsigned Num) {
-  return checkAttributeNumArgsImpl(S, Attr, Num,
-                                   diag::err_attribute_too_few_arguments,
-                                   std::less<unsigned>());
-}
+  if (getNumAttributeArgs(Attr) < Num) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_too_few_arguments)
+      << Attr.getName() << Num;
+    return false;
+  }
 
-/// \brief Check if the attribute has at most as many args as Num. May
-/// output an error.
-static bool checkAttributeAtMostNumArgs(Sema &S, const AttributeList &Attr,
-                                         unsigned Num) {
-  return checkAttributeNumArgsImpl(S, Attr, Num,
-                                   diag::err_attribute_too_many_arguments,
-                                   std::greater<unsigned>());
+  return true;
 }
 
 /// \brief If Expr is a valid integer constant, get the value of the integer
@@ -223,13 +192,6 @@ static bool checkUInt32Argument(Sema &S, const AttributeList &Attr,
         << Expr->getSourceRange();
     return false;
   }
-
-  if (!I.isIntN(32)) {
-    S.Diag(Expr->getExprLoc(), diag::err_ice_too_large)
-        << I.toString(10, false) << 32 << /* Unsigned */ 1;
-    return false;
-  }
-
   Val = (uint32_t)I.getZExtValue();
   return true;
 }
@@ -566,6 +528,10 @@ static void checkAttrArgsAreCapabilityObjs(Sema &S, Decl *D,
 // Attribute Implementations
 //===----------------------------------------------------------------------===//
 
+// FIXME: All this manual attribute parsing code is gross. At the
+// least add some helper functions to check most argument patterns (#
+// and types of args).
+
 static void handlePtGuardedVarAttr(Sema &S, Decl *D,
                                    const AttributeList &Attr) {
   if (!threadSafetyCheckIsPointer(S, D, Attr))
@@ -883,6 +849,8 @@ static void handleCallableWhenAttr(Sema &S, Decl *D,
 
 static void handleParamTypestateAttr(Sema &S, Decl *D,
                                     const AttributeList &Attr) {
+  if (!checkAttributeNumArgs(S, Attr, 1)) return;
+    
   ParamTypestateAttr::ConsumedState ParamState;
   
   if (Attr.isArgIdent(0)) {
@@ -921,6 +889,8 @@ static void handleParamTypestateAttr(Sema &S, Decl *D,
 
 static void handleReturnTypestateAttr(Sema &S, Decl *D,
                                       const AttributeList &Attr) {
+  if (!checkAttributeNumArgs(S, Attr, 1)) return;
+  
   ReturnTypestateAttr::ConsumedState ReturnState;
   
   if (Attr.isArgIdent(0)) {
@@ -969,6 +939,9 @@ static void handleReturnTypestateAttr(Sema &S, Decl *D,
 
 
 static void handleSetTypestateAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  if (!checkAttributeNumArgs(S, Attr, 1))
+    return;
+  
   if (!checkForConsumableClass(S, cast<CXXMethodDecl>(D), Attr))
     return;
   
@@ -994,6 +967,9 @@ static void handleSetTypestateAttr(Sema &S, Decl *D, const AttributeList &Attr) 
 
 static void handleTestTypestateAttr(Sema &S, Decl *D,
                                     const AttributeList &Attr) {
+  if (!checkAttributeNumArgs(S, Attr, 1))
+    return;
+  
   if (!checkForConsumableClass(S, cast<CXXMethodDecl>(D), Attr))
     return;
   
@@ -1140,17 +1116,15 @@ static void possibleTransparentUnionPointerType(QualType &T) {
 }
 
 static bool attrNonNullArgCheck(Sema &S, QualType T, const AttributeList &Attr,
-                                SourceRange AttrParmRange,
-                                SourceRange NonNullTypeRange,
-                                bool isReturnValue = false) {
+                                SourceRange R, bool isReturnValue = false) {
   T = T.getNonReferenceType();
   possibleTransparentUnionPointerType(T);
 
   if (!T->isAnyPointerType() && !T->isBlockPointerType()) {
-    S.Diag(Attr.getLoc(), isReturnValue
-                              ? diag::warn_attribute_return_pointers_only
-                              : diag::warn_attribute_pointers_only)
-        << Attr.getName() << AttrParmRange << NonNullTypeRange;
+    S.Diag(Attr.getLoc(),
+           isReturnValue ? diag::warn_attribute_return_pointers_only
+                         : diag::warn_attribute_pointers_only)
+      << Attr.getName() << R;
     return false;
   }
   return true;
@@ -1165,9 +1139,9 @@ static void handleNonNullAttr(Sema &S, Decl *D, const AttributeList &Attr) {
       return;
 
     // Is the function argument a pointer type?
+    // FIXME: Should also highlight argument in decl in the diagnostic.
     if (!attrNonNullArgCheck(S, getFunctionOrMethodParamType(D, Idx), Attr,
-                             Ex->getSourceRange(),
-                             getFunctionOrMethodParamRange(D, Idx)))
+                             Ex->getSourceRange()))
       continue;
 
     NonNullArgs.push_back(Idx);
@@ -1214,8 +1188,7 @@ static void handleNonNullAttrParameter(Sema &S, ParmVarDecl *D,
   }
 
   // Is the argument a pointer type?
-  if (!attrNonNullArgCheck(S, D->getType(), Attr, SourceRange(),
-                           D->getSourceRange()))
+  if (!attrNonNullArgCheck(S, D->getType(), Attr, D->getSourceRange()))
     return;
 
   D->addAttr(::new (S.Context)
@@ -1226,8 +1199,7 @@ static void handleNonNullAttrParameter(Sema &S, ParmVarDecl *D,
 static void handleReturnsNonNullAttr(Sema &S, Decl *D,
                                      const AttributeList &Attr) {
   QualType ResultType = getFunctionOrMethodResultType(D);
-  SourceRange SR = getFunctionOrMethodResultSourceRange(D);
-  if (!attrNonNullArgCheck(S, ResultType, Attr, SourceRange(), SR,
+  if (!attrNonNullArgCheck(S, ResultType, Attr, Attr.getRange(),
                            /* isReturnValue */ true))
     return;
 
@@ -1314,26 +1286,13 @@ static void handleOwnershipAttr(Sema &S, Decl *D, const AttributeList &AL) {
 
     // Check we don't have a conflict with another ownership attribute.
     for (const auto *I : D->specific_attrs<OwnershipAttr>()) {
-      // Cannot have two ownership attributes of different kinds for the same
-      // index.
+      // FIXME: A returns attribute should conflict with any returns attribute
+      // with a different index too.
       if (I->getOwnKind() != K && I->args_end() !=
           std::find(I->args_begin(), I->args_end(), Idx)) {
         S.Diag(AL.getLoc(), diag::err_attributes_are_not_compatible)
           << AL.getName() << I;
         return;
-      } else if (K == OwnershipAttr::Returns &&
-                 I->getOwnKind() == OwnershipAttr::Returns) {
-        // A returns attribute conflicts with any other returns attribute using
-        // a different index. Note, diagnostic reporting is 1-based, but stored
-        // argument indexes are 0-based.
-        if (std::find(I->args_begin(), I->args_end(), Idx) == I->args_end()) {
-          S.Diag(I->getLocation(), diag::err_ownership_returns_index_mismatch)
-              << *(I->args_begin()) + 1;
-          if (I->args_size())
-            S.Diag(AL.getLoc(), diag::note_ownership_returns_index_mismatch)
-                << (unsigned)Idx + 1 << Ex->getSourceRange();
-          return;
-        }
       }
     }
     OwnershipArgs.push_back(Idx);
@@ -1627,8 +1586,15 @@ static void handleUsedAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 }
 
 static void handleConstructorAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  // check the attribute arguments.
+  if (Attr.getNumArgs() > 1) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments)
+      << Attr.getName() << 1;
+    return;
+  }
+
   uint32_t priority = ConstructorAttr::DefaultPriority;
-  if (Attr.getNumArgs() &&
+  if (Attr.getNumArgs() > 0 &&
       !checkUInt32Argument(S, Attr, Attr.getArgAsExpr(0), priority))
     return;
 
@@ -1638,8 +1604,15 @@ static void handleConstructorAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 }
 
 static void handleDestructorAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  // check the attribute arguments.
+  if (Attr.getNumArgs() > 1) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments)
+      << Attr.getName() << 1;
+    return;
+  }
+
   uint32_t priority = DestructorAttr::DefaultPriority;
-  if (Attr.getNumArgs() &&
+  if (Attr.getNumArgs() > 0 &&
       !checkUInt32Argument(S, Attr, Attr.getArgAsExpr(0), priority))
     return;
 
@@ -1651,9 +1624,16 @@ static void handleDestructorAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 template <typename AttrTy>
 static void handleAttrWithMessage(Sema &S, Decl *D,
                                   const AttributeList &Attr) {
+  unsigned NumArgs = Attr.getNumArgs();
+  if (NumArgs > 1) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments)
+      << Attr.getName() << 1;
+    return;
+  }
+
   // Handle the case where the attribute has a text message.
   StringRef Str;
-  if (Attr.getNumArgs() == 1 && !S.checkStringLiteralArgumentAttr(Attr, 0, Str))
+  if (NumArgs == 1 && !S.checkStringLiteralArgumentAttr(Attr, 0, Str))
     return;
 
   D->addAttr(::new (S.Context) AttrTy(Attr.getRange(), S.Context, Str,
@@ -2056,6 +2036,13 @@ static void handleBlocksAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 }
 
 static void handleSentinelAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  // check the attribute arguments.
+  if (Attr.getNumArgs() > 2) {
+    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments)
+      << Attr.getName() << 2;
+    return;
+  }
+
   unsigned sentinel = (unsigned)SentinelAttr::DefaultSentinel;
   if (Attr.getNumArgs() > 0) {
     Expr *E = Attr.getArgAsExpr(0);
@@ -2362,9 +2349,10 @@ static void handleFormatArgAttr(Sema &S, Decl *D, const AttributeList &Attr) {
       !isCFStringType(Ty, S.Context) &&
       (!Ty->isPointerType() ||
        !Ty->getAs<PointerType>()->getPointeeType()->isCharType())) {
+    // FIXME: Should highlight the actual expression that has the wrong type.
     S.Diag(Attr.getLoc(), diag::err_format_attribute_not)
-        << (not_nsstring_type ? "a string type" : "an NSString")
-        << IdxExpr->getSourceRange() << getFunctionOrMethodParamRange(D, 0);
+    << (not_nsstring_type ? "a string type" : "an NSString")
+       << IdxExpr->getSourceRange();
     return;
   }
   Ty = getFunctionOrMethodResultType(D);
@@ -2372,9 +2360,10 @@ static void handleFormatArgAttr(Sema &S, Decl *D, const AttributeList &Attr) {
       !isCFStringType(Ty, S.Context) &&
       (!Ty->isPointerType() ||
        !Ty->getAs<PointerType>()->getPointeeType()->isCharType())) {
+    // FIXME: Should highlight the actual expression that has the wrong type.
     S.Diag(Attr.getLoc(), diag::err_format_attribute_result_not)
-        << (not_nsstring_type ? "string type" : "NSString")
-        << IdxExpr->getSourceRange() << getFunctionOrMethodParamRange(D, 0);
+    << (not_nsstring_type ? "string type" : "NSString")
+       << IdxExpr->getSourceRange();
     return;
   }
 
@@ -2545,24 +2534,23 @@ static void handleFormatAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   if (Kind == CFStringFormat) {
     if (!isCFStringType(Ty, S.Context)) {
       S.Diag(Attr.getLoc(), diag::err_format_attribute_not)
-        << "a CFString" << IdxExpr->getSourceRange()
-        << getFunctionOrMethodParamRange(D, ArgIdx);
+        << "a CFString" << IdxExpr->getSourceRange();
       return;
     }
   } else if (Kind == NSStringFormat) {
     // FIXME: do we need to check if the type is NSString*?  What are the
     // semantics?
     if (!isNSStringType(Ty, S.Context)) {
+      // FIXME: Should highlight the actual expression that has the wrong type.
       S.Diag(Attr.getLoc(), diag::err_format_attribute_not)
-        << "an NSString" << IdxExpr->getSourceRange()
-        << getFunctionOrMethodParamRange(D, ArgIdx);
+        << "an NSString" << IdxExpr->getSourceRange();
       return;
     }
   } else if (!Ty->isPointerType() ||
              !Ty->getAs<PointerType>()->getPointeeType()->isCharType()) {
+    // FIXME: Should highlight the actual expression that has the wrong type.
     S.Diag(Attr.getLoc(), diag::err_format_attribute_not)
-      << "a string type" << IdxExpr->getSourceRange()
-      << getFunctionOrMethodParamRange(D, ArgIdx);
+      << "a string type" << IdxExpr->getSourceRange();
     return;
   }
 
@@ -3254,6 +3242,14 @@ bool Sema::CheckRegparmAttr(const AttributeList &Attr, unsigned &numParams) {
 
 static void handleLaunchBoundsAttr(Sema &S, Decl *D,
                                    const AttributeList &Attr) {
+  // check the attribute arguments.
+  if (Attr.getNumArgs() != 1 && Attr.getNumArgs() != 2) {
+    // FIXME: 0 is not okay.
+    S.Diag(Attr.getLoc(), diag::err_attribute_too_many_arguments)
+      << Attr.getName() << 2;
+    return;
+  }
+
   uint32_t MaxThreads, MinBlocks = 0;
   if (!checkUInt32Argument(S, Attr, Attr.getArgAsExpr(0), MaxThreads, 1))
     return;
@@ -4024,20 +4020,11 @@ static bool handleCommonAttributeFeatures(Sema &S, Scope *scope, Decl *D,
   if (!Attr.diagnoseLangOpts(S))
     return true;
 
-  if (Attr.getMinArgs() == Attr.getMaxArgs()) {
-    // If there are no optional arguments, then checking for the argument count
-    // is trivial.
-    if (!checkAttributeNumArgs(S, Attr, Attr.getMinArgs()))
-      return true;
-  } else {
-    // There are optional arguments, so checking is slightly more involved.
-    if (Attr.getMinArgs() &&
-        !checkAttributeAtLeastNumArgs(S, Attr, Attr.getMinArgs()))
-      return true;
-    else if (!Attr.hasVariadicArg() && Attr.getMaxArgs() &&
-             !checkAttributeAtMostNumArgs(S, Attr, Attr.getMaxArgs()))
-      return true;
-  }
+  // If there are no optional arguments, then checking for the argument count
+  // is trivial.
+  if (Attr.getMinArgs() == Attr.getMaxArgs() &&
+      !checkAttributeNumArgs(S, Attr, Attr.getMinArgs()))
+    return true;
 
   // Check whether the attribute appertains to the given subject.
   if (!Attr.diagnoseAppertainsTo(S, D))

@@ -1444,9 +1444,9 @@ struct SortDiagBySourceLocation {
 // -Wthread-safety
 //===----------------------------------------------------------------------===//
 namespace clang {
-namespace threadSafety {
-
-class ThreadSafetyReporter : public clang::threadSafety::ThreadSafetyHandler {
+namespace thread_safety {
+namespace {
+class ThreadSafetyReporter : public clang::thread_safety::ThreadSafetyHandler {
   Sema &S;
   DiagList Warnings;
   SourceLocation FunLocation, FunEndLocation;
@@ -1601,15 +1601,6 @@ class ThreadSafetyReporter : public clang::threadSafety::ThreadSafetyHandler {
     }
   }
 
-  virtual void handleNegativeNotHeld(StringRef Kind, Name LockName, Name Neg,
-                                     SourceLocation Loc) {
-    PartialDiagnosticAt Warning(Loc,
-        S.PDiag(diag::warn_acquire_requires_negative_cap)
-        << Kind << LockName << Neg);
-    Warnings.push_back(DelayedDiag(Warning, OptionalNotes()));
-  }
-
-
   void handleFunExcludesLock(StringRef Kind, Name FunName, Name LockName,
                              SourceLocation Loc) override {
     PartialDiagnosticAt Warning(Loc, S.PDiag(diag::warn_fun_excludes_mutex)
@@ -1617,7 +1608,7 @@ class ThreadSafetyReporter : public clang::threadSafety::ThreadSafetyHandler {
     Warnings.push_back(DelayedDiag(Warning, OptionalNotes()));
   }
 };
-
+}
 }
 }
 
@@ -1905,11 +1896,11 @@ AnalysisBasedWarnings::IssueWarnings(sema::AnalysisBasedWarnings::Policy P,
   if (P.enableThreadSafetyAnalysis) {
     SourceLocation FL = AC.getDecl()->getLocation();
     SourceLocation FEL = AC.getDecl()->getLocEnd();
-    threadSafety::ThreadSafetyReporter Reporter(S, FL, FEL);
+    thread_safety::ThreadSafetyReporter Reporter(S, FL, FEL);
     if (!Diags.isIgnored(diag::warn_thread_safety_beta, D->getLocStart()))
       Reporter.setIssueBetaWarnings(true);
 
-    threadSafety::runThreadSafetyAnalysis(AC, Reporter);
+    thread_safety::runThreadSafetyAnalysis(AC, Reporter);
     Reporter.emitDiagnostics();
   }
 

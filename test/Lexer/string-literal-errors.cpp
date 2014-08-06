@@ -23,5 +23,3 @@ void foo() {
   // CHECK: {{^       \^~$}}
   // CHECK: {{^          \^~$}}
 }
-
-#define foo() lots and lots of tokens, need at least 8 to fill up the smallvector buffer #BadThingsHappenNow

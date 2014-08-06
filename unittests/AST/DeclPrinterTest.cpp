@@ -268,8 +268,8 @@ TEST(DeclPrinter, TestCXXRecordDecl4) {
     "class Z { int a; };"
     "class A : Z { int b; };",
     "A",
-    "class A : Z {\n}"));
-    // Should be: with semicolon, with { ... }
+    "class A :  Z {\n}"));
+    // Should be: with semicolon, with { ... }, without two spaces
 }
 
 TEST(DeclPrinter, TestCXXRecordDecl5) {
@@ -277,8 +277,8 @@ TEST(DeclPrinter, TestCXXRecordDecl5) {
     "struct Z { int a; };"
     "struct A : Z { int b; };",
     "A",
-    "struct A : Z {\n}"));
-    // Should be: with semicolon, with { ... }
+    "struct A :  Z {\n}"));
+    // Should be: with semicolon, with { ... }, without two spaces
 }
 
 TEST(DeclPrinter, TestCXXRecordDecl6) {
@@ -313,8 +313,8 @@ TEST(DeclPrinter, TestCXXRecordDecl9) {
     "class Z { int a; };"
     "class A : virtual Z { int b; };",
     "A",
-    "class A : virtual Z {\n}"));
-    // Should be: with semicolon, with { ... }
+    "class A : virtual  Z {\n}"));
+    // Should be: with semicolon, with { ... }, without two spaces
 }
 
 TEST(DeclPrinter, TestCXXRecordDecl10) {
@@ -544,7 +544,6 @@ TEST(DeclPrinter, TestCXXConstructorDecl10) {
     "};",
     constructorDecl(ofClass(hasName("A"))).bind("id"),
     "A<T...>(const A<T...> &a)"));
-    // WRONG; Should be: "A(const A<T...> &a);"
 }
 
 TEST(DeclPrinter, TestCXXConstructorDecl11) {
@@ -554,8 +553,8 @@ TEST(DeclPrinter, TestCXXConstructorDecl11) {
     "  A(T&&... ts) : T(ts)... {}"
     "};",
     constructorDecl(ofClass(hasName("A"))).bind("id"),
-    "A<T...>(T &&...ts) : T(ts)..."));
-    // WRONG; Should be: "A(T &&...ts) : T(ts)... {}"
+    "A<T...>(T &&ts...) : T(ts)..."));
+    // WRONG; Should be: "A(T&&... ts) : T(ts)..."
 }
 
 TEST(DeclPrinter, TestCXXDestructorDecl1) {
@@ -1012,8 +1011,8 @@ TEST(DeclPrinter, TestClassTemplateDecl10) {
     "template<typename... T>"
     "struct A { int a; };",
     classTemplateDecl(hasName("A")).bind("id"),
-    "template <typename ...T> struct A {\n}"));
-    // Should be: with semicolon, with { ... }
+    "template <typename ... T> struct A {\n}"));
+    // Should be: with semicolon, with { ... }, without spaces before '...'
 }
 
 TEST(DeclPrinter, TestClassTemplateDecl11) {
@@ -1021,8 +1020,8 @@ TEST(DeclPrinter, TestClassTemplateDecl11) {
     "template<typename... T>"
     "struct A : public T... { int a; };",
     classTemplateDecl(hasName("A")).bind("id"),
-    "template <typename ...T> struct A : public T... {\n}"));
-    // Should be: with semicolon, with { ... }
+    "template <typename ... T> struct A : public T... {\n}"));
+    // Should be: with semicolon, with { ... }, without spaces before '...'
 }
 
 TEST(DeclPrinter, TestClassTemplatePartialSpecializationDecl1) {
@@ -1081,7 +1080,9 @@ TEST(DeclPrinter, TestFunctionTemplateDecl3) {
     "template<typename... T>"
     "void A(T... a);",
     functionTemplateDecl(hasName("A")).bind("id"),
-    "template <typename ...T> void A(T ...a)"));
+    "template <typename ... T> void A(T a...)"));
+    // WRONG; Should be: "template <typename ... T> void A(T... a)"
+    //        (not "T a...")
     // Should be: with semicolon.
 }
 
@@ -1238,7 +1239,7 @@ TEST(DeclPrinter, TestTemplateArgumentList13) {
     "};",
     "A",
     "Z<T...> A"));
-    // Should be: with semicolon
+    // Should be: with semicolon, without extra space in "> >"
 }
 
 TEST(DeclPrinter, TestTemplateArgumentList14) {
@@ -1250,7 +1251,7 @@ TEST(DeclPrinter, TestTemplateArgumentList14) {
     "};",
     "A",
     "Z<Y<T>...> A"));
-    // Should be: with semicolon
+    // Should be: with semicolon, without extra space in "> >"
 }
 
 TEST(DeclPrinter, TestTemplateArgumentList15) {
@@ -1261,7 +1262,7 @@ TEST(DeclPrinter, TestTemplateArgumentList15) {
     "};",
     "A",
     "Z<sizeof...(T)> A"));
-    // Should be: with semicolon
+    // Should be: with semicolon, without extra space in "> >"
 }
 
 TEST(DeclPrinter, TestObjCMethod1) {

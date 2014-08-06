@@ -26,11 +26,9 @@ using namespace CodeGen;
 
 CodeGenABITypes::CodeGenABITypes(ASTContext &C,
                                  llvm::Module &M,
-                                 const llvm::DataLayout &TD,
-                                 CoverageSourceInfo *CoverageInfo)
+                                 const llvm::DataLayout &TD)
   : CGO(new CodeGenOptions),
-    CGM(new CodeGen::CodeGenModule(C, *CGO, M, TD, C.getDiagnostics(),
-                                   CoverageInfo)) {
+    CGM(new CodeGen::CodeGenModule(C, *CGO, M, TD, C.getDiagnostics())) {
 }
 
 CodeGenABITypes::~CodeGenABITypes()

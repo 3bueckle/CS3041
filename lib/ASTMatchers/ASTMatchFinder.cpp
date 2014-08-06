@@ -372,7 +372,7 @@ public:
                                   BoundNodesTreeBuilder *Builder, int MaxDepth,
                                   TraversalKind Traversal, BindKind Bind) {
     // For AST-nodes that don't have an identity, we can't memoize.
-    if (!Node.getMemoizationData() || !Builder->isComparable())
+    if (!Node.getMemoizationData())
       return matchesRecursively(Node, Matcher, Builder, MaxDepth, Traversal,
                                 Bind);
 

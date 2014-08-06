@@ -41,10 +41,10 @@ __attribute__((objc_root_class)) @interface ClassBase
 @end
 
 @interface ClassDerived : ClassBase 
-@property (nonatomic, retain) ClassDerived * foo; // expected-warning {{auto property synthesis will not synthesize property 'foo' because it will be implemented by its superclass}}
+@property (nonatomic, retain) ClassDerived * foo;
 @end
 
-@implementation ClassDerived // expected-note {{detected while default synthesizing properties in class implementation}}
+@implementation ClassDerived
 - (void) Meth:(ClassBase*)foo {
   super.foo = foo; // must work with no warning
   [super setFoo:foo]; // works with no warning

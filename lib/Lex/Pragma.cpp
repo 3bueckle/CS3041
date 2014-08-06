@@ -605,7 +605,7 @@ void Preprocessor::HandlePragmaPopMacro(Token &PopMacroTok) {
     if (MacroToReInstall) {
       // Reinstall the previously pushed macro.
       appendDefMacroDirective(IdentInfo, MacroToReInstall, MessageLoc,
-                              /*isImported=*/false, /*Overrides*/None);
+                              /*isImported=*/false);
     }
 
     // Pop PragmaPushMacroInfo stack.

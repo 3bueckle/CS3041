@@ -76,10 +76,9 @@ public:
     NSArr_initWithArray,
     NSArr_initWithObjects,
     NSArr_objectAtIndex,
-    NSMutableArr_replaceObjectAtIndex,
-    NSArr_initWithObjectsCount
+    NSMutableArr_replaceObjectAtIndex
   };
-  static const unsigned NumNSArrayMethods = 10;
+  static const unsigned NumNSArrayMethods = 9;
 
   /// \brief The Objective-C NSArray selectors.
   Selector getNSArraySelector(NSArrayMethodKind MK) const;
@@ -99,10 +98,9 @@ public:
     NSDict_initWithObjectsAndKeys,
     NSDict_initWithObjectsForKeys,
     NSDict_objectForKey,
-    NSMutableDict_setObjectForKey,
-    NSDict_initWithObjectsForKeysCount
+    NSMutableDict_setObjectForKey
   };
-  static const unsigned NumNSDictionaryMethods = 12;
+  static const unsigned NumNSDictionaryMethods = 11;
 
   /// \brief The Objective-C NSDictionary selectors.
   Selector getNSDictionarySelector(NSDictionaryMethodKind MK) const;

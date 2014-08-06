@@ -74,15 +74,6 @@ namespace clang {
     class FullComment;
   }
 
-  struct TypeInfo {
-    uint64_t Width;
-    unsigned Align;
-    bool AlignIsRequired : 1;
-    TypeInfo() : Width(0), Align(0), AlignIsRequired(false) {}
-    TypeInfo(uint64_t Width, unsigned Align, bool AlignIsRequired)
-        : Width(Width), Align(Align), AlignIsRequired(AlignIsRequired) {}
-  };
-
 /// \brief Holds long-lived AST nodes (such as types and decls) that can be
 /// referred to throughout the semantic analysis of a file.
 class ASTContext : public RefCountedBase<ASTContext> {
@@ -153,7 +144,8 @@ class ASTContext : public RefCountedBase<ASTContext> {
     ObjCLayouts;
 
   /// \brief A cache from types to size and alignment information.
-  typedef llvm::DenseMap<const Type *, struct TypeInfo> TypeInfoMap;
+  typedef llvm::DenseMap<const Type*,
+                         std::pair<uint64_t, unsigned> > TypeInfoMap;
   mutable TypeInfoMap MemoizedTypeInfo;
 
   /// \brief A cache mapping from CXXRecordDecls to key functions.
@@ -1589,7 +1581,7 @@ public:
 
 private:
   CanQualType getFromTargetType(unsigned Type) const;
-  TypeInfo getTypeInfoImpl(const Type *T) const;
+  std::pair<uint64_t, unsigned> getTypeInfoImpl(const Type *T) const;
 
   //===--------------------------------------------------------------------===//
   //                         Type Predicates.
@@ -1622,12 +1614,18 @@ public:
   const llvm::fltSemantics &getFloatTypeSemantics(QualType T) const;
 
   /// \brief Get the size and alignment of the specified complete type in bits.
-  TypeInfo getTypeInfo(const Type *T) const;
-  TypeInfo getTypeInfo(QualType T) const { return getTypeInfo(T.getTypePtr()); }
+  std::pair<uint64_t, unsigned> getTypeInfo(const Type *T) const;
+  std::pair<uint64_t, unsigned> getTypeInfo(QualType T) const {
+    return getTypeInfo(T.getTypePtr());
+  }
 
   /// \brief Return the size of the specified (complete) type \p T, in bits.
-  uint64_t getTypeSize(QualType T) const { return getTypeInfo(T).Width; }
-  uint64_t getTypeSize(const Type *T) const { return getTypeInfo(T).Width; }
+  uint64_t getTypeSize(QualType T) const {
+    return getTypeInfo(T).first;
+  }
+  uint64_t getTypeSize(const Type *T) const {
+    return getTypeInfo(T).first;
+  }
 
   /// \brief Return the size of the character type, in bits.
   uint64_t getCharWidth() const {
@@ -1647,8 +1645,12 @@ public:
 
   /// \brief Return the ABI-specified alignment of a (complete) type \p T, in
   /// bits.
-  unsigned getTypeAlign(QualType T) const { return getTypeInfo(T).Align; }
-  unsigned getTypeAlign(const Type *T) const { return getTypeInfo(T).Align; }
+  unsigned getTypeAlign(QualType T) const {
+    return getTypeInfo(T).second;
+  }
+  unsigned getTypeAlign(const Type *T) const {
+    return getTypeInfo(T).second;
+  }
 
   /// \brief Return the ABI-specified alignment of a (complete) type \p T, in 
   /// characters.
@@ -1661,11 +1663,6 @@ public:
 
   std::pair<CharUnits, CharUnits> getTypeInfoInChars(const Type *T) const;
   std::pair<CharUnits, CharUnits> getTypeInfoInChars(QualType T) const;
-
-  /// \brief Determine if the alignment the type has was required using an
-  /// alignment attribute.
-  bool isAlignmentRequired(const Type *T) const;
-  bool isAlignmentRequired(QualType T) const;
 
   /// \brief Return the "preferred" alignment of the specified type \p T for
   /// the current target, in bits.

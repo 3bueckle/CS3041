@@ -25,14 +25,7 @@
 namespace clang {
 namespace ast_matchers {
 
-enum Language { 
-    Lang_C,
-    Lang_C89,
-    Lang_CXX,
-    Lang_CXX11,
-    Lang_OpenCL,
-    Lang_OBJCXX
-};
+enum Language { Lang_C, Lang_C89, Lang_CXX, Lang_CXX11, Lang_OpenCL };
 
 /// \brief Base class for verifying some property of nodes found by a matcher.
 template <typename NodeType>
@@ -109,10 +102,6 @@ testing::AssertionResult MatchVerifier<NodeType>::match(
     break;
   case Lang_OpenCL:
     FileName = "input.cl";
-    break;
-  case Lang_OBJCXX:
-    FileName = "input.mm";
-    break;
   }
 
   // Default to failure in case callback is never called

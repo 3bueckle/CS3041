@@ -193,5 +193,3 @@ def OMPTaskyieldDirective : DStmt<OMPExecutableDirective>;
 def OMPBarrierDirective : DStmt<OMPExecutableDirective>;
 def OMPTaskwaitDirective : DStmt<OMPExecutableDirective>;
 def OMPFlushDirective : DStmt<OMPExecutableDirective>;
-def OMPOrderedDirective : DStmt<OMPExecutableDirective>;
-def OMPAtomicDirective : DStmt<OMPExecutableDirective>;

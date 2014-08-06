@@ -2072,12 +2072,13 @@ void Sema::DeclareGlobalAllocationFunction(DeclarationName Name,
     if (!getLangOpts().CPlusPlus11) {
       BadAllocType = Context.getTypeDeclType(getStdBadAlloc());
       assert(StdBadAlloc && "Must have std::bad_alloc declared");
-      EPI.ExceptionSpec.Type = EST_Dynamic;
-      EPI.ExceptionSpec.Exceptions = llvm::makeArrayRef(BadAllocType);
+      EPI.ExceptionSpecType = EST_Dynamic;
+      EPI.NumExceptions = 1;
+      EPI.Exceptions = &BadAllocType;
     }
   } else {
-    EPI.ExceptionSpec =
-        getLangOpts().CPlusPlus11 ? EST_BasicNoexcept : EST_DynamicNone;
+    EPI.ExceptionSpecType = getLangOpts().CPlusPlus11 ?
+                                EST_BasicNoexcept : EST_DynamicNone;
   }
 
   QualType Params[] = { Param1, Param2 };
@@ -3641,13 +3642,12 @@ static bool evaluateTypeTrait(Sema &S, TypeTrait Kind, SourceLocation KWLoc,
       if (T->isObjectType() || T->isFunctionType())
         T = S.Context.getRValueReferenceType(T);
       OpaqueArgExprs.push_back(
-        OpaqueValueExpr(Args[I]->getTypeLoc().getLocStart(),
+        OpaqueValueExpr(Args[I]->getTypeLoc().getLocStart(), 
                         T.getNonLValueExprType(S.Context),
                         Expr::getValueKindForType(T)));
+      ArgExprs.push_back(&OpaqueArgExprs.back());
     }
-    for (Expr &E : OpaqueArgExprs)
-      ArgExprs.push_back(&E);
-
+    
     // Perform the initialization in an unevaluated context within a SFINAE 
     // trap at translation unit scope.
     EnterExpressionEvaluationContext Unevaluated(S, Sema::Unevaluated);

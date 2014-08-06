@@ -457,6 +457,8 @@ static bool isSignedCharDefault(const llvm::Triple &Triple) {
 
   case llvm::Triple::aarch64:
   case llvm::Triple::aarch64_be:
+  case llvm::Triple::arm64:
+  case llvm::Triple::arm64_be:
   case llvm::Triple::arm:
   case llvm::Triple::armeb:
     if (Triple.isOSDarwin() || Triple.isOSWindows())
@@ -799,18 +801,6 @@ void Clang::AddARMTargetArgs(const ArgList &Args,
     CmdArgs.push_back("-arm-use-movt=0");
   }
 
-  // -mkernel implies -mstrict-align; don't add the redundant option.
-  if (!KernelOrKext) {
-    if (Arg *A = Args.getLastArg(options::OPT_mno_unaligned_access,
-                                 options::OPT_munaligned_access)) {
-      CmdArgs.push_back("-backend-option");
-      if (A->getOption().matches(options::OPT_mno_unaligned_access))
-        CmdArgs.push_back("-arm-strict-align");
-      else
-        CmdArgs.push_back("-arm-no-strict-align");
-    }
-  }
-
   // Setting -mno-global-merge disables the codegen global merge pass. Setting 
   // -mglobal-merge has no effect as the pass is enabled by default.
   if (Arg *A = Args.getLastArg(options::OPT_mglobal_merge,
@@ -885,13 +875,9 @@ void Clang::AddAArch64TargetArgs(const ArgList &Args,
   CmdArgs.push_back("-target-abi");
   CmdArgs.push_back(ABIName);
 
-  if (Arg *A = Args.getLastArg(options::OPT_mno_unaligned_access,
-                               options::OPT_munaligned_access)) {
+  if (Args.hasArg(options::OPT_mstrict_align)) {
     CmdArgs.push_back("-backend-option");
-    if (A->getOption().matches(options::OPT_mno_unaligned_access))
-      CmdArgs.push_back("-aarch64-strict-align");
-    else
-      CmdArgs.push_back("-aarch64-no-strict-align");
+    CmdArgs.push_back("-aarch64-strict-align");
   }
 
   // Setting -mno-global-merge disables the codegen global merge pass. Setting
@@ -966,8 +952,6 @@ void mips::getMipsCPUAndABI(const ArgList &Args,
       .Cases("n32", "n64", DefMips64CPU)
       .Default("");
   }
-
-  // FIXME: Warn on inconsistent use of -march and -mabi.
 }
 
 // Convert ABI name to the GNU tools acceptable variant.
@@ -1244,35 +1228,6 @@ static void getPPCTargetFeatures(const ArgList &Args,
                    options::OPT_fno_altivec, "altivec");
 }
 
-void Clang::AddPPCTargetArgs(const ArgList &Args,
-                             ArgStringList &CmdArgs) const {
-  // Select the ABI to use.
-  const char *ABIName = nullptr;
-  if (Arg *A = Args.getLastArg(options::OPT_mabi_EQ)) {
-    ABIName = A->getValue();
-  } else if (getToolChain().getTriple().isOSLinux())
-    switch(getToolChain().getArch()) {
-    case llvm::Triple::ppc64:
-      ABIName = "elfv1";
-      break;
-    case llvm::Triple::ppc64le:
-      ABIName = "elfv2";
-      break;
-    default:
-      break;
-  }
-
-  if (ABIName) {
-    CmdArgs.push_back("-target-abi");
-    CmdArgs.push_back(ABIName);
-  }
-}
-
-bool ppc::hasPPCAbiArg(const ArgList &Args, const char *Value) {
-  Arg *A = Args.getLastArg(options::OPT_mabi_EQ);
-  return A && (A->getValue() == StringRef(Value));
-}
-
 /// Get the (LLVM) name of the R600 gpu we are targeting.
 static std::string getR600TargetGPU(const ArgList &Args) {
   if (Arg *A = Args.getLastArg(options::OPT_mcpu_EQ)) {
@@ -1405,6 +1360,8 @@ static std::string getCPUName(const ArgList &Args, const llvm::Triple &T) {
 
   case llvm::Triple::aarch64:
   case llvm::Triple::aarch64_be:
+  case llvm::Triple::arm64:
+  case llvm::Triple::arm64_be:
     return getAArch64TargetCPU(Args);
 
   case llvm::Triple::arm:
@@ -1798,6 +1755,8 @@ static void getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
     break;
   case llvm::Triple::aarch64:
   case llvm::Triple::aarch64_be:
+  case llvm::Triple::arm64:
+  case llvm::Triple::arm64_be:
     getAArch64TargetFeatures(D, Args, Features);
     break;
   case llvm::Triple::x86:
@@ -2640,6 +2599,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     case llvm::Triple::thumb:
     case llvm::Triple::thumbeb:
     case llvm::Triple::aarch64:
+    case llvm::Triple::arm64:
     case llvm::Triple::mips:
     case llvm::Triple::mipsel:
     case llvm::Triple::mips64:
@@ -2720,6 +2680,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // PIC or PIE options above, if these show up, PIC is disabled.
   llvm::Triple Triple(TripleStr);
   if (KernelOrKext && (!Triple.isiOS() || Triple.isOSVersionLT(6) ||
+                       Triple.getArch() == llvm::Triple::arm64 ||
                        Triple.getArch() == llvm::Triple::aarch64))
     PIC = PIE = false;
   if (Args.hasArg(options::OPT_static))
@@ -3056,6 +3017,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   case llvm::Triple::aarch64:
   case llvm::Triple::aarch64_be:
+  case llvm::Triple::arm64:
+  case llvm::Triple::arm64_be:
     AddAArch64TargetArgs(Args, CmdArgs);
     break;
 
@@ -3064,12 +3027,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   case llvm::Triple::mips64:
   case llvm::Triple::mips64el:
     AddMIPSTargetArgs(Args, CmdArgs);
-    break;
-
-  case llvm::Triple::ppc:
-  case llvm::Triple::ppc64:
-  case llvm::Triple::ppc64le:
-    AddPPCTargetArgs(Args, CmdArgs);
     break;
 
   case llvm::Triple::sparc:
@@ -3229,14 +3186,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasArg(options::OPT_fprofile_arcs) ||
       Args.hasArg(options::OPT_coverage))
     CmdArgs.push_back("-femit-coverage-data");
-
-  if (Args.hasArg(options::OPT_fcoverage_mapping) &&
-      !Args.hasArg(options::OPT_fprofile_instr_generate))
-    D.Diag(diag::err_drv_argument_only_allowed_with)
-      << "-fcoverage-mapping" << "-fprofile-instr-generate";
-
-  if (Args.hasArg(options::OPT_fcoverage_mapping))
-    CmdArgs.push_back("-fcoverage-mapping");
 
   if (C.getArgs().hasArg(options::OPT_c) ||
       C.getArgs().hasArg(options::OPT_S)) {
@@ -3697,6 +3646,31 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     StringRef alignment = Args.getLastArgValue(options::OPT_mstack_alignment);
     CmdArgs.push_back(Args.MakeArgString("-mstack-alignment=" + alignment));
   }
+  // -mkernel implies -mstrict-align; don't add the redundant option.
+  if (!KernelOrKext) {
+    if (Arg *A = Args.getLastArg(options::OPT_mno_unaligned_access,
+                                 options::OPT_munaligned_access)) {
+      if (A->getOption().matches(options::OPT_mno_unaligned_access)) {
+        CmdArgs.push_back("-backend-option");
+        if (getToolChain().getTriple().getArch() == llvm::Triple::aarch64 ||
+            getToolChain().getTriple().getArch() == llvm::Triple::aarch64_be ||
+            getToolChain().getTriple().getArch() == llvm::Triple::arm64 ||
+            getToolChain().getTriple().getArch() == llvm::Triple::arm64_be)
+          CmdArgs.push_back("-aarch64-strict-align");
+        else
+          CmdArgs.push_back("-arm-strict-align");
+      } else {
+        CmdArgs.push_back("-backend-option");
+        if (getToolChain().getTriple().getArch() == llvm::Triple::aarch64 ||
+            getToolChain().getTriple().getArch() == llvm::Triple::aarch64_be ||
+            getToolChain().getTriple().getArch() == llvm::Triple::arm64 ||
+            getToolChain().getTriple().getArch() == llvm::Triple::arm64_be)
+          CmdArgs.push_back("-aarch64-no-strict-align");
+        else
+          CmdArgs.push_back("-arm-no-strict-align");
+      }
+    }
+  }
 
   if (Arg *A = Args.getLastArg(options::OPT_mrestrict_it,
                                options::OPT_mno_restrict_it)) {
@@ -3863,23 +3837,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddLastArg(CmdArgs, options::OPT_fbuild_session_timestamp);
 
-  if (Arg *A = Args.getLastArg(options::OPT_fbuild_session_file)) {
-    if (Args.hasArg(options::OPT_fbuild_session_timestamp))
-      D.Diag(diag::err_drv_argument_not_allowed_with)
-          << A->getAsString(Args) << "-fbuild-session-timestamp";
-
-    llvm::sys::fs::file_status Status;
-    if (llvm::sys::fs::status(A->getValue(), Status))
-      D.Diag(diag::err_drv_no_such_file) << A->getValue();
-    char TimeStamp[48];
-    snprintf(TimeStamp, sizeof(TimeStamp), "-fbuild-session-timestamp=%" PRIu64,
-             (uint64_t)Status.getLastModificationTime().toEpochTime());
-    CmdArgs.push_back(Args.MakeArgString(TimeStamp));
-  }
-
   if (Args.getLastArg(options::OPT_fmodules_validate_once_per_build_session)) {
-    if (!Args.getLastArg(options::OPT_fbuild_session_timestamp,
-                         options::OPT_fbuild_session_file))
+    if (!Args.getLastArg(options::OPT_fbuild_session_timestamp))
       D.Diag(diag::err_drv_modules_validate_once_requires_timestamp);
 
     Args.AddLastArg(CmdArgs,
@@ -4132,21 +4091,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   } else if (Args.hasFlag(options::OPT_fpack_struct,
                           options::OPT_fno_pack_struct, false)) {
     CmdArgs.push_back("-fpack-struct=1");
-  }
-
-  // Handle -fmax-type-align=N and -fno-type-align
-  bool SkipMaxTypeAlign = Args.hasArg(options::OPT_fno_max_type_align);
-  if (Arg *A = Args.getLastArg(options::OPT_fmax_type_align_EQ)) {
-    if (!SkipMaxTypeAlign) {
-      std::string MaxTypeAlignStr = "-fmax-type-align=";
-      MaxTypeAlignStr += A->getValue();
-      CmdArgs.push_back(Args.MakeArgString(MaxTypeAlignStr));
-    }
-  } else if (getToolChain().getTriple().isOSDarwin()) {
-    if (!SkipMaxTypeAlign) {
-      std::string MaxTypeAlignStr = "-fmax-type-align=16";
-      CmdArgs.push_back(Args.MakeArgString(MaxTypeAlignStr));
-    }
   }
 
   if (KernelOrKext || isNoCommonDefault(getToolChain().getTriple())) {
@@ -5424,7 +5368,7 @@ llvm::Triple::ArchType darwin::getArchTypeForMachOArchName(StringRef Str) {
     .Cases("arm", "armv4t", "armv5", "armv6", "armv6m", llvm::Triple::arm)
     .Cases("armv7", "armv7em", "armv7k", "armv7m", llvm::Triple::arm)
     .Cases("armv7s", "xscale", llvm::Triple::arm)
-    .Case("arm64", llvm::Triple::aarch64)
+    .Case("arm64", llvm::Triple::arm64)
     .Case("r600", llvm::Triple::r600)
     .Case("nvptx", llvm::Triple::nvptx)
     .Case("nvptx64", llvm::Triple::nvptx64)
@@ -6965,13 +6909,12 @@ void netbsd::Link::ConstructJob(Compilation &C, const JobAction &JA,
   unsigned Major, Minor, Micro;
   getToolChain().getTriple().getOSVersion(Major, Minor, Micro);
   bool useLibgcc = true;
-  if (Major >= 7 || (Major == 6 && Minor == 99 && Micro >= 49) || Major == 0) {
+  if (Major >= 7 || (Major == 6 && Minor == 99 && Micro >= 40) || Major == 0) {
     switch(getToolChain().getArch()) {
     case llvm::Triple::arm:
     case llvm::Triple::armeb:
     case llvm::Triple::thumb:
     case llvm::Triple::thumbeb:
-    case llvm::Triple::ppc:
     case llvm::Triple::x86:
     case llvm::Triple::x86_64:
       useLibgcc = false;
@@ -7240,8 +7183,8 @@ static void AddLibgcc(const llvm::Triple &Triple, const Driver &D,
     CmdArgs.push_back("-ldl");
 }
 
-static std::string getLinuxDynamicLinker(const ArgList &Args,
-                                         const toolchains::Linux &ToolChain) {
+static StringRef getLinuxDynamicLinker(const ArgList &Args,
+                                       const toolchains::Linux &ToolChain) {
   if (ToolChain.getTriple().getEnvironment() == llvm::Triple::Android) {
     if (ToolChain.getTriple().isArch64Bit())
       return "/system/bin/linker64";
@@ -7250,9 +7193,11 @@ static std::string getLinuxDynamicLinker(const ArgList &Args,
   } else if (ToolChain.getArch() == llvm::Triple::x86 ||
              ToolChain.getArch() == llvm::Triple::sparc)
     return "/lib/ld-linux.so.2";
-  else if (ToolChain.getArch() == llvm::Triple::aarch64)
+  else if (ToolChain.getArch() == llvm::Triple::aarch64 ||
+           ToolChain.getArch() == llvm::Triple::arm64)
     return "/lib/ld-linux-aarch64.so.1";
-  else if (ToolChain.getArch() == llvm::Triple::aarch64_be)
+  else if (ToolChain.getArch() == llvm::Triple::aarch64_be ||
+           ToolChain.getArch() == llvm::Triple::arm64_be)
     return "/lib/ld-linux-aarch64_be.so.1";
   else if (ToolChain.getArch() == llvm::Triple::arm ||
            ToolChain.getArch() == llvm::Triple::thumb) {
@@ -7267,34 +7212,24 @@ static std::string getLinuxDynamicLinker(const ArgList &Args,
     else
       return "/lib/ld-linux.so.3";              /* TODO: check which dynamic linker name.  */
   } else if (ToolChain.getArch() == llvm::Triple::mips ||
-             ToolChain.getArch() == llvm::Triple::mipsel ||
-             ToolChain.getArch() == llvm::Triple::mips64 ||
+             ToolChain.getArch() == llvm::Triple::mipsel) {
+    if (mips::isNaN2008(Args, ToolChain.getTriple()))
+      return "/lib/ld-linux-mipsn8.so.1";
+    return "/lib/ld.so.1";
+  } else if (ToolChain.getArch() == llvm::Triple::mips64 ||
              ToolChain.getArch() == llvm::Triple::mips64el) {
-    StringRef CPUName;
-    StringRef ABIName;
-    mips::getMipsCPUAndABI(Args, ToolChain.getTriple(), CPUName, ABIName);
-    bool IsNaN2008 = mips::isNaN2008(Args, ToolChain.getTriple());
-
-    StringRef LibDir = llvm::StringSwitch<llvm::StringRef>(ABIName)
-                           .Case("o32", "/lib")
-                           .Case("n32", "/lib32")
-                           .Case("n64", "/lib64")
-                           .Default("/lib");
-    StringRef LibName = IsNaN2008 ? "ld-linux-mipsn8.so.1" : "ld.so.1";
-
-    return (LibDir + "/" + LibName).str();
+    if (mips::hasMipsAbiArg(Args, "n32"))
+      return mips::isNaN2008(Args, ToolChain.getTriple())
+                 ? "/lib32/ld-linux-mipsn8.so.1" : "/lib32/ld.so.1";
+    return mips::isNaN2008(Args, ToolChain.getTriple())
+               ? "/lib64/ld-linux-mipsn8.so.1" : "/lib64/ld.so.1";
   } else if (ToolChain.getArch() == llvm::Triple::ppc)
     return "/lib/ld.so.1";
-  else if (ToolChain.getArch() == llvm::Triple::ppc64) {
-    if (ppc::hasPPCAbiArg(Args, "elfv2"))
-      return "/lib64/ld64.so.2";
+  else if (ToolChain.getArch() == llvm::Triple::ppc64 ||
+           ToolChain.getArch() == llvm::Triple::systemz)
     return "/lib64/ld64.so.1";
-  } else if (ToolChain.getArch() == llvm::Triple::ppc64le) {
-    if (ppc::hasPPCAbiArg(Args, "elfv1"))
-      return "/lib64/ld64.so.1";
+  else if (ToolChain.getArch() == llvm::Triple::ppc64le)
     return "/lib64/ld64.so.2";
-  } else if (ToolChain.getArch() == llvm::Triple::systemz)
-    return "/lib64/ld64.so.1";
   else if (ToolChain.getArch() == llvm::Triple::sparcv9)
     return "/lib64/ld-linux.so.2";
   else if (ToolChain.getArch() == llvm::Triple::x86_64 &&
@@ -7370,9 +7305,11 @@ void gnutools::Link::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back("-m");
   if (ToolChain.getArch() == llvm::Triple::x86)
     CmdArgs.push_back("elf_i386");
-  else if (ToolChain.getArch() == llvm::Triple::aarch64)
+  else if (ToolChain.getArch() == llvm::Triple::aarch64 ||
+           ToolChain.getArch() == llvm::Triple::arm64)
     CmdArgs.push_back("aarch64linux");
-  else if (ToolChain.getArch() == llvm::Triple::aarch64_be)
+  else if (ToolChain.getArch() == llvm::Triple::aarch64_be ||
+           ToolChain.getArch() == llvm::Triple::arm64_be)
     CmdArgs.push_back("aarch64_be_linux");
   else if (ToolChain.getArch() == llvm::Triple::arm
            ||  ToolChain.getArch() == llvm::Triple::thumb)

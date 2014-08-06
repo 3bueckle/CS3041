@@ -1047,7 +1047,7 @@ void test6() {
 // CHECK-LE: @llvm.ppc.altivec.vcmpgtfp
 
   /* vec_ctf */
-  res_vf  = vec_ctf(vi, 0);
+  res_vf  = vec_ctf(vi, param_i);
 // CHECK: @llvm.ppc.altivec.vcfsx
 // CHECK-LE: @llvm.ppc.altivec.vcfsx
 
@@ -1082,7 +1082,7 @@ void test6() {
 // CHECK-LE: @llvm.ppc.altivec.vctuxs
 
   /* vec_dss */
-  vec_dss(0);
+  vec_dss(param_i);
 // CHECK: @llvm.ppc.altivec.dss
 // CHECK-LE: @llvm.ppc.altivec.dss
 

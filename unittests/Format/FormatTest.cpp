@@ -1846,7 +1846,6 @@ TEST_F(FormatTest, FormatsClasses) {
   verifyFormat("template <class R, class C>\n"
                "struct Aaaaaaaaaaaaaaaaa<R (C::*)(int) const>\n"
                "    : Aaaaaaaaaaaaaaaaa<R (C::*)(int)> {};");
-  verifyFormat("class ::A::B {};");
 }
 
 TEST_F(FormatTest, FormatsVariableDeclarationsAfterStructOrClass) {
@@ -3514,7 +3513,6 @@ TEST_F(FormatTest, BreaksFunctionDeclarationsWithTrailingTokens) {
                "    LOCKS_EXCLUDED(aaaaaaaaaaaaa) {}");
   verifyGoogleFormat("void aaaaaaaaaaaaaa(aaaaaaaa aaa) override\n"
                      "    AAAAAAAAAAAAAAAAAAAAAAAA(aaaaaaaaaaaaaaa);");
-  verifyFormat("SomeFunction([](int i) LOCKS_EXCLUDED(a) {});");
 
   verifyFormat(
       "void aaaaaaaaaaaaaaaaaa()\n"
@@ -4081,13 +4079,13 @@ TEST_F(FormatTest, DeclarationsOfMultipleVariables) {
   // line. Also fix indent for breaking after the type, this looks bad.
   verifyFormat("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa*\n"
                "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaa = aaaaaaaaaaaaaaaaaaa,\n"
-               "    * b = bbbbbbbbbbbbbbbbbbb;",
+               "    *b = bbbbbbbbbbbbbbbbbbb;",
                getGoogleStyle());
 
   // Not ideal, but pointer-with-type does not allow much here.
   verifyGoogleFormat(
-      "aaaaaaaaa* a = aaaaaaaaaaaaaaaaaaa, * b = bbbbbbbbbbbbbbbbbbb,\n"
-      "           * b = bbbbbbbbbbbbbbbbbbb, * d = ddddddddddddddddddd;");
+      "aaaaaaaaa* a = aaaaaaaaaaaaaaaaaaa, *b = bbbbbbbbbbbbbbbbbbb,\n"
+      "           *b = bbbbbbbbbbbbbbbbbbb, *d = ddddddddddddddddddd;");
 }
 
 TEST_F(FormatTest, ConditionalExpressionsInBrackets) {
@@ -4145,17 +4143,6 @@ TEST_F(FormatTest, AlignsStringLiterals) {
                "  L\"aaaaa\" #X L\"bbbbbb\" \\\n"
                "  L\"ccccc\"",
                getLLVMStyleWithColumns(25));
-}
-
-TEST_F(FormatTest, AlwaysBreakAfterDefinitionReturnType) {
-  FormatStyle AfterType = getLLVMStyle();
-  AfterType.AlwaysBreakAfterDefinitionReturnType = true;
-  verifyFormat("const char *\n"
-               "f(void) {\n"  // Break here.
-               "  return \"\";\n"
-               "}\n"
-               "const char *bar(void);\n",  // No break here.
-               AfterType);
 }
 
 TEST_F(FormatTest, AlwaysBreakBeforeMultilineStrings) {
@@ -4590,8 +4577,6 @@ TEST_F(FormatTest, UnderstandsTemplateParameters) {
   verifyFormat("aaaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
                "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaa >> aaaaa);",
                getLLVMStyleWithColumns(60));
-  verifyFormat("static_assert(is_convertible<A &&, B>::value, \"AAA\");");
-  verifyFormat("Constructor(A... a) : a_(X<A>{std::forward<A>(a)}...) {}");
 }
 
 TEST_F(FormatTest, UnderstandsBinaryOperators) {
@@ -4727,11 +4712,6 @@ TEST_F(FormatTest, UnderstandsNewAndDelete) {
                "  delete a;\n"
                "  delete (A *)a;\n"
                "}");
-  verifyFormat("new (aaaaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaaa))\n"
-               "    typename aaaaaaaaaaaaaaaaaaaaaaaa();");
-  verifyFormat("auto aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa =\n"
-               "    new (aaaaaaaaaaaaaaaaaaaaaaaaaa(aaaaaaaaaaaaaaaaaaaaaaa))\n"
-               "        typename aaaaaaaaaaaaaaaaaaaaaaaa();");
 }
 
 TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
@@ -4785,7 +4765,6 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   verifyIndependentOfContext("typedef void (*f)(int *a);");
   verifyIndependentOfContext("int i{a * b};");
   verifyIndependentOfContext("aaa && aaa->f();");
-  verifyIndependentOfContext("int x = ~*p;");
 
   verifyIndependentOfContext("InvalidRegions[*R] = 0;");
 
@@ -4819,7 +4798,6 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   verifyGoogleFormat("Type* t = x++ * y;");
   verifyGoogleFormat(
       "const char* const p = reinterpret_cast<const char* const>(q);");
-  verifyGoogleFormat("void f(int i = 0, SomeType** temps = NULL);");
 
   verifyIndependentOfContext("a = *(x + y);");
   verifyIndependentOfContext("a = &(x + y);");
@@ -4902,7 +4880,7 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
 
   // FIXME: We cannot handle this case yet; we might be able to figure out that
   // foo<x> d > v; doesn't make sense.
-  verifyFormat("foo<a<b && c> d> v;");
+  verifyFormat("foo<a < b && c> d > v;");
 
   FormatStyle PointerMiddle = getLLVMStyle();
   PointerMiddle.PointerAlignment = FormatStyle::PAS_Middle;
@@ -6134,7 +6112,7 @@ TEST_F(FormatTest, FormatObjCInterface) {
                "+ (id)init;\n"
                "@end");
 
-  verifyGoogleFormat("@interface Foo (HackStuff) <MyProtocol>\n"
+  verifyGoogleFormat("@interface Foo (HackStuff)<MyProtocol>\n"
                      "+ (id)init;\n"
                      "@end");
 
@@ -6176,7 +6154,7 @@ TEST_F(FormatTest, FormatObjCInterface) {
 
   FormatStyle OnePerLine = getGoogleStyle();
   OnePerLine.BinPackParameters = false;
-  verifyFormat("@interface aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa () <\n"
+  verifyFormat("@interface aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ()<\n"
                "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
                "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
                "    aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
@@ -7543,14 +7521,6 @@ TEST_F(FormatTest, ConfigurableSpaceBeforeParens) {
                "default:\n"
                "  break;\n"
                "}", NoSpace);
-  verifyFormat("auto i = std::make_unique<int>(5);", NoSpace);
-  verifyFormat("size_t x = sizeof(x);", NoSpace);
-  verifyFormat("auto f(int x) -> decltype(x);", NoSpace);
-  verifyFormat("int f(T x) noexcept(x.create());", NoSpace);
-  verifyFormat("alignas(128) char a[128];", NoSpace);
-  verifyFormat("size_t x = alignof(MyType);", NoSpace);
-  verifyFormat("static_assert(sizeof(char) == 1, \"Impossible!\");", NoSpace);
-  verifyFormat("int f() throw(Deprecated);", NoSpace);
 
   FormatStyle Space = getLLVMStyle();
   Space.SpaceBeforeParens = FormatStyle::SBPO_Always;
@@ -7587,14 +7557,6 @@ TEST_F(FormatTest, ConfigurableSpaceBeforeParens) {
   verifyFormat("#if defined(x)\n"
                "#endif",
                Space);
-  verifyFormat("auto i = std::make_unique<int> (5);", Space);
-  verifyFormat("size_t x = sizeof (x);", Space);
-  verifyFormat("auto f (int x) -> decltype (x);", Space);
-  verifyFormat("int f (T x) noexcept (x.create ());", Space);
-  verifyFormat("alignas (128) char a[128];", Space);
-  verifyFormat("size_t x = alignof (MyType);", Space);
-  verifyFormat("static_assert (sizeof (char) == 1, \"Impossible!\");", Space);
-  verifyFormat("int f () throw (Deprecated);", Space);
 }
 
 TEST_F(FormatTest, ConfigurableSpacesInParentheses) {
@@ -7705,17 +7667,6 @@ TEST_F(FormatTest, StroustrupBraceBreaking) {
                "  void g() { return; }\n"
                "}\n"
                "}",
-               BreakBeforeBrace);
-
-  verifyFormat("void foo()\n"
-               "{\n"
-               "  if (a) {\n"
-               "    a();\n"
-               "  }\n"
-               "  else {\n"
-               "    b();\n"
-               "  }\n"
-               "}\n",
                BreakBeforeBrace);
 
   verifyFormat("#ifdef _DEBUG\n"
@@ -8178,7 +8129,6 @@ TEST_F(FormatTest, ParsesConfiguration) {
   CHECK_PARSE_BOOL(AllowShortBlocksOnASingleLine);
   CHECK_PARSE_BOOL(AllowShortIfStatementsOnASingleLine);
   CHECK_PARSE_BOOL(AllowShortLoopsOnASingleLine);
-  CHECK_PARSE_BOOL(AlwaysBreakAfterDefinitionReturnType);
   CHECK_PARSE_BOOL(AlwaysBreakTemplateDeclarations);
   CHECK_PARSE_BOOL(BinPackParameters);
   CHECK_PARSE_BOOL(BreakBeforeBinaryOperators);
@@ -9145,19 +9095,6 @@ TEST_F(FormatTest, HandleConflictMarkers) {
                    ">>>>>>>\n"
                    "  End\n"
                    "int i;\n"));
-}
-
-TEST_F(FormatTest, DisableRegions) {
-  EXPECT_EQ("int i;\n"
-            "// clang-format off\n"
-            "  int j;\n"
-            "// clang-format on\n"
-            "int k;",
-            format(" int  i;\n"
-                   "   // clang-format off\n"
-                   "  int j;\n"
-                   " // clang-format on\n"
-                   "   int   k;"));
 }
 
 } // end namespace tooling

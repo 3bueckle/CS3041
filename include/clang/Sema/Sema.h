@@ -672,21 +672,12 @@ public:
 
   /// \brief The declaration of the arrayWithObjects:count: method.
   ObjCMethodDecl *ArrayWithObjectsMethod;
-    
-  /// \brief The declaration of the initWithObjects:count: method.
-  ObjCMethodDecl *InitArrayWithObjectsMethod;
 
   /// \brief The declaration of the Objective-C NSDictionary class.
   ObjCInterfaceDecl *NSDictionaryDecl;
 
   /// \brief The declaration of the dictionaryWithObjects:forKeys:count: method.
   ObjCMethodDecl *DictionaryWithObjectsMethod;
-    
-  /// \brief The declaration of the initWithObjects:forKeys:count: method.
-  ObjCMethodDecl *InitDictionaryWithObjectsMethod;
-    
-  /// \brief The declaration for + (id) alloc method.
-  ObjCMethodDecl *AllocObjectsMethod;
 
   /// \brief id<NSCopying> type.
   QualType QIDNSCopying;
@@ -1190,7 +1181,7 @@ public:
   const FunctionProtoType *ResolveExceptionSpec(SourceLocation Loc,
                                                 const FunctionProtoType *FPT);
   void UpdateExceptionSpec(FunctionDecl *FD,
-                           const FunctionProtoType::ExceptionSpecInfo &ESI);
+                           const FunctionProtoType::ExtProtoInfo &EPI);
   bool CheckSpecifiedExceptionType(QualType &T, const SourceRange &Range);
   bool CheckDistantExceptionSpec(QualType T);
   bool CheckEquivalentExceptionSpec(FunctionDecl *Old, FunctionDecl *New);
@@ -3178,9 +3169,9 @@ public:
 
   StmtResult ActOnSEHTryBlock(bool IsCXXTry, // try (true) or __try (false) ?
                               SourceLocation TryLoc, Stmt *TryBlock,
-                              Stmt *Handler);
-  StmtResult ActOnSEHExceptBlock(SourceLocation Loc,
-                                 Expr *FilterExpr,
+                              Stmt *Handler, int HandlerIndex,
+                              int HandlerParentIndex);
+  StmtResult ActOnSEHExceptBlock(SourceLocation Loc, Expr *FilterExpr,
                                  Stmt *Block);
   StmtResult ActOnSEHFinallyBlock(SourceLocation Loc, Stmt *Block);
   StmtResult ActOnSEHLeaveStmt(SourceLocation Loc, Scope *CurScope);
@@ -3943,20 +3934,24 @@ public:
 
     /// \brief Overwrite an EPI's exception specification with this
     /// computed exception specification.
-    FunctionProtoType::ExceptionSpecInfo getExceptionSpec() const {
-      FunctionProtoType::ExceptionSpecInfo ESI;
-      ESI.Type = getExceptionSpecType();
-      if (ESI.Type == EST_Dynamic) {
-        ESI.Exceptions = Exceptions;
-      } else if (ESI.Type == EST_None) {
+    void getEPI(FunctionProtoType::ExtProtoInfo &EPI) const {
+      EPI.ExceptionSpecType = getExceptionSpecType();
+      if (EPI.ExceptionSpecType == EST_Dynamic) {
+        EPI.NumExceptions = size();
+        EPI.Exceptions = data();
+      } else if (EPI.ExceptionSpecType == EST_None) {
         /// C++11 [except.spec]p14:
         ///   The exception-specification is noexcept(false) if the set of
         ///   potential exceptions of the special member function contains "any"
-        ESI.Type = EST_ComputedNoexcept;
-        ESI.NoexceptExpr = Self->ActOnCXXBoolLiteral(SourceLocation(),
+        EPI.ExceptionSpecType = EST_ComputedNoexcept;
+        EPI.NoexceptExpr = Self->ActOnCXXBoolLiteral(SourceLocation(),
                                                      tok::kw_false).get();
       }
-      return ESI;
+    }
+    FunctionProtoType::ExtProtoInfo getEPI() const {
+      FunctionProtoType::ExtProtoInfo EPI;
+      getEPI(EPI);
+      return EPI;
     }
   };
 
@@ -4003,13 +3998,13 @@ public:
   void EvaluateImplicitExceptionSpec(SourceLocation Loc, CXXMethodDecl *MD);
 
   /// \brief Check the given exception-specification and update the
-  /// exception specification information with the results.
+  /// extended prototype information with the results.
   void checkExceptionSpecification(ExceptionSpecificationType EST,
                                    ArrayRef<ParsedType> DynamicExceptions,
                                    ArrayRef<SourceRange> DynamicExceptionRanges,
                                    Expr *NoexceptExpr,
                                    SmallVectorImpl<QualType> &Exceptions,
-                                   FunctionProtoType::ExceptionSpecInfo &ESI);
+                                   FunctionProtoType::ExtProtoInfo &EPI);
 
   /// \brief Determine if a special member function should have a deleted
   /// definition when it is defaulted.
@@ -7400,15 +7395,6 @@ public:
   StmtResult ActOnOpenMPFlushDirective(ArrayRef<OMPClause *> Clauses,
                                        SourceLocation StartLoc,
                                        SourceLocation EndLoc);
-  /// \brief Called on well-formed '\#pragma omp ordered' after parsing of the
-  /// associated statement.
-  StmtResult ActOnOpenMPOrderedDirective(Stmt *AStmt, SourceLocation StartLoc,
-                                         SourceLocation EndLoc);
-  /// \brief Called on well-formed '\#pragma omp atomic' after parsing of the
-  /// associated statement.
-  StmtResult ActOnOpenMPAtomicDirective(ArrayRef<OMPClause *> Clauses,
-                                        Stmt *AStmt, SourceLocation StartLoc,
-                                        SourceLocation EndLoc);
 
   OMPClause *ActOnOpenMPSingleExprClause(OpenMPClauseKind Kind,
                                          Expr *Expr,
@@ -7487,21 +7473,6 @@ public:
   /// \brief Called on well-formed 'mergeable' clause.
   OMPClause *ActOnOpenMPMergeableClause(SourceLocation StartLoc,
                                         SourceLocation EndLoc);
-  /// \brief Called on well-formed 'read' clause.
-  OMPClause *ActOnOpenMPReadClause(SourceLocation StartLoc,
-                                   SourceLocation EndLoc);
-  /// \brief Called on well-formed 'write' clause.
-  OMPClause *ActOnOpenMPWriteClause(SourceLocation StartLoc,
-                                    SourceLocation EndLoc);
-  /// \brief Called on well-formed 'update' clause.
-  OMPClause *ActOnOpenMPUpdateClause(SourceLocation StartLoc,
-                                     SourceLocation EndLoc);
-  /// \brief Called on well-formed 'capture' clause.
-  OMPClause *ActOnOpenMPCaptureClause(SourceLocation StartLoc,
-                                      SourceLocation EndLoc);
-  /// \brief Called on well-formed 'seq_cst' clause.
-  OMPClause *ActOnOpenMPSeqCstClause(SourceLocation StartLoc,
-                                     SourceLocation EndLoc);
 
   OMPClause *
   ActOnOpenMPVarListClause(OpenMPClauseKind Kind, ArrayRef<Expr *> Vars,

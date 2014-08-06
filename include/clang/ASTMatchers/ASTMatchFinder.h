@@ -210,14 +210,16 @@ match(MatcherT Matcher, const ast_type_traits::DynTypedNode &Node,
 ///
 /// This is useful in combanation with \c match():
 /// \code
-///   const Decl *D = selectFirst<Decl>("id", match(Matcher.bind("id"),
-///                                                 Node, Context));
+///   Decl *D = selectFirst<Decl>("id", match(Matcher.bind("id"),
+///                                           Node, Context));
 /// \endcode
 template <typename NodeT>
-const NodeT *
+NodeT *
 selectFirst(StringRef BoundTo, const SmallVectorImpl<BoundNodes> &Results) {
-  for (const BoundNodes &N : Results) {
-    if (const NodeT *Node = N.getNodeAs<NodeT>(BoundTo))
+  for (SmallVectorImpl<BoundNodes>::const_iterator I = Results.begin(),
+                                                   E = Results.end();
+       I != E; ++I) {
+    if (NodeT *Node = I->getNodeAs<NodeT>(BoundTo))
       return Node;
   }
   return nullptr;

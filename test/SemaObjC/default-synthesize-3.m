@@ -66,10 +66,10 @@ __attribute ((objc_requires_property_definitions)) // expected-error {{'objc_req
 @property (readwrite) char isFoo; // expected-warning {{auto property synthesis will not synthesize property 'isFoo' because it is 'readwrite' but it will be synthesized 'readonly' via another property}}
 @property char Property1; // expected-warning {{auto property synthesis will not synthesize property 'Property1' because it cannot share an ivar with another synthesized property}}
 @property char Property2;
-@property (readwrite) char isNotFree; // expected-warning {{auto property synthesis will not synthesize property 'isNotFree'}}
+@property (readwrite) char isNotFree;
 @end
 
-@implementation Baz { // expected-note {{detected while default synthesizing properties in class implementation}}
+@implementation Baz {
     char _isFoo;
     char _isNotFree;
 }
@@ -104,12 +104,12 @@ __attribute ((objc_requires_property_definitions)) // expected-error {{'objc_req
 @end
 
 @interface S : B<P1>
-@property (assign,readwrite) id prop; // expected-warning {{auto property synthesis will not synthesize property 'prop'}}
-@property (assign,readwrite) id prop1; // expected-warning {{auto property synthesis will not synthesize property 'prop1'}}
-@property (assign,readwrite) id prop2; // expected-warning {{auto property synthesis will not synthesize property 'prop2'}}
+@property (assign,readwrite) id prop;
+@property (assign,readwrite) id prop1;
+@property (assign,readwrite) id prop2;
 @end
 
-@implementation S // expected-note 3 {{detected while default synthesizing properties in class implementation}}
+@implementation S
 @end
 
 // rdar://14085456
