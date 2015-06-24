@@ -1,2 +1,0 @@
-module a { header "a.h" header "x.h" }
-module b { header "b.h" header "x.h" }
